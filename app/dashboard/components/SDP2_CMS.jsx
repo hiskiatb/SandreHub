@@ -25,10 +25,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft, Loader2, AlertCircle, Search, RefreshCw, Inbox, Download, Check,
-  ClipboardList, X, ChevronDown,
+  ClipboardList, X, ChevronDown, UploadCloud, Lock, MapPin, FileMinus2, Shuffle,
 } from "lucide-react";
 import ExcelFilter from "./ExcelFilter";
 import SDP2_Detail from "./SDP2_Detail";
+import SDP_UploadTerritory from "./SDP_UploadTerritory";
+import SDP2_GenericTable from "./SDP2_GenericTable";
+import { SdpHeaderBanner, SDP_GRADIENT_CTA, SDP_GRADIENT_CTA_SHADOW } from "./SDP2_Shared";
 
 const mk = (d) => ({
   card: d ? "#17171B" : "#FFFFFF", sub: d ? "#1D1D22" : "#F8F9FA", line: d ? "rgba(255,255,255,.08)" : "rgba(0,0,0,.08)",
@@ -94,6 +97,47 @@ const COLS = [
 ];
 const NUMERIC_KEYS = new Set(["latitude", "longitude", "latitude_gudang", "longitude_gudang"]);
 const DATE_KEYS = new Set(["created_at", "updated_at", "submission_date"]);
+// UPDATE (permintaan user - "hilangkan data partner/company name, ship to
+// address, hybrid type - maksud saya data yg kita input backend namun
+// kolomnya tetap ada"): 3 kolom ini TETAP ada di tabel (header + filter),
+// tapi NILAI yang ditampilkan di tiap baris disembunyikan (jadi "—") -
+// data aslinya TIDAK dihapus dari database, cuma tidak ditampilkan di sini.
+const HIDDEN_VALUE_KEYS = new Set(["partner_company_name", "ship_to_address", "hybrid_type"]);
+
+// UPDATE (permintaan user - "tambahkan juga untuk kolom Data Terminasi dan
+// juga Data Rebordering, sesuai dengan kolom kolom yang ada di excel
+// terlampir"): kolom & urutan di bawah ini SENGAJA dibuat persis sama dgn
+// header sheet "02_Termination_Main"/"03_Rebordering_Kec_Detail" pada file
+// "Simplified SDP Registration Template" - tabel `sdp_termination` &
+// `sdp_rebordering` di database SUDAH match 1:1 dgn kolom-kolom ini
+// (dibuat lebih dulu, cuma belum ada UI yang membacanya).
+const COLS_TERMINASI = [
+  ["submission_month", "Submission Month"], ["submission_date", "Submission Date"],
+  ["circle", "Circle"], ["region", "Region"], ["area", "Area"], ["branch", "Branch"],
+  ["micro_cluster", "Micro Cluster"], ["partner_territory", "Partner Territory"],
+  ["sdp_type", "SDP TYPE"], ["sdp_code", "SDP Code"], ["sdp_name", "SDP Name"],
+  ["lokasi_sdp", "Lokasi SDP"], ["num_kec", "# KEC"], ["termination_reason", "Termination Reason"],
+  ["last_active_date", "Last Active Date"], ["effective_termination_date", "Effective Termination Date"],
+  ["kecamatan_return_completed", "Kecamatan Return Completed?"],
+  ["kecamatan_return_where", "Where the Kecamatan Return?"],
+  ["circle_iom_link", "Circle IOM No./Link"], ["document_folder_link", "Document Folder Link"],
+  ["approval_status", "Approval Status"], ["hq_validation_status", "HQ Validation Status"],
+  ["final_status", "Final Status"], ["pic_circle", "PIC Circle"], ["pic_hq", "PIC HQ"],
+  ["remarks", "Remarks"],
+];
+const COLS_REBORDERING = [
+  ["circle", "Circle"], ["kecamatan", "Kecamatan"], ["kabupaten", "Kab/Kota"],
+  ["rebordering_action", "Re-Bordering Action"], ["sdp_type", "SDP TYPE"],
+  ["existing_sdp_id", "Existing SDP ID"], ["existing_sdp_name", "Existing SDP Name"],
+  ["existing_partner_territory", "Existing Partner Territory"], ["existing_region", "Existing Region"],
+  ["existing_branch", "Existing Branch"], ["existing_micro_cluster", "Existing Micro Cluster"],
+  ["rebordering_to", "Re-Bordering to"], ["after_sdp_code", "AFTER SDP / MPx Code"],
+  ["after_sdp_name", "AFTER SDP / MPx Name"], ["after_partner_territory", "AFTER Partner Territory"],
+  ["after_region", "AFTER Region"], ["after_branch", "AFTER Branch"],
+  ["after_micro_cluster", "AFTER Micro Cluster"], ["effective_date", "Effective Date"],
+  ["approval_iom_link", "Approval / IOM Link"], ["mapping_status", "Mapping Status"],
+  ["owner", "Owner"], ["remarks", "Remarks"],
+];
 
 // UPDATE (permintaan user - "di kanan ini ada Select Periode ini untuk
 // Data October"): dropdown filter periode berdasarkan Submission Month
@@ -112,6 +156,12 @@ const fmtYM = (ym) => {
 
 function fmtCell(key, v) {
   if (v == null || v === "") return "";
+  // UPDATE (permintaan user - "untuk circle dibuat kapital semuanya
+  // SUMATERA" -> "ini masih huruf kecil" nunjuk tabel Data SDP): tampilan
+  // kolom Circle di-uppercase di sini juga (termasuk ikut ke Export .xlsx
+  // krn fmtCell dipakai bareng) - nilai MENTAH (r.circle = "Sumatera") yg
+  // dipakai utk filter/query TIDAK berubah, cuma label yg ditampilkan.
+  if (key === "circle") return String(v).toUpperCase();
   if (key === "created_at" || key === "updated_at") {
     try { return new Date(v).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" }); } catch { return String(v); }
   }
@@ -155,10 +205,26 @@ export default function SDP2_CMS({ supabase, theme = "dark", profile, onExit }) 
   const [err, setErr] = useState("");
   const [q, setQ] = useState("");
   const [colFilters, setColFilters] = useState(emptyColFilters);
-  const [period, setPeriod] = useState(currentYM);
+  // UPDATE (permintaan user - "ini set default Semua Periode dulu"):
+  // default filter periode sekarang "" (Semua Periode), bukan bulan
+  // berjalan - currentYM() tetap dipakai di periodOptions supaya opsi bulan
+  // berjalan selalu ada biar gampang dipilih kalau mau.
+  const [period, setPeriod] = useState("");
   const [sortConfig, setSortConfig] = useState({ key: null, dir: null });
   const [openRow, setOpenRow] = useState(null);
-  const [tab, setTab] = useState("registrasi"); // sub-menu "Data SDP": saat ini baru ada "Data Registrasi", disiapkan utk tab lain ke depannya
+  const [tab, setTab] = useState("sdp"); // sdp | registrasi | terminasi | rebordering | territory
+  // UPDATE (permintaan user - "untuk data registrasi saat ini bukan data
+  // registrasi, itu Data SDP, jadi registrasi adalah tabel yang dihasilkan
+  // dari registrasi sesuai dengan bulan yang dipilih" + "kolomnya sama
+  // dengan data SDP namun kalau di kelompokkan berdasarkan submitnya kapan
+  // (submission Month)"): tab "Data Registrasi" terpisah dari "Data SDP" -
+  // SAMA kolomnya (COLS, dipakai lagi persis), tapi cuma baris
+  // request_type === "New" & DIKELOMPOKKAN per Submission Month (header grup
+  // abu2 tiap bulan, terbaru dulu) lewat prop groupByKey di
+  // SDP2_GenericTable. Dropdown periode di sini OPSIONAL (bukan wajib) -
+  // kalau diisi, tinggal mempersempit ke 1 bulan saja (grup jadi cuma 1),
+  // kalau "Semua Periode" semua bulan tetap tampil terkelompok rapi.
+  const [regPeriod, setRegPeriod] = useState("");
 
   const load = async () => {
     setLoading(true); setErr("");
@@ -303,49 +369,64 @@ export default function SDP2_CMS({ supabase, theme = "dark", profile, onExit }) 
         <ArrowLeft size={15} /> Kembali
       </button>
 
-      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 18, marginBottom: 18, flexWrap: "wrap" }}>
-        <div>
-          <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: -0.4 }}>Data SDP</div>
-          <div style={{ fontSize: 13, color: t.mid, marginTop: 4 }}>
-            Seluruh kolom yang diisi saat Registrasi SDP, {filtered.length.toLocaleString("id-ID")} dari {byPeriod.length.toLocaleString("id-ID")} baris
-            {period ? ` — periode ${fmtYM(period)}` : ""}.
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {anyFilter && (
-            <button onClick={resetAll} style={{ display: "inline-flex", alignItems: "center", gap: 5, border: "none", background: "transparent", cursor: "pointer", color: t.red, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
-              <X size={13} /> Hapus semua filter
-            </button>
-          )}
-          <div style={{ position: "relative" }}>
-            <select value={period} onChange={(e) => setPeriod(e.target.value)} title="Filter periode (Submission Month)"
-              style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", boxSizing: "border-box",
-                padding: "9px 32px 9px 12px", borderRadius: 10, border: `1px solid ${t.line}`, background: t.card, color: t.hi,
-                fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: FF, outline: "none" }}>
-              <option value="">Semua Periode</option>
-              {periodOptions.map((ym) => <option key={ym} value={ym}>{fmtYM(ym)}</option>)}
-            </select>
-            <ChevronDown size={13} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", color: t.mid, pointerEvents: "none" }} />
-          </div>
-          <button onClick={load} title="Muat ulang" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 12px", borderRadius: 10, border: `1px solid ${t.line}`, background: t.card, color: t.hi, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: FF }}>
-            <RefreshCw size={13} /> Muat ulang
-          </button>
-          <button onClick={exportXlsx} disabled={exporting} title="Export semua kolom yg sedang tampil ke .xlsx"
-            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: "none", background: t.teal, color: "#06231F", fontSize: 12.5, fontWeight: 800, cursor: exporting ? "default" : "pointer", opacity: exporting ? 0.6 : 1, fontFamily: FF }}>
-            {exporting ? <Loader2 size={14} className="spin" /> : <Download size={14} />} Export .xlsx
-          </button>
-        </div>
-      </div>
+      {/* UPDATE (permintaan user - "untuk button button ini haruysnya
+          dibuatr diatas tabel masing masing sub menu karena treastmentnya
+          akajn beda beda tergantung sub menu, buat disamping kolom
+          pencarian"): tombol2 aksi (Hapus filter/Semua Periode/Muat ulang/
+          Upload Data/Export .xlsx) DIPINDAH dari banner ke baris di atas
+          tabel, sejajar kolom pencarian - khusus utk sub-menu "Data
+          Registrasi" (lihat blok tab === "registrasi" di bawah), karena
+          treatment-nya memang spesifik tab itu & ke depan tiap sub-menu
+          (mis. "Data Territory") bisa punya tombolnya sendiri tanpa saling
+          ganggu. Banner sekarang cuma judul/subjudul, bersih & seragam di
+          semua sub-menu. */}
+      <SdpHeaderBanner icon={ClipboardList}
+        title={tab === "sdp" ? "Data SDP" : tab === "registrasi" ? "Data Registrasi" : tab === "terminasi" ? "Data Terminasi" : tab === "rebordering" ? "Data Rebordering" : "Data Territory"} />
 
-      {/* Sub-menu "Data SDP": isi tabel di bawah ini SELURUHNYA berasal dari
-          Registrasi SDP, jadi dikelompokkan di bawah tab "Data Registrasi" -
-          disiapkan sebagai sub-menu (bukan cuma judul statis) supaya ke
-          depannya bisa ditambah tab lain tanpa ubah struktur. */}
-      <div style={{ display: "flex", gap: 4, borderBottom: `1px solid ${t.line}`, marginBottom: 18 }}>
+      {/* Sub-menu: "Data SDP" (master, semua request type/periode), "Data
+          Registrasi" (khusus request_type=New, dikelompokkan per Submission
+          Month - permintaan user), "Data Terminasi", "Data Rebordering",
+          "Data Territory". */}
+      <div style={{ display: "flex", gap: 4, borderBottom: `1px solid ${t.line}`, marginBottom: 18, flexWrap: "wrap" }}>
+        <button onClick={() => setTab("sdp")}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 4px", marginRight: 18, background: "none", border: "none", borderBottom: tab === "sdp" ? `2px solid ${t.teal}` : "2px solid transparent", color: tab === "sdp" ? t.hi : t.mid, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FF }}>
+          <ClipboardList size={14} /> Data SDP
+        </button>
         <button onClick={() => setTab("registrasi")}
           style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 4px", marginRight: 18, background: "none", border: "none", borderBottom: tab === "registrasi" ? `2px solid ${t.teal}` : "2px solid transparent", color: tab === "registrasi" ? t.hi : t.mid, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FF }}>
           <ClipboardList size={14} /> Data Registrasi
         </button>
+        {/* UPDATE (permintaan user - "tambahkan juga untuk kolom Data
+            Terminasi dan juga Data Rebordering ... buat sebelum data
+            territory, untuk data territory buat urutannya paling
+            terakhir"): 2 tab baru, urutan DI ANTARA "Data Registrasi" dan
+            "Data Territory" (Territory sekarang SENGAJA dipindah ke paling
+            akhir). Sumber tabel: sdp_termination/sdp_rebordering (sudah ada
+            di DB, kolomnya sudah match 1:1 dgn header Excel - lihat
+            COLS_TERMINASI/COLS_REBORDERING di atas). */}
+        <button onClick={() => setTab("terminasi")}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 4px", marginRight: 18, background: "none", border: "none", borderBottom: tab === "terminasi" ? `2px solid ${t.teal}` : "2px solid transparent", color: tab === "terminasi" ? t.hi : t.mid, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FF }}>
+          <FileMinus2 size={14} /> Data Terminasi
+        </button>
+        <button onClick={() => setTab("rebordering")}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 4px", marginRight: 18, background: "none", border: "none", borderBottom: tab === "rebordering" ? `2px solid ${t.teal}` : "2px solid transparent", color: tab === "rebordering" ? t.hi : t.mid, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FF }}>
+          <Shuffle size={14} /> Data Rebordering
+        </button>
+        {/* UPDATE (permintaan user - "tambahkan Data Territory, ini nanti
+            sebagai acuan opsi kecamatan branch dll"): tab yang membungkus
+            SDP_UploadTerritory.jsx (sudah ada, SPM-only) - data yang
+            diimpor di sini mengisi tabel mc_cluster_mapping, yang jadi
+            sumber RPC sdp_territory_combos() → opsi dropdown Circle/Region/
+            Branch/Micro Cluster di form Registrasi SDP (lihat geoOptions di
+            SDP_QuickForm.jsx). Dibatasi role SPM Sumatera saja, sama persis
+            spt pembatasan aslinya di menu Archive. Urutan PALING TERAKHIR
+            (permintaan user). */}
+        {role === "spm_sumatera" && (
+          <button onClick={() => setTab("territory")}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 4px", marginRight: 18, background: "none", border: "none", borderBottom: tab === "territory" ? `2px solid ${t.teal}` : "2px solid transparent", color: tab === "territory" ? t.hi : t.mid, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FF }}>
+            <MapPin size={14} /> Data Territory
+          </button>
+        )}
       </div>
 
       {exportMsg && (
@@ -355,7 +436,7 @@ export default function SDP2_CMS({ supabase, theme = "dark", profile, onExit }) 
         </div>
       )}
 
-      {tab === "registrasi" && (
+      {tab === "sdp" && (
       <>
       {/* Ringkasan — 3 kartu, angka stabil dari seluruh scope (bukan hasil
           filter tabel di bawah), supaya tetap jadi acuan saat sedang
@@ -364,10 +445,50 @@ export default function SDP2_CMS({ supabase, theme = "dark", profile, onExit }) 
         <StatTile t={t} icon={<ClipboardList size={13} color={t.teal} />} label="Total SDP" value={summary.totalRegistrasi.toLocaleString("id-ID")} sub={role === "pic_region" ? "Region Anda" : "Seluruh Sumatera"} />
       </div>
 
-      <div style={{ position: "relative", marginBottom: 14, maxWidth: 420 }}>
-        <Search size={14} color={t.lo} style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }} />
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama SDP, SDP ID, partner, branch, pengirim…"
-          style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px 10px 36px", borderRadius: 12, border: `1px solid ${t.line}`, background: t.inp, color: t.hi, fontSize: 13.5, fontFamily: FF, outline: "none" }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+        <div style={{ position: "relative", flex: "1 1 280px", maxWidth: 420 }}>
+          <Search size={14} color={t.lo} style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }} />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama SDP, SDP ID, partner, branch, pengirim…"
+            style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px 10px 36px", borderRadius: 12, border: `1px solid ${t.line}`, background: t.inp, color: t.hi, fontSize: 13.5, fontFamily: FF, outline: "none" }} />
+        </div>
+
+        {/* Tombol aksi khusus "Data Registrasi" — sejajar kolom pencarian
+            (lihat update note di atas banner). */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {anyFilter && (
+            <button onClick={resetAll} style={{ display: "inline-flex", alignItems: "center", gap: 5, border: `1px solid ${t.acc}44`, borderRadius: 9, background: t.accBg, cursor: "pointer", color: t.acc, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", padding: "8px 11px", fontFamily: FF }}>
+              <X size={13} /> Hapus filter
+            </button>
+          )}
+          <div style={{ position: "relative" }}>
+            <select value={period} onChange={(e) => setPeriod(e.target.value)} title="Filter periode (Submission Month)"
+              style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", boxSizing: "border-box",
+                padding: "8px 30px 8px 11px", borderRadius: 9, border: `1px solid ${t.line}`, background: t.card, color: t.hi,
+                fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: FF, outline: "none" }}>
+              <option value="">Semua Periode</option>
+              {periodOptions.map((ym) => <option key={ym} value={ym}>{fmtYM(ym)}</option>)}
+            </select>
+            <ChevronDown size={13} style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", color: t.mid, pointerEvents: "none" }} />
+          </div>
+          <button onClick={load} title="Muat ulang" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 9, border: `1px solid ${t.line}`, background: t.card, color: t.hi, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: FF }}>
+            <RefreshCw size={13} /> Muat ulang
+          </button>
+          {/* UPDATE (permintaan user - "tambahkan Upload Data nantinya ini
+              akan mengisi data periode yang terpilih"): tombol placeholder
+              dulu (belum ada alur upload-nya) - mengisi data utk periode
+              yang sedang dipilih di dropdown "Select Periode" di sebelahnya.
+              Dikunci ("Segera hadir") sampai alurnya dibangun, mengikuti
+              pola kartu placeholder lain di modul ini (mis. "Terminasi
+              SDP"/"Rebordering SDP" di SDP2_Home). */}
+          <button type="button" disabled title={period ? `Segera hadir — akan mengisi data untuk periode ${fmtYM(period)}` : "Segera hadir — pilih periode dulu, lalu isi data untuk periode itu"}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 9, border: `1px dashed ${t.line}`, background: t.sub, color: t.lo, fontSize: 12.5, fontWeight: 700, cursor: "not-allowed", fontFamily: FF }}>
+            <UploadCloud size={13} /> Upload Data <Lock size={10} style={{ marginLeft: -1 }} />
+          </button>
+          <button onClick={exportXlsx} disabled={exporting} title="Export semua kolom yg sedang tampil ke .xlsx"
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 9, border: "none", background: SDP_GRADIENT_CTA, boxShadow: SDP_GRADIENT_CTA_SHADOW, color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: exporting ? "default" : "pointer", opacity: exporting ? 0.75 : 1, fontFamily: FF }}>
+            {exporting ? <Loader2 size={14} className="spin" /> : <Download size={14} />} Export .xlsx
+          </button>
+        </div>
       </div>
 
       {loading ? (
@@ -381,7 +502,7 @@ export default function SDP2_CMS({ supabase, theme = "dark", profile, onExit }) 
         // tabel (bukan menggantikan seluruh tabel), supaya daftar kolomnya
         // tetap kelihatan lengkap & bisa langsung dipakai walau datanya 0.
         <div style={{ border: `1px solid ${t.line}`, borderRadius: 12, overflow: "hidden" }}>
-          <div style={{ overflow: "auto", maxHeight: "68vh" }}>
+          <div className="sdp-cms-scroll" style={{ overflow: "auto", maxHeight: "68vh" }}>
             <table style={{ borderCollapse: "collapse", fontSize: 12.5, width: "max-content", minWidth: "100%" }}>
               <thead style={{ position: "sticky", top: 0, zIndex: 5 }}>
                 <tr style={{ background: t.head, color: t.mid }}>
@@ -418,9 +539,12 @@ export default function SDP2_CMS({ supabase, theme = "dark", profile, onExit }) 
                     {COLS.map(([key]) => {
                       const raw = r[key];
                       const isLink = (key === "ktp_file" || key === "npwp_file" || key === "main_document_folder_link") && raw;
+                      const hidden = HIDDEN_VALUE_KEYS.has(key);
                       return (
                         <td key={key} style={{ padding: "7px 12px", whiteSpace: "nowrap", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", color: t.hi }}>
-                          {isLink ? (
+                          {hidden ? (
+                            <span style={{ color: t.lo }}>—</span>
+                          ) : isLink ? (
                             <a href={String(raw)} target="_blank" rel="noreferrer" style={{ color: t.tealD, textDecoration: "underline" }}>Buka</a>
                           ) : (
                             fmtCell(key, raw) || <span style={{ color: t.lo }}>—</span>
@@ -438,7 +562,76 @@ export default function SDP2_CMS({ supabase, theme = "dark", profile, onExit }) 
       </>
       )}
 
-      <style>{`.spin{animation:sp 1s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}`}</style>
+      {tab === "registrasi" && (
+        <SDP2_GenericTable supabase={supabase} theme={theme} profile={profile} role={role} t={t} d={d}
+          tableName="sdp_registration" cols={COLS}
+          externalRows={rows.filter((r) => r.request_type === "New" && (!regPeriod || r.submission_month === regPeriod))}
+          onReload={load}
+          groupByKey="submission_month" groupLabelFn={fmtYM}
+          dateKeys={["created_at", "updated_at", "submission_date"]}
+          linkKeys={["ktp_file", "npwp_file", "main_document_folder_link"]}
+          searchKeys={["sdp_name", "sdp_id_new", "partner_company_name", "branch", "submitted_by_name", "cse_name"]}
+          scopeRegionKey={null}
+          statLabel="Total Registrasi (New)"
+          statSub={role === "pic_region" ? "Region Anda" : "Seluruh Sumatera"}
+          extraControls={
+            <div style={{ position: "relative" }}>
+              <select value={regPeriod} onChange={(e) => setRegPeriod(e.target.value)} title="Filter periode (opsional — Submission Month)"
+                style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", boxSizing: "border-box",
+                  padding: "8px 30px 8px 11px", borderRadius: 9, border: `1px solid ${t.line}`, background: t.card, color: t.hi,
+                  fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: FF, outline: "none" }}>
+                <option value="">Semua Periode</option>
+                {periodOptions.map((ym) => <option key={ym} value={ym}>{fmtYM(ym)}</option>)}
+              </select>
+              <ChevronDown size={13} style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", color: t.mid, pointerEvents: "none" }} />
+            </div>
+          }
+          exportFileName="CMS_Registrasi_SDP" exportSheetName="Registrasi SDP"
+          searchPlaceholder="Cari nama SDP, SDP ID, partner, branch, pengirim…"
+          emptyLabel="Belum ada data registrasi (New) — semua kolom di atas tetap ditampilkan."
+          icon={<ClipboardList size={13} color={t.teal} />} />
+      )}
+
+      {tab === "terminasi" && (
+        <SDP2_GenericTable supabase={supabase} theme={theme} profile={profile} role={role} t={t} d={d}
+          tableName="sdp_termination" cols={COLS_TERMINASI}
+          dateKeys={["submission_date", "last_active_date", "effective_termination_date"]}
+          linkKeys={["circle_iom_link", "document_folder_link"]}
+          searchKeys={["sdp_name", "sdp_code", "branch", "termination_reason", "pic_circle", "pic_hq"]}
+          scopeRegionKey="region"
+          exportFileName="CMS_Terminasi_SDP" exportSheetName="Terminasi SDP"
+          searchPlaceholder="Cari nama SDP, SDP Code, branch, alasan terminasi…"
+          emptyLabel="Belum ada data terminasi — semua kolom di atas tetap ditampilkan."
+          icon={<FileMinus2 size={13} color={t.acc} />} />
+      )}
+
+      {tab === "rebordering" && (
+        <SDP2_GenericTable supabase={supabase} theme={theme} profile={profile} role={role} t={t} d={d}
+          tableName="sdp_rebordering" cols={COLS_REBORDERING}
+          dateKeys={["effective_date"]}
+          linkKeys={["approval_iom_link"]}
+          searchKeys={["kecamatan", "kabupaten", "existing_sdp_name", "after_sdp_name", "owner"]}
+          scopeRegionKey={null}
+          exportFileName="CMS_Rebordering_SDP" exportSheetName="Rebordering SDP"
+          searchPlaceholder="Cari kecamatan, kab/kota, nama SDP existing/tujuan…"
+          emptyLabel="Belum ada data rebordering — semua kolom di atas tetap ditampilkan."
+          icon={<Shuffle size={13} color={t.blue} />} />
+      )}
+
+      {tab === "territory" && role === "spm_sumatera" && (
+        <SDP_UploadTerritory supabase={supabase} theme={theme} profile={profile} />
+      )}
+
+      {/* UPDATE (permintaan user - "walaupun dia bisa di scroll, tidak perlu
+          tampilkan scroll bar di paling kanan agar lebih rapi"): scrollbar
+          tabel disembunyikan visualnya (cross-browser) - scroll (geser/
+          drag/trackpad/keyboard) TETAP berfungsi normal, cuma bar-nya yang
+          tidak digambar. */}
+      <style>{`
+        .spin{animation:sp 1s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}
+        .sdp-cms-scroll{scrollbar-width:none;-ms-overflow-style:none;}
+        .sdp-cms-scroll::-webkit-scrollbar{display:none;}
+      `}</style>
     </div>
   );
 }

@@ -27,6 +27,16 @@ function downloadTemplate() {
   XLSX.writeFile(wb, "template_validasi_msisdn.xlsx");
 }
 
+function downloadRows(rows, columns, fileLabel) {
+  const headers = columns.filter((c) => c.key !== "aksi").map((c) => c.label);
+  const data = rows.map((r) => columns.filter((c) => c.key !== "aksi").map((c) => (c.key === "no" ? r.__no : c.get ? c.get(r) : "")));
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
+  ws["!cols"] = headers.map(() => ({ wch: 18 }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Validasi MSISDN");
+  XLSX.writeFile(wb, `${fileLabel}.xlsx`);
+}
+
 function normMsisdn(v) {
   return String(v ?? "").replace(/[^0-9]/g, "").replace(/^0/, "62");
 }
@@ -82,13 +92,31 @@ function Body({ email, role }) {
   const load = useCallback(async () => {
     setLoading(true); setErr("");
     try {
-      const { data: rows, error } = await supabaseMarta
-        .from("mh_dsf_sales_entries")
-        .select("id, activity_id, msisdn, category, imei, org_id, validation_status, matched_org_id, ga_site_id, submitted_by_name, submitted_at, reconciled_by_name, reconciled_at, created_at")
-        .order("created_at", { ascending: false })
-        .limit(2000);
-      if (error) throw new Error(error.message);
-      const list = rows || [];
+      // UPDATE (permintaan user - "mengapa dia limit hanya di 1000
+      // msisdn"): PostgREST (Supabase) punya hard cap default MAX
+      // ROWS PER REQUEST (biasanya 1000) yg berlaku TERLEPAS dari
+      // .limit() yg kita minta di client - jadi .limit(2000) sebelumnya
+      // percuma, tetap kepotong di 1000 oleh server. Solusinya: ambil
+      // per-halaman pakai .range(from, to) 1000 baris sekaligus, ulang
+      // terus sampai halaman yg balik < 1000 baris (artinya itu halaman
+      // terakhir) - jadi SEMUA baris ke-ambil berapapun jumlahnya,
+      // bukan cuma 1000 pertama.
+      const PAGE_SIZE = 1000;
+      let all = [];
+      for (let page = 0; ; page++) {
+        const from = page * PAGE_SIZE;
+        const to = from + PAGE_SIZE - 1;
+        const { data: rows, error } = await supabaseMarta
+          .from("mh_dsf_sales_entries")
+          .select("id, activity_id, msisdn, category, imei, org_id, validation_status, matched_org_id, ga_site_id, submitted_by_name, submitted_at, reconciled_by_name, reconciled_at, created_at")
+          .order("created_at", { ascending: false })
+          .range(from, to);
+        if (error) throw new Error(error.message);
+        const batch = rows || [];
+        all = all.concat(batch);
+        if (batch.length < PAGE_SIZE) break;
+      }
+      const list = all;
       setEntries(list);
 
       const actIds = Array.from(new Set(list.map((r) => r.activity_id).filter(Boolean)));
@@ -277,6 +305,14 @@ function Body({ email, role }) {
         <button onClick={downloadTemplate}
           style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 12px", borderRadius: 9, border: `1px solid ${T.line}`, background: "#fff", color: T.mid, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
           <Download size={14} /> Download Template
+        </button>
+        {/* UPDATE (permintaan user - "belum ada button untuk download"):
+            export hasil tabel yg lagi tampil (sesuai tab/filter/pencarian
+            aktif) ke Excel - beda dari "Download Template" di atas yg
+            cuma ngasih file kosong utk diisi ulang. */}
+        <button onClick={() => downloadRows(filteredRows.map((r, i) => ({ ...r, __no: i + 1 })), COLUMNS, `validasi_msisdn_${tab}`)} disabled={!filteredRows.length}
+          style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 12px", borderRadius: 9, border: `1px solid ${T.line}`, background: "#fff", color: T.mid, fontSize: 12.5, fontWeight: 700, cursor: filteredRows.length ? "pointer" : "default", opacity: filteredRows.length ? 1 : 0.5 }}>
+          <Download size={14} /> Download
         </button>
         {canValidate && (
           <>

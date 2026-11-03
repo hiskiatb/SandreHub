@@ -13,7 +13,8 @@
  * Props: { supabase, theme = "dark", profile, onExit }
  */
 import React, { useMemo, useState } from "react";
-import { ArrowLeft, ChevronRight, Sparkles, Lock, LayoutGrid } from "lucide-react";
+import { ArrowLeft, ChevronRight, Sparkles, Lock, LayoutGrid, Store } from "lucide-react";
+import { SdpHeaderBanner } from "./SDP2_Shared";
 import SDP2_Home from "./SDP2_Home";
 import SDP2_CMS from "./SDP2_CMS";
 
@@ -141,10 +142,13 @@ export default function SDP2_StatusForm({ supabase, theme = "dark", profile, onE
         <ArrowLeft size={15} /> Kembali
       </button>
 
-      <div style={{ marginBottom: 22 }}>
-        <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: -0.4 }}>SDP Management</div>
-        <div style={{ fontSize: 13, color: t.mid, marginTop: 4 }}>Pilih menu di bawah untuk melanjutkan. Menu lain akan menyusul.</div>
-      </div>
+      {/* UPDATE (permintaan user - "tambahkan logo sdp management di
+          titlenya" -> "gunakan logo yang di sidebar" -> "untuk semua menu
+          SDP Management, buatkan style seperti ini [gradient teal->gelap],
+          termasuk primary color, pastikan teks tetap kontras"): badge ikon
+          polos diganti SdpHeaderBanner (gradient teal->gelap, seragam di
+          semua layar modul ini) - ikon tetap Store, sama dgn sidebar. */}
+      <SdpHeaderBanner icon={Store} title="SDP Management" />
 
       {/* Menu grid — responsif, tidak dipaksa satu kolom sempit di tengah */}
       <div style={{

@@ -16,7 +16,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle, ArrowLeft, AtSign, Blinds, Calendar, Camera, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
-  ClipboardList, Download, Eye, Flag, Frame, Image as ImageIcon, Loader2, MapPin, Pencil, PlusSquare, ScanBarcode, Search, Send,
+  ClipboardList, Download, Eye, Flag, Frame, Image as ImageIcon, Loader2, Lock, MapPin, Pencil, PlusSquare, ScanBarcode, Search, Send,
   Share, Sticker, Store, Tent, Ticket, User, X,
 } from "lucide-react";
 import lottie from "lottie-web";
@@ -61,6 +61,13 @@ const STEPS = [
   { key: "availability", label: "Availability" },
   { key: "review", label: "Review" },
 ];
+
+// -- Gate pendaftaran: diminta user utk DITUTUP SEMENTARA (periode NSA
+// Retail Competition sudah berakhir) - tanpa mekanisme toggle existing
+// (tabel config/flag) di codebase utk form ini, jadi dipakai constant
+// hardcode paling simpel. Developer tinggal ganti `false` -> `true` di
+// SINI utk buka lagi form-nya nanti, gak perlu ubah bagian lain.
+const FORM_OPEN = false;
 
 // Step "Visibility" (sebelum Availability) - 5 materi visibilitas, tiap item
 // dijawab Ada (1) atau Tidak Ada (0). Key dipakai jadi nama state `vis` DAN
@@ -243,6 +250,54 @@ function HeaderTitle({ showInstall, onInstallClick, installing }) {
             {installing ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Download size={13} />}
           </button>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** Layar "form ditutup" - gantiin seluruh wizard (stepper + step manapun)
+ * waktu FORM_OPEN = false. Header gradient pink/orange + logo IOH tetap
+ * dipakai (konsisten brand sama layar form-nya), tapi TANPA Stepper (step
+ * 1-5 gak relevan lagi krn gak ada flow yg jalan) dan TANPA tombol
+ * "Selanjutnya"/field apapun - cuma pesan + ikon, biar jelas ini keadaan
+ * akhir, bukan step yg lagi dimuat/loading. */
+function ClosedState() {
+  return (
+    <div style={{
+      minHeight: "100svh", background: BG, fontFamily: FONT, display: "flex", flexDirection: "column",
+    }}>
+      <div style={{ background: BRAND_GRADIENT }}>
+        <Header title={<HeaderTitle showInstall={false} />} />
+      </div>
+      <div style={{
+        flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        padding: "40px 28px calc(40px + env(safe-area-inset-bottom))", textAlign: "center",
+      }}>
+        <div style={{
+          width: 84, height: 84, borderRadius: "50%", background: "rgba(236,11,111,0.08)",
+          display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 24,
+        }}>
+          <div style={{
+            width: 60, height: 60, borderRadius: "50%", background: BRAND_GRADIENT,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            boxShadow: "0 8px 20px rgba(236,11,111,0.3)",
+          }}>
+            <Lock size={26} color="#fff" strokeWidth={2.1} />
+          </div>
+        </div>
+        <div style={{ fontSize: 21, fontWeight: 800, color: INK, letterSpacing: "-0.02em", marginBottom: 12 }}>
+          Pendaftaran Telah Ditutup
+        </div>
+        <div style={{ fontSize: 14, color: MID, maxWidth: 340, lineHeight: 1.65 }}>
+          Terima kasih atas antusiasme Anda. Periode pendaftaran untuk NSA Retail Competition telah berakhir dan saat ini tidak menerima data outlet baru.
+        </div>
+        <div style={{
+          marginTop: 28, padding: "11px 20px", borderRadius: 999, background: "#fff",
+          border: `1px solid ${BORDER}`, fontSize: 12.5, color: MID, fontWeight: 600,
+          textAlign: "center", lineHeight: 1.5,
+        }}>
+          Hubungi Sales Supervisor Anda<br />untuk informasi lebih lanjut.
+        </div>
       </div>
     </div>
   );
@@ -1938,6 +1993,13 @@ export default function AuditOutletFormPage() {
     setStep(0); setDone(false); setErr("");
     captureGps();
   };
+
+  // Gate ditaruh SETELAH semua hook di atas (bukan early-return paling
+  // awal) - react-hooks/rules-of-hooks menolak hook yg kepanggil setelah
+  // ada return kondisional duluan, meski kondisinya constant module-level
+  // yg gak pernah berubah. Hooks tetap selalu kepanggil tiap render; yg
+  // beda cuma JSX apa yg akhirnya dirender.
+  if (!FORM_OPEN) return <ClosedState />;
 
   if (submitting) {
     const pct = Math.min(100, Math.round((progressStep.current / progressStep.total) * 100));

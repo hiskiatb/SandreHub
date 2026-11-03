@@ -4,8 +4,11 @@
  * Form registrasi SDP per-satu, mobile-first, sebagai jalur utama CSE.
  * - Geo terkunci dari profil (scope cluster/branch).
  * - Validasi inline via lib/sdp.
- * - SDP ID di-generate otomatis via RPC generate_sdp_id (§10A);
- *   Hybrid IM3+3ID → dua baris berpasangan (SDP + KSK, seq sama).
+ * - SDP ID di-generate otomatis via RPC generate_sdp_id (§10A).
+ *   UPDATE (permintaan user - "jangan pasangkan otomatis wajib satu per
+ *   satu"): Hybrid IM3+3ID TIDAK LAGI otomatis membuat 2 baris berpasangan
+ *   dalam satu submit - setiap brand didaftarkan satu per satu, dihubungkan
+ *   manual lewat field "Pairing ID".
  * - Insert mengisi submitted_by = auth.uid() (syarat RLS sdp_registration).
  *
  * Props: { supabase, theme = "dark", profile, onExit, initialDraft, lockRequestType }
@@ -23,11 +26,12 @@ import {
 } from "lucide-react";
 import {
   SDP_LISTS, validateRegistrationRow, applyDerived,
-  previewSdpId, isHybridScope, masterToPrefill, isNewCreation, dedupeSdps, buildKecIndex,
+  previewSdpId, isHybridScope, hybridTypeFromScope, masterToPrefill, isNewCreation, dedupeSdps, buildKecIndex,
 } from "../../../lib/sdp";
 import SDP_MapPicker from "./SDP_MapPicker";
 import SDP_SearchSelect from "./SDP_SearchSelect";
 import SDP_AddressSearch from "./SDP_AddressSearch";
+import { SDP_GRADIENT_CTA, SDP_GRADIENT_CTA_SHADOW, SdpHeaderBanner } from "./SDP2_Shared";
 import { UploadCloud, FileText, X as XIcon, FileCheck2, ShieldCheck } from "lucide-react";
 import { uploadSdpDocument, sdpDriveFolderUrl } from "../../../lib/sdp/driveRelay";
 import { supabaseMarta } from "../../../lib/supabaseMarta";
@@ -109,12 +113,14 @@ const STEPS = [
              ["request_type","Request Type","enum:request_type"],["registration_scope","Registration Scope","enum:registration_scope"],
              ["hybrid_type","Hybrid Type","enum:hybrid_type"]] },
   { id: "wilayah", title: "Wilayah & Brand", icon: MapPin, hint: "Scope wilayah & brand — dasar pembentukan SDP ID.",
-    // Urutan Excel: Brand(2) → Circle(7) → Region(8) → Branch(9) → SDP
-    // Name(10) → Kab/Kota(22) → Kecamatan Coverage(23). Micro Cluster &
-    // Partner Territory BUKAN kolom Excel — ditaruh berdekatan dgn
-    // Branch/Kecamatan karena sama-sama scope wilayah.
-    fields: [["brand","Brand","enum:brand"],["circle","Circle","geo"],["region","Region","geo"],["branch","Branch","geo"],["micro_cluster","Micro Cluster","geo"],
-             ["sdp_name","SDP Name"],["kabupaten","Kab/Kota"],["kecamatan_coverage","Kecamatan Coverage"],["partner_territory","Partner Territory"]] },
+    // UPDATE (permintaan user - "pindahkan nama sdp di awal"): SDP Name
+    // dipindah jadi field PERTAMA di langkah ini (sebelumnya di urutan
+    // Excel asli, posisi ke-10 - lihat DB_COLS/COLS di SDP2_CMS.jsx utk
+    // urutan Excel resmi yg TETAP dipertahankan utk Export .xlsx, ini cuma
+    // urutan tampil di FORM). Circle/Region/Branch/Micro Cluster menyusul,
+    // lalu Kab/Kota & Kecamatan Coverage.
+    fields: [["sdp_name","SDP Name"],["brand","Brand","enum:brand"],["circle","Circle","geo"],["region","Region","geo"],["branch","Branch","geo"],["micro_cluster","Micro Cluster","geo"],
+             ["kabupaten","Kab/Kota"],["kecamatan_coverage","Kecamatan Coverage"],["partner_territory","Partner Territory"]] },
   { id: "partner", title: "Data Partner", icon: Building2, hint: "Identitas & legalitas partner.",
     fields: [["partner_company_name","Partner / Company Name"],["customer_legal_name","Customer Legal Name"],
              ["company_type","Company Type","enum:company_type"],["status_company","Status Company","enum:status_company"],
@@ -143,7 +149,7 @@ STEPS.forEach((s, i) => (s.fields || []).forEach(([k]) => { FIELD_STEP[k] = i; }
 
 const uniq = (arr) => [...new Set(arr.filter((v) => v != null && String(v).trim() !== ""))].sort((a, b) => String(a).localeCompare(String(b)));
 
-export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExit, initialDraft = null, lockRequestType = null }) {
+export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExit, initialDraft = null, lockRequestType = null, editEntry = null }) {
   const d = theme === "dark";
   const t = mk(d);
   const role = profile?.role ?? "";
@@ -156,14 +162,26 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
   const [combos, setCombos] = useState([]);
   const [sdps, setSdps] = useState([]);
   const [territory, setTerritory] = useState([]);
-  const [existingSdpId, setExistingSdpId] = useState("");
+  const [existingSdpId, setExistingSdpId] = useState(editEntry?.sdp_id_new || "");
   const [loadingMaster, setLoadingMaster] = useState(true);
-  const [val, setVal] = useState({
-    brand: brandLock || "", submission_date: new Date().toISOString().slice(0, 10),
-    circle: "Sumatera", region: profile?.region || "",
-    cse_name: profile?.full_name || profile?.username || "", email_pic_ioh: profile?.email || "",
-    request_type: lockRequestType || "",
-  });
+  // UPDATE (permintaan user - "perbaiki tampilan untuk melengkapi data
+  // datanya sama seperti registrasi"): mode EDIT data existing (dibuka dari
+  // SDP2_Detail "Lihat/ubah detail lengkap") memakai wizard yang SAMA
+  // PERSIS dgn Registrasi SDP, bukan form terpisah (SDP_RegistrationDetail
+  // lama). editEntry = baris `sdp_registration` lengkap (select *) — di-
+  // spread apa adanya ke `val` (field2 form ketemu key yg sama persis dgn
+  // kolom DB), PLUS `cycle_month` diisi dari `submission_month` krn form
+  // ini pakai nama field "cycle_month" utk kolom DB submission_month.
+  const [val, setVal] = useState(() => (
+    editEntry
+      ? { ...editEntry, cycle_month: editEntry.submission_month || "" }
+      : {
+          brand: brandLock || "", submission_date: new Date().toISOString().slice(0, 10),
+          circle: "Sumatera", region: profile?.region || "",
+          cse_name: profile?.full_name || profile?.username || "", email_pic_ioh: profile?.email || "",
+          request_type: lockRequestType || "",
+        }
+  ));
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState(null);
@@ -199,6 +217,14 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
   const [requiredDocs, setRequiredDocs] = useState({});
   const [extraDocs, setExtraDocs] = useState([]);
   const [docUploadMsg, setDocUploadMsg] = useState(null);
+  // UPDATE (permintaan user - "buat tombol informasi keterangan penamaan
+  // [SDP ID]"): popover penjelasan format SDP ID (lihat komponen
+  // SdpIdInfoModal di bawah) - dibuka dari tombol info (i) di sebelah
+  // label "SDP ID", baik di field grid maupun di kotak konfirmasi besar.
+  const [showIdInfo, setShowIdInfo] = useState(false);
+  // Info (i) panduan penamaan "PT" (Customer Legal Name) — mengikuti pola
+  // showIdInfo/SdpIdInfoModal di atas (lihat PtNameInfoModal di bawah).
+  const [showPtInfo, setShowPtInfo] = useState(false);
   const docSlots = activeDocSlots(val);
   const requiredDocsFilled = docSlots.filter((s) => requiredDocs[s.key]).length;
   const requiredDocsComplete = requiredDocsFilled === docSlots.length;
@@ -290,9 +316,9 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialDraft?.id]);
 
-  // Muat draft yang tersimpan saat pertama membuka form (dilewati bila buka dari inbox).
+  // Muat draft yang tersimpan saat pertama membuka form (dilewati bila buka dari inbox ATAU dari mode edit data existing).
   useEffect(() => {
-    if (initialDraft?.id) return;
+    if (initialDraft?.id || editEntry) return;
     try {
       const raw = window.localStorage.getItem(draftKey);
       if (raw) {
@@ -413,8 +439,34 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
   // Kunci brand BSM.
   useEffect(() => { if (brandLock && val.brand !== brandLock) set("brand", brandLock); /* eslint-disable-next-line */ }, [brandLock]);
 
+  // UPDATE (permintaan user - "jika brand nya pilih IM3, registration scope
+  // nya hanya IM3 Only, Hybrid IM3 Single, atau Hybrid IM3+3ID"): kalau
+  // Brand berganti & Registration Scope yang sudah dipilih jadi tidak valid
+  // lagi utk Brand baru (mis. sudah pilih "3ID only" lalu Brand diganti ke
+  // IM3), bersihkan supaya user tidak kebawa opsi scope dari brand lain.
+  useEffect(() => {
+    const b = brandLock || val.brand;
+    if (!b || !val.registration_scope) return;
+    const invalid = b === "IM3"
+      ? /^3ID only$|^Hybrid 3ID Single$/.test(val.registration_scope)
+      : /^IM3 only$|^Hybrid IM3 Single$/.test(val.registration_scope);
+    if (invalid) set("registration_scope", "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brandLock, val.brand]);
+
+  // UPDATE (permintaan user - "Hybrid Type itu otomatis saja dari
+  // registration scope, misal untuk IM3 Only berarti not hybrid, kalo
+  // single berarti single, kalo IM3+3ID berarti full hybrid"): Hybrid Type
+  // tidak lagi dipilih manual - otomatis mengikuti Registration Scope (lihat
+  // hybridTypeFromScope di lib/sdp/idFormat.js).
+  useEffect(() => {
+    const auto = hybridTypeFromScope(val.registration_scope);
+    if (val.hybrid_type !== auto) set("hybrid_type", auto);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [val.registration_scope]);
+
   // Jenis pembuatan baru → tak perlu SDP existing; bersihkan pilihan lama.
-  useEffect(() => { if (isNewCreation(val.request_type)) setExistingSdpId(""); }, [val.request_type]);
+  useEffect(() => { if (!editEntry && isNewCreation(val.request_type)) setExistingSdpId(""); }, [val.request_type, editEntry]);
 
   // Kab/Kota & Kecamatan Coverage dipersempit berjenjang: Branch → Region →
   // Micro Cluster, sesuai filter yang SUDAH dipilih user di atas (mh_sites
@@ -474,10 +526,55 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
     return new Set(scopedTerritory.filter((r) => r.kabupaten === val.kabupaten).map((r) => r.kecamatan).filter(Boolean)).size;
   }, [scopedTerritory, val.kabupaten]);
 
-  const willGenerate = isNewCreation(val.request_type);
+  // Mode edit TIDAK PERNAH generate ID baru, walau request_type-nya "New"
+  // (data ini sudah pernah di-generate ID-nya saat registrasi awal).
+  const willGenerate = isNewCreation(val.request_type) && !editEntry;
   const idPreview = willGenerate
     ? previewSdpId({ ...val, submission_month: val.cycle_month })
     : (existingSdpId || null);
+
+  // ── Penamaan PT otomatis (Customer Legal Name) ──────────────────────────
+  // UPDATE (permintaan user - "untuk penamaan PT itu juga di awal jadi dia
+  // perlu pilih MC dan kecamatan, kecamatan bisa pilih lebih dari satu,
+  // namun jika dia pilih lebih dari satu coverage kecamatan maka dia harus
+  // pilih lagi kecamatan lokasi SDP yang akan kita acu sebagai Partner
+  // Territory Name"): mengikuti format standar dari slide "PT [MC]
+  // [KECAMATAN]" (lihat PtNameInfoModal) - MC diambil dari field "Micro
+  // Cluster" yang sudah ada, kecamatan acuan diambil dari "Partner
+  // Territory" yang sekarang JADI PICKER (bukan teks bebas lagi):
+  //   • 0 kecamatan coverage dipilih → belum bisa ditentukan.
+  //   • 1 kecamatan coverage dipilih → otomatis dipakai sebagai acuan,
+  //     field Partner Territory terkunci/auto-isi (tidak perlu pilih lagi).
+  //   • >1 kecamatan coverage dipilih → user WAJIB pilih satu di antaranya
+  //     sbg "kecamatan lokasi SDP" (mana yg jadi acuan nama PT).
+  // Customer Legal Name lalu di-generate OTOMATIS (readonly, spt SDP ID)
+  // dari MC + Partner Territory ini, supaya penamaan PT konsisten/standar.
+  const kecCoverageList = useMemo(
+    () => String(val.kecamatan_coverage || "").split(",").map((s) => s.trim()).filter(Boolean),
+    [val.kecamatan_coverage]
+  );
+  // Kalau coverage cuma 1 → kunci partner_territory ke situ otomatis. Kalau
+  // coverage berubah dan partner_territory yg lama sudah tidak ada di
+  // daftar coverage terbaru → reset (minta pilih ulang).
+  useEffect(() => {
+    if (kecCoverageList.length === 1) {
+      if (val.partner_territory !== kecCoverageList[0]) set("partner_territory", kecCoverageList[0]);
+    } else if (kecCoverageList.length === 0) {
+      if (val.partner_territory) set("partner_territory", "");
+    } else if (val.partner_territory && !kecCoverageList.includes(val.partner_territory)) {
+      set("partner_territory", "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kecCoverageList.join("|")]);
+  const ptNamePreview = (val.micro_cluster && val.partner_territory)
+    ? `PT ${val.micro_cluster} ${val.partner_territory}`.toUpperCase()
+    : "";
+  // Sinkronkan ke Customer Legal Name begitu MC + Partner Territory lengkap
+  // (field ini readonly di UI - lihat renderField k==="customer_legal_name").
+  useEffect(() => {
+    if (ptNamePreview && val.customer_legal_name !== ptNamePreview) set("customer_legal_name", ptNamePreview);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ptNamePreview]);
 
   // ── Submit ────────────────────────────────────────────────────────────────
   const submit = async () => {
@@ -500,8 +597,10 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
       return;
     }
     // Dokumen wajib harus lengkap sebelum submit, khusus pembuatan SDP baru
-    // (Update/Terminate/Remapping tidak selalu butuh legalitas ulang).
-    if (isNewCreation(row.request_type) && !requiredDocsComplete) {
+    // (Update/Terminate/Remapping tidak selalu butuh legalitas ulang) - TIDAK
+    // berlaku di mode edit (dokumen data existing dikelola terpisah di
+    // halaman Detail SDP, bukan di sini).
+    if (!editEntry && isNewCreation(row.request_type) && !requiredDocsComplete) {
       setStep(FIELD_STEP.remarks ?? STEPS.length - 1);
       setMsg({ type: "err", text: `Lengkapi dulu ${docSlots.length - requiredDocsFilled} dokumen wajib yang belum diunggah.` });
       return;
@@ -512,23 +611,63 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Sesi tidak ditemukan, silakan login ulang.");
 
+      // ── Mode EDIT data existing — UPDATE baris yg sudah ada, TIDAK
+      // generate SDP ID baru/pasangan Hybrid baru (itu sudah ada sejak
+      // submit asli), dan TIDAK menimpa submitted_by/submitter_*/lifecycle
+      // (circle_submit_status dst) supaya histori approval tidak ke-reset
+      // hanya krn sekadar koreksi data. ──
+      if (editEntry) {
+        const r2 = applyDerived({ ...row, sdp_id_new: editEntry.sdp_id_new });
+        const p = {};
+        for (const k of DB_COLS) {
+          if (k === "sdp_id_new") continue; // ID tidak pernah diubah di mode edit
+          p[k] = r2[k] === "" || r2[k] === undefined ? null : r2[k];
+        }
+        const { error } = await supabase.from("sdp_registration").update(p).eq("id", editEntry.id);
+        if (error) throw error;
+
+        // Dokumen baru (kalau user sempat pilih file di langkah terakhir)
+        // tetap boleh diupload, nempel ke SDP ID yang sama persis.
+        const docsToUpload = [
+          ...docSlots.filter((sl) => requiredDocs[sl.key]).map((sl) => ({ file: requiredDocs[sl.key].file, label: requiredDocs[sl.key].label || sl.label })),
+          ...extraDocs.map((file) => ({ file, label: "Dokumen Pendukung" })),
+        ];
+        if (docsToUpload.length) {
+          setDocUploadMsg({ type: "ok", text: `Menyimpan ${docsToUpload.length} dokumen ke database…` });
+          let okCount = 0;
+          for (const { file, label } of docsToUpload) {
+            try {
+              const named = new File([file], `${label} — ${file.name}`, { type: file.type });
+              await uploadSdpDocument({ supabase, sdpId: editEntry.sdp_id_new, file: named, uploaderId: user.id, uploaderName: profile?.full_name || profile?.username || null });
+              okCount += 1;
+            } catch { /* tersimpan di Storage tapi gagal dicatat - tidak menggagalkan simpan perubahan */ }
+          }
+          setDocUploadMsg(okCount === docsToUpload.length
+            ? { type: "ok", text: `${okCount} dokumen tersimpan.` }
+            : { type: "err", text: `${okCount}/${docsToUpload.length} dokumen berhasil tersimpan — sisanya bisa di-retry dari halaman Data SDP.` });
+          setRequiredDocs({}); setExtraDocs([]);
+        }
+
+        setMsg({ type: "ok", text: "Perubahan tersimpan." });
+        setErrors({});
+        setDirty(false);
+        setSaving(false);
+        return;
+      }
+
       let rows;
       if (isNewCreation(row.request_type)) {
-        // Buat SDP baru → generate ID (+ pasangan Hybrid dengan seq sama).
+        // UPDATE (permintaan user - "jangan pasangkan otomatis wajib satu
+        // per satu", utk registrasi ini): pasangan Hybrid (SDP + KSK) TIDAK
+        // lagi di-generate & disimpan otomatis sekaligus dalam satu submit.
+        // Setiap brand didaftarkan SATU PER SATU lewat submit terpisah -
+        // Pairing ID (field manual, muncul saat scope Hybrid) yang
+        // menghubungkan ke ID pasangannya, diisi sendiri oleh user saat
+        // mendaftarkan baris kedua.
         const genArgs = { p_brand: row.brand, p_scope: row.registration_scope, p_circle: row.circle, p_cycle_month: row.submission_month };
         const { data: id1, error: e1 } = await supabase.rpc("generate_sdp_id", genArgs);
         if (e1) throw e1;
         rows = [{ ...row, sdp_id_new: id1 }];
-        if (isHybridScope(row.registration_scope)) {
-          const seq = parseInt(String(id1).slice(-2), 10);
-          const otherBrand = String(row.brand).toUpperCase() === "IM3" ? "3ID" : "IM3";
-          const { data: id2, error: e2 } = await supabase.rpc("generate_sdp_id", { ...genArgs, p_brand: otherBrand, p_seq: seq });
-          if (e2) throw e2;
-          rows = [
-            { ...row, brand: row.brand, sdp_id_new: id1, pairing_id: id2 },
-            { ...row, brand: otherBrand, sdp_id_new: id2, pairing_id: id1 },
-          ];
-        }
       } else {
         // Update/Terminate/Remapping → pakai ID SDP existing (tidak generate baru).
         if (!existingSdpId) throw new Error("Pilih SDP existing dulu untuk Update/Terminate/Remapping.");
@@ -627,7 +766,13 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
     // cuma preview hasil generate_sdp_id, ga boleh diedit manual.
     if (k === "sdp_id_preview") return wrap(
       <label style={{ display: "block" }}>
-        <div style={lblStyle}>{label}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <div style={lblStyle}>{label}</div>
+          <button type="button" onClick={(e) => { e.preventDefault(); setShowIdInfo(true); }} title="Keterangan format SDP ID"
+            style={{ width: 16, height: 16, borderRadius: 99, border: `1px solid ${t.line}`, background: t.card, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, marginBottom: 4 }}>
+            <Info size={10} />
+          </button>
+        </div>
         <div style={{
           width: "100%", boxSizing: "border-box", padding: "11px 12px", borderRadius: 10,
           border: `1px solid ${t.line}`, background: t.sub, color: idPreview ? t.hi : t.lo,
@@ -635,7 +780,7 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
         }}>
           <Sparkles size={13} color={t.tealD} style={{ flexShrink: 0 }} />
           <span style={{ fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {idPreview || "—"}{willGenerate && isHybridScope(val.registration_scope) && idPreview ? " +KSK" : ""}
+            {idPreview || "—"}
           </span>
         </div>
       </label>);
@@ -665,9 +810,86 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
           <span>{val.kabupaten ? <>di Kab/Kota <strong style={{ color: t.mid }}>{val.kabupaten}</strong> ({kecScopeLabel}) — kosongkan Kab/Kota untuk lihat semua.</> : <>tersedia di {kecScopeLabel} — dari Data Site MartaHub terbaru.</>}</span>
         </div>
       </label>);
+    // "Partner Territory" SEKARANG picker (bukan teks bebas) — menentukan
+    // kecamatan lokasi SDP yg jadi ACUAN penamaan PT (lihat ptNamePreview di
+    // atas). 1 kecamatan coverage → otomatis terkunci ke situ. >1 kecamatan
+    // coverage → wajib pilih salah satu secara eksplisit.
+    if (k === "partner_territory") {
+      const locked = kecCoverageList.length <= 1;
+      return wrap(
+        <label style={{ display: "block" }}>
+          <div style={lblStyle}>{label}</div>
+          {kecCoverageList.length === 0 ? (
+            <div style={{ width: "100%", boxSizing: "border-box", padding: "11px 12px", borderRadius: 10, border: `1px solid ${t.line}`, background: t.sub, color: t.lo, fontSize: 13, fontFamily: FF }}>
+              — pilih Kecamatan Coverage dulu —
+            </div>
+          ) : locked ? (
+            <div style={{ width: "100%", boxSizing: "border-box", padding: "11px 12px", borderRadius: 10, border: `1px solid ${t.line}`, background: t.sub, color: t.hi, fontSize: 14, fontFamily: FF, fontWeight: 700 }}>
+              {kecCoverageList[0]}
+            </div>
+          ) : (
+            <Field k={k} label="" type="text" t={t} value={val.partner_territory ?? ""}
+              err={errors.partner_territory} onChange={(v) => set("partner_territory", v)} options={kecCoverageList} />
+          )}
+          <div style={{ fontSize: 11, color: t.lo, marginTop: 5, lineHeight: 1.45 }}>
+            {kecCoverageList.length > 1
+              ? "Kecamatan Coverage lebih dari satu — pilih kecamatan lokasi SDP yang sebenarnya sbg acuan nama PT."
+              : "Otomatis mengikuti Kecamatan Coverage yang dipilih."}
+          </div>
+        </label>);
+    }
+    // "Customer Legal Name" (nama PT) kini DI-GENERATE OTOMATIS dari Micro
+    // Cluster (MC) + Partner Territory di atas, mengikuti format standar
+    // "PT [MC] [KECAMATAN]" (lihat tombol info di sebelah label) — readonly,
+    // sama spt pola SDP ID, supaya penamaan PT konsisten di semua Circle.
+    if (k === "customer_legal_name") return wrap(
+      <label style={{ display: "block" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <div style={lblStyle}>{label}</div>
+          <button type="button" onClick={(e) => { e.preventDefault(); setShowPtInfo(true); }} title="Keterangan format nama PT"
+            style={{ width: 16, height: 16, borderRadius: 99, border: `1px solid ${t.line}`, background: t.card, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, marginBottom: 4 }}>
+            <Info size={10} />
+          </button>
+        </div>
+        <div style={{
+          width: "100%", boxSizing: "border-box", padding: "11px 12px", borderRadius: 10,
+          border: `1px solid ${t.line}`, background: t.sub, color: ptNamePreview ? t.hi : t.lo,
+          fontSize: 14, fontFamily: FF, fontWeight: ptNamePreview ? 700 : 500, minHeight: 42, display: "flex", alignItems: "center",
+        }}>
+          {ptNamePreview || "— lengkapi Micro Cluster & Partner Territory —"}
+        </div>
+      </label>);
+    // UPDATE (permintaan user - "jika brand nya pilih IM3, registration
+    // scope nya hanya IM3 Only, Hybrid IM3 Single, atau Hybrid IM3+3ID"):
+    // Registration Scope dipersempit sesuai Brand yang dipilih (opsi
+    // lintas-brand seperti "3ID only"/"Hybrid 3ID Single" disembunyikan
+    // saat Brand = IM3, dan sebaliknya) - "Hybrid IM3+3ID" tetap muncul di
+    // kedua Brand krn memang melibatkan keduanya. Belum pilih Brand → semua
+    // opsi tetap tampil (SDP_LISTS.registration_scope apa adanya) supaya
+    // tidak membingungkan urutan pengisian.
+    const activeBrand = brandLock || val.brand;
+    const scopeOptions = k === "registration_scope" && activeBrand
+      ? SDP_LISTS.registration_scope.filter((o) =>
+          activeBrand === "IM3" ? !/^3ID only$|^Hybrid 3ID Single$/.test(o) : !/^IM3 only$|^Hybrid IM3 Single$/.test(o))
+      : null;
+    // Hybrid Type sekarang readonly (auto dari Registration Scope - lihat
+    // useEffect [val.registration_scope] di atas) - sama pola spt Customer
+    // Legal Name/SDP ID, supaya tidak bisa diisi manual & selalu konsisten.
+    if (k === "hybrid_type") return wrap(
+      <label style={{ display: "block" }}>
+        <div style={lblStyle}>{label}</div>
+        <div style={{
+          width: "100%", boxSizing: "border-box", padding: "11px 12px", borderRadius: 10,
+          border: `1px solid ${t.line}`, background: t.sub, color: val.hybrid_type ? t.hi : t.lo,
+          fontSize: 14, fontFamily: FF, fontWeight: 500, minHeight: 42, display: "flex", alignItems: "center",
+        }}>
+          {val.hybrid_type || "— pilih Registration Scope dulu —"}
+        </div>
+        <div style={{ fontSize: 11, color: t.lo, marginTop: 5, lineHeight: 1.45 }}>Otomatis mengikuti Registration Scope yang dipilih.</div>
+      </label>);
     return wrap(
       <Field k={k} label={label} type={type} t={t} value={val[k] ?? ""}
-        err={errors[k]} onChange={(v) => set(k, v)} options={null}
+        err={errors[k]} onChange={(v) => set(k, v)} options={scopeOptions}
         geoOpts={type === "geo" ? geoOptions(k) : null}
         brandLock={k === "brand" ? brandLock : ""} />);
   };
@@ -678,7 +900,14 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
   // langkah pertama ini (dari langkah "Wilayah & Brand") supaya begitu
   // langkah pertama selesai diisi, SDP ID langsung bisa dibentuk dan
   // ditampilkan — tidak perlu pindah langkah dulu baru ID muncul.
-  const stepsForForm = lockRequestType
+  // UPDATE (permintaan user - "pindahkan fitur ke modul baru": buka kartu
+  // Terminasi SDP/Rebordering SDP di SDP2_Home pakai lockRequestType juga):
+  // override step "Scope & Brand"/"Wilayah Operasional" (field² generate-ID
+  // SDP baru) HANYA relevan utk lockRequestType="New" - Terminate/Remapping
+  // pakai STEPS apa adanya (step "Jenis Pengajuan" asli, lengkap dgn kotak
+  // "Pilih SDP yang akan di-..." existing-picker, sama persis spt alur
+  // Archive/unlocked yang sudah teruji).
+  const stepsForForm = lockRequestType === "New"
     ? STEPS.map((s, i) => {
         if (i === 0) {
           return {
@@ -691,24 +920,60 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
             // tepat setelah brand, jadi di grid 2-kolom dia SATU BARIS
             // dengan Brand (bukan lagi chip terpisah di header). Field ini
             // readonly (auto-generated), ditangani khusus di renderField().
+            // UPDATE (permintaan user - "pindahkan nama sdp di awal" lalu
+            // "masukkan di scope and brand"): SDP Name DIPINDAH ke sini
+            // (step "Scope & Brand"), bukan lagi di step "Wilayah
+            // Operasional". Diisi TEPAT SETELAH pasangan Brand+SDP ID
+            // (bukan paling depan sendiri) supaya pasangan Brand+SDP ID
+            // TETAP sebaris (permintaan user sebelumnya - "id ... sejajar
+            // dengan kolom brand ... ukurannya sama" - urutan grid 2-kolom
+            // mengelompokkan field berpasangan berurutan, jadi kalau SDP
+            // Name ditaruh paling depan, pasangan Brand+SDP ID akan pecah
+            // baris). Urutan Excel resmi tetap dipertahankan di Export
+            // .xlsx (SDP2_CMS.jsx) - ini cuma urutan tampil di FORM.
+            // UPDATE (permintaan user - "Bulan Siklus (target live) menjadi
+            // Target Periode SDP Live, ini buat di pertama, lalu lanjutkan
+            // dengan Nama SDP lalu Brand, lalu Registration Scope untuk SDP
+            // ID di bawah saja jadi kelihatan compact"): urutan diubah jadi
+            // Target Periode SDP Live → SDP Name → Brand → Registration
+            // Scope → Circle → Hybrid Type, dengan SDP ID (readonly,
+            // auto-generated) dipindah ke baris PALING BAWAH sendirian
+            // (bukan lagi sebaris dgn Brand) supaya tampilan lebih compact.
+            // UPDATE (permintaan user - "hybrid type cukup di data
+            // keluarannya saja, jika single not hybrid"): Hybrid Type
+            // DIHAPUS dari tampilan form - tetap dihitung otomatis &
+            // disimpan ke kolom data hybrid_type (lihat useEffect
+            // [val.registration_scope] + hybridTypeFromScope di
+            // lib/sdp/idFormat.js), cuma tidak lagi jadi field yang
+            // ditampilkan di sini.
+            // UPDATE (permintaan user - "circle juga tidak perlu
+            // ditampilkan cukup di data sdp saja"): Circle DIHAPUS dari
+            // tampilan form - val.circle tetap otomatis "Sumatera" (lihat
+            // state awal di atas), cuma tidak lagi jadi field yang
+            // ditampilkan di sini (sama pola dgn Hybrid Type).
+            // UPDATE (permintaan user - "gunakan yang di bawah saja jadi
+            // cukup 1 ID SDP (NEW) ... dan juga untuk kecamatan coverage
+            // pilih disini juga"): field semu "sdp_id_preview" (kotak kecil
+            // duplikat) DIHAPUS dari grid - SDP ID sekarang HANYA tampil 1x
+            // di kartu konfirmasi besar di bawah grid (lihat kartu
+            // "Konfirmasi ID"). Kabupaten & Kecamatan Coverage dipindah ke
+            // sini juga (sebelumnya di step "Wilayah Operasional") supaya
+            // bisa langsung dipilih di step pertama.
             fields: [
+              ["cycle_month","Target Periode SDP Live","month"],
+              ["sdp_name","SDP Name"],
               ["brand","Brand","enum:brand"],
-              ["sdp_id_preview","SDP ID","readonly"],
               ["registration_scope","Registration Scope","enum:registration_scope"],
-              ["circle","Circle","geo"],
-              ["cycle_month","Bulan Siklus (target live)","month"],
-              ["hybrid_type","Hybrid Type","enum:hybrid_type"],
+              ["kabupaten","Kab/Kota"],
+              ["kecamatan_coverage","Kecamatan Coverage"],
             ],
           };
         }
         if (i === 1) {
           return {
-            ...s, title: "Wilayah Operasional", hint: "Detail wilayah & nama SDP — Brand dan Circle sudah diisi di langkah sebelumnya.",
-            // Urutan Excel: Region(8) → Branch(9) → SDP Name(10) →
-            // Kab/Kota(22) → Kecamatan Coverage(23). Micro Cluster & Partner
-            // Territory = extra (bukan kolom Excel).
+            ...s, title: "Wilayah Operasional", hint: "Detail wilayah — Brand, Circle & SDP Name sudah diisi di langkah sebelumnya.",
             fields: [["region","Region","geo"],["branch","Branch","geo"],["micro_cluster","Micro Cluster","geo"],
-                     ["sdp_name","SDP Name"],["kabupaten","Kab/Kota"],["kecamatan_coverage","Kecamatan Coverage"],["partner_territory","Partner Territory"]],
+                     ["partner_territory","Partner Territory"]],
           };
         }
         return s;
@@ -734,21 +999,27 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
           onMouseLeave={(e) => { e.currentTarget.style.borderColor = t.line; e.currentTarget.style.color = t.mid; }}>
           <ArrowLeft size={14} /> Kembali
         </button>
-        <button onClick={saveDraftEverywhere} disabled={savingDraft} title="Simpan draft ke server — bisa dilanjutkan dari perangkat lain"
-          style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 13px", borderRadius: 10, border: `1px solid ${dirty ? t.acc : t.line}`, background: dirty ? t.accBg : t.card, color: dirty ? t.acc : t.mid, fontFamily: FF, fontSize: 12.5, fontWeight: 700, cursor: savingDraft ? "default" : "pointer", boxShadow: t.sm }}>
-          {savingDraft ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Simpan Draft{dirty ? <span style={{ width: 5, height: 5, borderRadius: 99, background: t.acc, display: "inline-block", marginLeft: 1 }} /> : null}
-        </button>
+        {!editEntry && (
+          <button onClick={saveDraftEverywhere} disabled={savingDraft} title="Simpan draft ke server — bisa dilanjutkan dari perangkat lain"
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 13px", borderRadius: 10, border: `1px solid ${dirty ? t.acc : t.line}`, background: dirty ? t.accBg : t.card, color: dirty ? t.acc : t.mid, fontFamily: FF, fontSize: 12.5, fontWeight: 700, cursor: savingDraft ? "default" : "pointer", boxShadow: t.sm }}>
+            {savingDraft ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Simpan Draft{dirty ? <span style={{ width: 5, height: 5, borderRadius: 99, background: t.acc, display: "inline-block", marginLeft: 1 }} /> : null}
+          </button>
+        )}
       </div>
       {/* UPDATE (permintaan user - "id jangan buat disini, tapi sejajar
           dengan kolom brand"): chip SDP ID di header DIHAPUS - sekarang
           jadi field readonly di dalam grid step "Scope & Brand", sebaris
-          dgn Brand (lihat renderField -> k === "sdp_id_preview"). */}
-      <div style={{ marginBottom: 16 }}>
-        {/* UPDATE (permintaan user - "ubah menu registrasi SDP menjadi
-            Form SDP, nanti tidak hanya registrasi"): judul form disamakan
-            dgn nama menunya. */}
-        <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: -0.4 }}>{lockRequestType ? "Form SDP" : "Registrasi & Perubahan SDP"}</div>
-      </div>
+          dgn Brand (lihat renderField -> k === "sdp_id_preview").
+          UPDATE (permintaan user - "buatkan style gradient teal->gelap utk
+          semua menu SDP Management"): judul polos diganti SdpHeaderBanner,
+          seragam dgn layar lain di modul ini. */}
+      <SdpHeaderBanner icon={Sparkles}
+        title={editEntry ? `Edit SDP — ${editEntry.sdp_id_new || ""}`
+          : lockRequestType === "New" ? "Form SDP"
+          : lockRequestType === "Terminate" ? "Terminasi SDP"
+          : lockRequestType === "Remapping" ? "Rebordering SDP"
+          : lockRequestType ? "Form SDP"
+          : "Registrasi & Perubahan SDP"} />
 
       {/* Toolbar: simpan ke server & bagikan link (expiring) — fitur untuk
           alur lama (Archive) yang bisa dikerjakan lintas orang/perangkat via
@@ -756,7 +1027,7 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
           satu tombol "Simpan Draft" di footer sudah cukup dan sudah
           menyimpan ke server juga, jadi dua tombol simpan sekaligus di sini
           hanya bikin bingung. */}
-      {!lockRequestType && (
+      {lockRequestType !== "New" && !editEntry && (
         <>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
             <button onClick={saveServerDraft} disabled={savingDraft}
@@ -773,7 +1044,7 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
               <ChevronDown size={13} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", color: t.mid, pointerEvents: "none" }} />
             </div>
             <button onClick={shareLink}
-              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 9, border: "none", background: t.mag, color: "#fff", fontFamily: FF, fontSize: 12.5, fontWeight: 800, cursor: "pointer" }}>
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 9, border: "none", background: SDP_GRADIENT_CTA, boxShadow: SDP_GRADIENT_CTA_SHADOW, color: "#fff", fontFamily: FF, fontSize: 12.5, fontWeight: 800, cursor: "pointer" }}>
               <Link2 size={14} /> Bagikan &amp; Salin
             </button>
           </div>
@@ -830,9 +1101,13 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
                   {SDP_LISTS.request_type.map((rt) => {
                     const on = val.request_type === rt;
                     return (
+                      // UPDATE (permintaan user - gradient teal->gelap jadi
+                      // primary color modul ini): pilihan Request Type
+                      // dipilih pakai teal (bukan merah) - ini pilihan
+                      // primer, bukan status error/wajib.
                       <button key={rt} type="button" onClick={() => set("request_type", rt)}
                         style={{ padding: "11px 18px", borderRadius: 11, cursor: "pointer", fontFamily: FF, fontSize: 14, fontWeight: 700,
-                          border: `1.5px solid ${on ? t.acc : t.line}`, background: on ? t.accBg : t.inp, color: on ? t.acc : t.hi, transition: "all .16s ease" }}>
+                          border: `1.5px solid ${on ? t.tealD : t.line}`, background: on ? t.tealBg : t.inp, color: on ? t.tealD : t.hi, transition: "all .16s ease" }}>
                         {rt}
                       </button>
                     );
@@ -843,7 +1118,7 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
             )}
 
             {/* Kontekstual — mengalir ke bawah sesuai jenis */}
-            {val.request_type && (isNewCreation(val.request_type) ? null : (
+            {!editEntry && val.request_type && (isNewCreation(val.request_type) ? null : (
               <div style={{ padding: 14, borderRadius: 12, background: t.magBg, border: `1px solid ${t.magBd}`, position: "relative", zIndex: 5 }}>
                 <div style={{ fontSize: 11.5, fontWeight: 800, color: t.mag, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.03em" }}>Pilih SDP yang akan di-{String(val.request_type).toLowerCase()} · wajib</div>
                 <SDP_SearchSelect t={t}
@@ -866,16 +1141,30 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
                 lengkap, jadi user langsung tahu ID SDP-nya tanpa pindah
                 langkah. Lebih besar & tegas dari notice di atas. */}
             {val.request_type && isNewCreation(val.request_type) && (
-              <div className="sdp-fade" style={{ display: "flex", alignItems: "center", gap: 12, padding: "16px 18px", borderRadius: 14,
+              <div className="sdp-fade" role="button" tabIndex={0}
+                onClick={() => setShowIdInfo(true)}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setShowIdInfo(true); } }}
+                title="Klik untuk lihat panduan format SDP ID"
+                style={{ display: "flex", alignItems: "center", gap: 12, padding: "16px 18px", borderRadius: 14, cursor: "pointer",
                 background: idPreview ? t.tealBg : t.sub, border: `1.5px solid ${idPreview ? t.tealBd : t.line}` }}>
                 <span style={{ width: 38, height: 38, borderRadius: 11, flexShrink: 0, background: idPreview ? t.tealD : t.line, color: idPreview ? "#06231F" : t.lo, display: "flex", alignItems: "center", justifyContent: "center" }}>
                   <Sparkles size={18} />
                 </span>
                 <div>
-                  <div style={{ fontSize: 11, fontWeight: 800, color: idPreview ? t.tealD : t.mid, textTransform: "uppercase", letterSpacing: "0.05em" }}>SDP ID</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 800, color: idPreview ? t.tealD : t.mid, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                    SDP ID
+                    <span title="Klik kartu ini untuk lihat panduan format SDP ID"
+                      style={{ width: 16, height: 16, borderRadius: 99, border: `1px solid ${idPreview ? t.tealBd : t.line}`, background: "transparent", color: idPreview ? t.tealD : t.mid, display: "flex", alignItems: "center", justifyContent: "center", textTransform: "none" }}>
+                      <Info size={10} />
+                    </span>
+                  </div>
                   {idPreview ? (
                     <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "monospace", color: t.hi, marginTop: 2 }}>
-                      {idPreview}{isHybridScope(val.registration_scope) ? <span style={{ fontSize: 12.5, fontWeight: 700, color: t.mid, fontFamily: FF }}> {" "}+ pasangan KSK/SDP otomatis</span> : null}
+                      {idPreview}
+                      {/* UPDATE (permintaan user - "jangan pasangkan otomatis
+                          wajib satu per satu"): pasangan Hybrid tidak lagi
+                          dibuat otomatis - hint lama dihapus. Isi "Pairing
+                          ID" secara manual saat mendaftarkan brand kedua. */}
                     </div>
                   ) : (
                     <div style={{ fontSize: 13, color: t.mid, marginTop: 2 }}>Lengkapi Registration Scope, Brand, Circle &amp; Bulan Siklus di atas untuk melihat ID.</div>
@@ -974,7 +1263,7 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
               t={t} slots={docSlots} required={requiredDocs} setRequired={setRequiredDocs}
               extra={extraDocs} setExtra={setExtraDocs}
               filled={requiredDocsFilled} complete={requiredDocsComplete}
-              enforce={isNewCreation(val.request_type)} docUploadMsg={docUploadMsg} />
+              enforce={isNewCreation(val.request_type) && !editEntry} docUploadMsg={docUploadMsg} />
             <div className="wz-grid">{cur.fields.map(renderField)}</div>
           </>
         ) : (
@@ -1037,12 +1326,12 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
                   tombol utama full width di bawah ini saja. */}
               {isLast ? (
                 <button onClick={submit} disabled={saving} data-primary
-                  style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", boxSizing: "border-box", padding: "15px 22px", borderRadius: 13, border: "none", cursor: saving ? "default" : "pointer", fontFamily: FF, fontSize: 15, fontWeight: 800, color: "#fff", background: `linear-gradient(135deg, ${t.acc} 0%, ${t.mag} 100%)`, opacity: saving ? 0.7 : 1, boxShadow: `0 8px 18px ${t.acc}33` }}>
-                  {saving ? <Loader2 size={18} className="spin" /> : <Check size={18} />} {saving ? "Menyimpan…" : "Kirim Registrasi"}
+                  style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", boxSizing: "border-box", padding: "15px 22px", borderRadius: 13, border: "none", cursor: saving ? "default" : "pointer", fontFamily: FF, fontSize: 15, fontWeight: 800, color: "#fff", background: SDP_GRADIENT_CTA, opacity: saving ? 0.7 : 1, boxShadow: SDP_GRADIENT_CTA_SHADOW }}>
+                  {saving ? <Loader2 size={18} className="spin" /> : <Check size={18} />} {saving ? "Menyimpan…" : editEntry ? "Simpan Perubahan" : "Kirim Registrasi"}
                 </button>
               ) : (
                 <button onClick={() => setStep(step + 1)}
-                  style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", boxSizing: "border-box", padding: "15px 22px", borderRadius: 13, border: "none", cursor: "pointer", fontFamily: FF, fontSize: 15, fontWeight: 800, color: "#fff", background: `linear-gradient(135deg, ${t.acc} 0%, ${t.mag} 100%)`, boxShadow: `0 8px 18px ${t.acc}33` }}>
+                  style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", boxSizing: "border-box", padding: "15px 22px", borderRadius: 13, border: "none", cursor: "pointer", fontFamily: FF, fontSize: 15, fontWeight: 800, color: "#fff", background: SDP_GRADIENT_CTA, boxShadow: SDP_GRADIENT_CTA_SHADOW }}>
                   Lanjut <ChevronRight size={18} />
                 </button>
               )}
@@ -1052,6 +1341,14 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
         return footerPortalEl ? createPortal(footerBar, footerPortalEl) : footerBar;
       })()}
 
+      {showIdInfo && (
+        <SdpIdInfoModal t={t} d={d} onClose={() => setShowIdInfo(false)} current={{ idPreview }} />
+      )}
+
+      {showPtInfo && (
+        <PtNameInfoModal t={t} d={d} onClose={() => setShowPtInfo(false)} />
+      )}
+
       {/* Konfirmasi keluar bila ada perubahan belum tersimpan */}
       {confirmLeave && (
         <div onClick={() => setConfirmLeave(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
@@ -1060,12 +1357,16 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
               <span style={{ width: 40, height: 40, borderRadius: 12, background: t.accBg, color: t.acc, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><AlertTriangle size={20} /></span>
               <div style={{ fontSize: 16.5, fontWeight: 800, color: t.hi }}>Perubahan belum disimpan</div>
             </div>
-            <div style={{ fontSize: 13, color: t.mid, lineHeight: 1.55, marginBottom: 18 }}>Ada isian yang belum disimpan. Simpan sebagai draft dulu supaya bisa dilanjutkan nanti, atau buang perubahannya?</div>
+            <div style={{ fontSize: 13, color: t.mid, lineHeight: 1.55, marginBottom: 18 }}>
+              {editEntry ? "Ada perubahan yang belum disimpan. Keluar tanpa menyimpan?" : "Ada isian yang belum disimpan. Simpan sebagai draft dulu supaya bisa dilanjutkan nanti, atau buang perubahannya?"}
+            </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <button onClick={saveAndExit} data-primary style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 18px", borderRadius: 11, border: "none", cursor: "pointer", fontFamily: FF, fontSize: 14, fontWeight: 800, color: "#fff", background: `linear-gradient(135deg, ${t.acc} 0%, ${t.mag} 100%)` }}>
-                <Save size={16} /> Simpan Draft &amp; Keluar
-              </button>
-              <button onClick={discardAndExit} style={{ padding: "11px 18px", borderRadius: 11, border: `1px solid ${t.accBd || t.line}`, background: t.card, color: t.acc, fontFamily: FF, fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}>
+              {!editEntry && (
+                <button onClick={saveAndExit} data-primary style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 18px", borderRadius: 11, border: "none", cursor: "pointer", fontFamily: FF, fontSize: 14, fontWeight: 800, color: "#fff", background: SDP_GRADIENT_CTA, boxShadow: SDP_GRADIENT_CTA_SHADOW }}>
+                  <Save size={16} /> Simpan Draft &amp; Keluar
+                </button>
+              )}
+              <button onClick={editEntry ? onExit : discardAndExit} style={{ padding: "11px 18px", borderRadius: 11, border: `1px solid ${t.accBd || t.line}`, background: t.card, color: t.acc, fontFamily: FF, fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}>
                 Buang Perubahan
               </button>
               <button onClick={() => setConfirmLeave(false)} style={{ padding: "11px 18px", borderRadius: 11, border: `1px solid ${t.line}`, background: t.card, color: t.mid, fontFamily: FF, fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}>
@@ -1080,9 +1381,9 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
         .wz-steps{display:flex;align-items:center;gap:10px;overflow:visible;padding:6px 2px 18px}
         .wz-step{display:inline-flex;align-items:center;gap:9px;background:none;border:none;cursor:pointer;font-family:${FF};padding:0;flex-shrink:0}
         .wz-dot{width:32px;height:32px;border-radius:99px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12.5px;background:${t.sub};color:${t.mid};border:1.5px solid ${t.line};transition:background .3s ease,color .3s ease,border-color .3s ease,transform .3s cubic-bezier(.34,1.56,.64,1)}
-        .wz-step:hover .wz-dot{border-color:${t.acc}}
+        .wz-step:hover .wz-dot{border-color:#1A9E90}
         .wz-dot.done{background:${t.okBg};color:${t.ok};border-color:${t.ok}}
-        .wz-dot.active{background:${t.acc};color:#fff;border-color:${t.acc};transform:scale(1.08);box-shadow:0 4px 12px ${t.acc}40}
+        .wz-dot.active{background:${SDP_GRADIENT_CTA};color:#fff;border-color:transparent;transform:scale(1.08);box-shadow:${SDP_GRADIENT_CTA_SHADOW}}
         .wz-check{animation:wzPop .4s cubic-bezier(.34,1.56,.64,1) both}
         @keyframes wzPop{0%{transform:scale(0) rotate(-25deg);opacity:0}60%{transform:scale(1.25) rotate(3deg)}100%{transform:scale(1) rotate(0);opacity:1}}
         .wz-steplabel{font-size:13px;font-weight:800;color:${t.hi};white-space:nowrap;animation:wzLabel .35s ease both}
@@ -1123,6 +1424,187 @@ const YEAR_RANGE = (() => {
   for (let y = now - 1; y <= now + 3; y++) years.push(y);
   return years;
 })();
+
+// ── Popover "Keterangan Penamaan SDP ID" ────────────────────────────────────
+// UPDATE (permintaan user - screenshot slide "Partner Naming SDP
+// Standardization" IOH): tombol info (i) di sebelah label "SDP ID" (baik di
+// field grid "Scope & Brand" maupun kotak konfirmasi besar) membuka popover
+// ini - breakdown visual 5 segmen ID (Identifier/PartnerCode/YYMM/
+// CircleCode/RunningSeq) + tabel referensi kode, PERSIS mengikuti logic asli
+// di lib/sdp/idFormat.js (bukan disalin manual dari slide - supaya kalau
+// kode berubah di sana, keterangan di sini otomatis tetap akurat).
+const SDP_ID_SEGMENTS = [
+  { key: "ident", label: "Identifier", sub: "SDP (Mitra IM3) / KSK (3Kiosk 3ID)", color: "#ED1C24" },
+  { key: "pc", label: "Partner Code", sub: "Brand + status Hybrid", color: "#14151A" },
+  { key: "yymm", label: "Periode (YYMM)", sub: "Bulan siklus/target live", color: "#B7791F" },
+  { key: "cc", label: "Circle Code", sub: "Circle pendaftar", color: "#0A84FF" },
+  { key: "seq", label: "Running Sequence", sub: "2 digit, dari server", color: "#1A9E90" },
+];
+const SDP_PARTNER_CODE_REF = [
+  { code: "2", label: "Single IM3" },
+  { code: "3", label: "Single 3ID" },
+  { code: "4", label: "Hybrid IM3" },
+  { code: "5", label: "Hybrid 3ID" },
+];
+const SDP_CIRCLE_CODE_REF = [
+  { code: "1", label: "Sumatera Circle" },
+  { code: "2", label: "Jakarta Raya Circle" },
+  { code: "3", label: "Kalisumapa Circle" },
+  { code: "4", label: "Java Circle" },
+];
+
+function SdpIdInfoModal({ t, d, onClose, current }) {
+  // Pecah idPreview (kalau ada) jadi 5 bagian persis struktur ID, supaya
+  // breakdown visual di bawah bisa "menyorot" nilai SDP yang sedang diisi
+  // user saat ini (bukan cuma contoh statis) - identifier 3 huruf (SDP/KSK),
+  // lalu 1-1-4-1-2 digit (PartnerCode-YYMM-CircleCode-RunningSeq).
+  const idStr = String(current?.idPreview || "");
+  const m = idStr.match(/^(SDP|KSK)(\d)(\d{4})(\d)(\w{2})$/);
+  const parts = m ? { ident: m[1], pc: m[2], yymm: m[3], cc: m[4], seq: m[5] } : null;
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
+      <div onClick={(e) => e.stopPropagation()} className="sdp-pop" style={{ width: "min(640px, 96vw)", maxHeight: "88vh", overflowY: "auto", borderRadius: 20, overflow: "hidden", background: t.card, border: `1px solid ${t.line}`, boxShadow: t.md, fontFamily: FF }}>
+        {/* Header gradient — mengikuti nuansa header slide referensi */}
+        <div style={{ position: "relative", padding: "20px 22px", background: "linear-gradient(120deg, #0F2027 0%, #203A43 50%, #2C7A7B 100%)", color: "#fff" }}>
+          <button onClick={onClose} style={{ position: "absolute", top: 14, right: 14, width: 28, height: 28, borderRadius: 99, border: "none", background: "rgba(255,255,255,.16)", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <XIcon size={14} />
+          </button>
+          <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: -0.2 }}>Format Penamaan SDP ID</div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,.75)", marginTop: 3 }}>Standar otomatis — mengikuti struktur ID yang dibuat sistem saat registrasi.</div>
+        </div>
+
+        <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 20 }}>
+          {/* Contoh visual besar — pakai ID user saat ini bila sudah ada, kalau belum pakai contoh generik */}
+          <div>
+            <div style={{ fontSize: 10.5, fontWeight: 800, color: t.mid, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
+              {parts ? "ID SDP Anda saat ini" : "Contoh"}
+            </div>
+            <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 2, fontFamily: "monospace", fontSize: 30, fontWeight: 800, lineHeight: 1.1 }}>
+              <span style={{ color: SDP_ID_SEGMENTS[0].color }}>{parts ? parts.ident : "SDP"}</span>
+              <span style={{ color: SDP_ID_SEGMENTS[1].color }}>{parts ? parts.pc : "2"}</span>
+              <span style={{ color: SDP_ID_SEGMENTS[2].color }}>{parts ? parts.yymm : "2505"}</span>
+              <span style={{ color: SDP_ID_SEGMENTS[3].color }}>{parts ? parts.cc : "1"}</span>
+              <span style={{ color: SDP_ID_SEGMENTS[4].color }}>{parts ? parts.seq : "01"}</span>
+            </div>
+          </div>
+
+          {/* 5 segmen — nomor bulat berwarna + label + sub-keterangan, tersusun grid rapi (ganti baris otomatis di layar sempit) */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(104px, 1fr))", gap: 14 }}>
+            {SDP_ID_SEGMENTS.map((seg, i) => (
+              <div key={seg.key} style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 7 }}>
+                <span style={{ width: 24, height: 24, borderRadius: 99, background: seg.color, color: "#fff", fontSize: 11.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{i + 1}</span>
+                <div>
+                  <div style={{ fontSize: 12.5, fontWeight: 800, color: t.hi, lineHeight: 1.3 }}>{seg.label}</div>
+                  <div style={{ fontSize: 11, color: t.mid, lineHeight: 1.4, marginTop: 2 }}>{seg.sub}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Dua tabel referensi kode — side-by-side, ringkas & gampang di-scan */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 12 }}>
+            <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, overflow: "hidden" }}>
+              <div style={{ padding: "9px 13px", background: t.sub, fontSize: 11, fontWeight: 800, color: t.mid, textTransform: "uppercase", letterSpacing: "0.05em" }}>Partner Code</div>
+              <div>
+                {SDP_PARTNER_CODE_REF.map((r, i) => (
+                  <div key={r.code} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 13px", borderTop: i ? `1px solid ${t.line}` : "none", background: parts?.pc === r.code ? (d ? "rgba(20,21,26,.3)" : "rgba(20,21,26,.05)") : "transparent" }}>
+                    <span style={{ width: 20, height: 20, borderRadius: 7, background: "#14151A", color: "#fff", fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{r.code}</span>
+                    <span style={{ fontSize: 12.5, color: t.hi, fontWeight: parts?.pc === r.code ? 800 : 600 }}>{r.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, overflow: "hidden" }}>
+              <div style={{ padding: "9px 13px", background: t.sub, fontSize: 11, fontWeight: 800, color: t.mid, textTransform: "uppercase", letterSpacing: "0.05em" }}>Circle Code</div>
+              <div>
+                {SDP_CIRCLE_CODE_REF.map((r, i) => (
+                  <div key={r.code} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 13px", borderTop: i ? `1px solid ${t.line}` : "none", background: parts?.cc === r.code ? (d ? "rgba(10,132,255,.14)" : "rgba(10,132,255,.08)") : "transparent" }}>
+                    <span style={{ width: 20, height: 20, borderRadius: 7, background: "#0A84FF", color: "#fff", fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{r.code}</span>
+                    <span style={{ fontSize: 12.5, color: t.hi, fontWeight: parts?.cc === r.code ? 800 : 600 }}>{r.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 9, alignItems: "flex-start", padding: "12px 14px", borderRadius: 12, background: t.sub, border: `1px dashed ${t.line}` }}>
+            <Info size={14} color={t.mid} style={{ flexShrink: 0, marginTop: 1 }} />
+            <div style={{ fontSize: 11.5, color: t.mid, lineHeight: 1.55 }}>
+              Nomor urut (Running Sequence) dibuat server saat Anda menekan tombol kirim — sebelum itu ditampilkan placeholder <b style={{ color: t.hi }}>NN</b>. ID ini final &amp; tidak bisa diedit manual.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Modal panduan penamaan "PT" (Customer Legal Name) — mengikuti referensi
+// slide "Partner Naming SDP Standardization", panel "PT STANDARDIZED
+// FORMAT": nama PT = MC/PT yang mewakili kecamatan lokasi Depo (berlaku utk
+// kedua brand). Kalau nama kecamatan itu kurang dikenal, Circle boleh
+// kirim nama kecamatan yang paling dikenal sbg gantinya. Format:
+// "PT [MC] [KECAMATAN]" — contoh: "PT TANGGAMUS WONOSOBO".
+function PtNameInfoModal({ t, d, onClose }) {
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
+      <div onClick={(e) => e.stopPropagation()} className="sdp-pop" style={{ width: "min(560px, 96vw)", maxHeight: "88vh", overflowY: "auto", borderRadius: 20, overflow: "hidden", background: t.card, border: `1px solid ${t.line}`, boxShadow: t.md, fontFamily: FF }}>
+        <div style={{ position: "relative", padding: "20px 22px", background: "linear-gradient(120deg, #0F2027 0%, #203A43 50%, #2C7A7B 100%)", color: "#fff" }}>
+          <button onClick={onClose} style={{ position: "absolute", top: 14, right: 14, width: 28, height: 28, borderRadius: 99, border: "none", background: "rgba(255,255,255,.16)", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <XIcon size={14} />
+          </button>
+          <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: -0.2 }}>Format Penamaan PT</div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,.75)", marginTop: 3 }}>Standar nama legal partner (Customer Legal Name) — berlaku utk kedua brand.</div>
+        </div>
+
+        <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 18 }}>
+          <div>
+            <div style={{ fontSize: 10.5, fontWeight: 800, color: t.mid, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Format Sample</div>
+            <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 6, fontFamily: "monospace", fontSize: 22, fontWeight: 800, lineHeight: 1.3 }}>
+              <span style={{ color: t.mid }}>PT</span>
+              <span style={{ color: "#0A84FF" }}>[MC]</span>
+              <span style={{ color: "#1A9E90" }}>[KECAMATAN]</span>
+            </div>
+            <div style={{ fontSize: 11, color: t.mid, marginTop: 4 }}>
+              <span style={{ color: "#0A84FF", fontWeight: 700 }}>MC</span> = nama MC/Partner &nbsp;·&nbsp;
+              <span style={{ color: "#1A9E90", fontWeight: 700 }}>KECAMATAN</span> = kecamatan lokasi Depo
+            </div>
+          </div>
+
+          <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, overflow: "hidden" }}>
+            <div style={{ padding: "9px 13px", background: t.sub, fontSize: 11, fontWeight: 800, color: t.mid, textTransform: "uppercase", letterSpacing: "0.05em" }}>Contoh</div>
+            <div style={{ padding: "12px 13px", display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontFamily: "monospace", fontSize: 16, fontWeight: 800, color: t.hi }}>PT TANGGAMUS WONOSOBO</span>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ display: "flex", gap: 9, alignItems: "flex-start" }}>
+              <span style={{ width: 20, height: 20, borderRadius: 7, background: "#0E6A61", color: "#fff", fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>1</span>
+              <div style={{ fontSize: 12.5, color: t.hi, lineHeight: 1.55 }}>
+                Berlaku utk <b>kedua brand</b> — nama PT/MC mewakili <b>kecamatan lokasi Depo</b> berada.
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 9, alignItems: "flex-start" }}>
+              <span style={{ width: 20, height: 20, borderRadius: 7, background: "#0E6A61", color: "#fff", fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>2</span>
+              <div style={{ fontSize: 12.5, color: t.hi, lineHeight: 1.55 }}>
+                Jika nama kecamatan itu kurang dikenal di territory terkait, Circle boleh mengirim nama kecamatan yang <b>paling dikenal</b> sbg gantinya.
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 9, alignItems: "flex-start", padding: "12px 14px", borderRadius: 12, background: t.sub, border: `1px dashed ${t.line}` }}>
+            <Info size={14} color={t.mid} style={{ flexShrink: 0, marginTop: 1 }} />
+            <div style={{ fontSize: 11.5, color: t.mid, lineHeight: 1.55 }}>
+              Isi field <b style={{ color: t.hi }}>Customer Legal Name</b> mengikuti format ini — bukan nama dagang/brand store.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function MonthPicker({ value, onChange, t, err }) {
   const parsed = parseYM(value);
@@ -1175,7 +1657,7 @@ function MonthPicker({ value, onChange, t, err }) {
 }
 
 // ── Satu input (mobile, full width) ────────────────────────────────────────────
-function Field({ k, label, type, t, value, err, onChange, geoOpts, options, brandLock }) {
+function Field({ k, label, type, t, value, err, onChange, geoOpts, options, brandLock, onInfo, infoTitle }) {
   const base = {
     width: "100%", boxSizing: "border-box", padding: "11px 12px", borderRadius: 10,
     border: `1px solid ${err ? t.acc : t.line}`, background: t.inp, color: t.hi, fontSize: 14, fontFamily: FF, outline: "none",
@@ -1208,9 +1690,16 @@ function Field({ k, label, type, t, value, err, onChange, geoOpts, options, bran
     const locked = circleForced || (opts.length <= 1 && opts.length > 0);
     const shownValue = circleForced ? "Sumatera" : value;
     control = wrapSel(
-      <select value={shownValue} disabled={locked} onChange={(e) => onChange(e.target.value)} style={{ ...selStyle, cursor: locked ? "not-allowed" : "pointer", opacity: locked ? 0.7 : 1, background: locked ? t.sub : t.inp, paddingRight: circleForced ? 12 : selStyle.paddingRight }}>
+      // UPDATE (permintaan user - "untuk circle dibuat kapital semuanya
+      // SUMATERA"): HANYA tampilannya yg dibuat kapital (text-transform),
+      // value yg tersimpan/dikirim TETAP "Sumatera" apa adanya - supaya
+      // tidak merusak query .eq("circle","Sumatera") di SDP2_CMS/
+      // SDP_BatchMonitor/SDP_Export maupun validasi SDP_LISTS.circle yang
+      // exact-match ke string itu.
+      <select value={shownValue} disabled={locked} onChange={(e) => onChange(e.target.value)}
+        style={{ ...selStyle, cursor: locked ? "not-allowed" : "pointer", opacity: locked ? 0.7 : 1, background: locked ? t.sub : t.inp, paddingRight: circleForced ? 12 : selStyle.paddingRight, textTransform: circleForced ? "uppercase" : "none", letterSpacing: circleForced ? "0.02em" : selStyle.letterSpacing }}>
         <option value="">{opts.length === 0 && !circleForced ? "— tidak ada data —" : "— pilih —"}</option>
-        {(circleForced ? ["Sumatera"] : opts).map((o) => <option key={o} value={o}>{o}</option>)}
+        {(circleForced ? ["Sumatera"] : opts).map((o) => <option key={o} value={o} style={{ textTransform: circleForced ? "uppercase" : "none" }}>{o}</option>)}
       </select>,
       circleForced
     );
@@ -1244,7 +1733,15 @@ function Field({ k, label, type, t, value, err, onChange, geoOpts, options, bran
   }
   return (
     <label style={{ display: "block" }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: err ? t.acc : t.mid, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.03em" }}>{label}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: err ? t.acc : t.mid, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.03em" }}>{label}</div>
+        {onInfo && (
+          <button type="button" onClick={(e) => { e.preventDefault(); onInfo(); }} title={infoTitle || "Keterangan"}
+            style={{ width: 16, height: 16, borderRadius: 99, border: `1px solid ${t.line}`, background: t.card, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, marginBottom: 4 }}>
+            <Info size={10} />
+          </button>
+        )}
+      </div>
       {control}
       {err && <div style={{ fontSize: 11, color: t.acc, marginTop: 3 }}>{err}</div>}
     </label>

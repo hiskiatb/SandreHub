@@ -10,7 +10,8 @@
  * Props: { supabase, theme, profile, onOpen(draft), onExit }
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, RefreshCw, Loader2, Link2, Copy, Trash2, Pencil, Clock, Inbox, FileText, CheckCircle2, AlertTriangle } from "lucide-react";
+import { RefreshCw, Loader2, Link2, Copy, Trash2, Pencil, Clock, Inbox, FileText, CheckCircle2, AlertTriangle } from "lucide-react";
+import { SdpHeaderBanner, SDP_GRADIENT_CTA, SDP_GRADIENT_CTA_SHADOW, SdpGhostBackButton } from "./SDP2_Shared";
 
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const mk = (d) => ({
@@ -119,15 +120,11 @@ export default function SDP_Drafts({ supabase, theme = "dark", profile, onOpen, 
 
   return (
     <div style={{ fontFamily: FF, color: t.hi }}>
-      <button onClick={onExit} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: t.mid, fontFamily: FF, fontSize: 13, fontWeight: 600, padding: 0, marginBottom: 14 }}>
-        <ArrowLeft size={15} /> Kembali
-      </button>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
-        <div>
-          <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: -0.4, display: "flex", alignItems: "center", gap: 8 }}><Inbox size={19} color={t.mid} /> Draft & Link</div>
-          <div style={{ fontSize: 12.5, color: t.mid, marginTop: 3 }}>Draft yang belum selesai, link isian yang dibagikan (dengan sisa waktu), dan isian yang dikirim balik untuk Anda finalkan.</div>
-        </div>
-        <button onClick={load} title="Muat ulang" style={{ width: 40, height: 40, borderRadius: 10, border: `1px solid ${t.line}`, background: t.card, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><RefreshCw size={15} /></button>
+      <SdpHeaderBanner icon={Inbox} title="Draft Form"
+        right={<SdpGhostBackButton onClick={onExit} />} />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
+        <div style={{ fontSize: 12.5, color: t.mid }}>Draft yang belum selesai, link isian yang dibagikan (dengan sisa waktu), dan isian yang dikirim balik untuk Anda finalkan.</div>
+        <button onClick={load} title="Muat ulang" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 9, border: `1px solid ${t.line}`, background: t.card, color: t.mid, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: FF, flexShrink: 0, whiteSpace: "nowrap" }}><RefreshCw size={13} /> Muat ulang</button>
       </div>
 
       {loading ? (
@@ -148,7 +145,7 @@ export default function SDP_Drafts({ supabase, theme = "dark", profile, onOpen, 
 
 function btn(t, variant) {
   const base = { display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 13px", borderRadius: 9, cursor: "pointer", fontFamily: FF, fontSize: 12.5, fontWeight: 700, border: `1px solid ${t.line}`, background: t.card, color: t.hi };
-  if (variant === "primary") return { ...base, border: "none", background: t.teal, color: "#fff" };
+  if (variant === "primary") return { ...base, border: "none", background: SDP_GRADIENT_CTA, boxShadow: SDP_GRADIENT_CTA_SHADOW, color: "#fff" };
   if (variant === "danger") return { ...base, color: t.red, border: `1px solid ${t.red}44` };
   return base;
 }

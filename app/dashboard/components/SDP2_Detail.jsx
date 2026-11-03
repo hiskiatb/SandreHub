@@ -9,10 +9,11 @@
  * Props: { supabase, theme = "dark", profile, entry, onBack }
  */
 import React, { useEffect, useRef, useState } from "react";
-import { ArrowLeft, Loader2, AlertCircle, FileText, ExternalLink, RefreshCw, UploadCloud, Pencil } from "lucide-react";
+import { ArrowLeft, Loader2, AlertCircle, FileText, ExternalLink, RefreshCw, UploadCloud, Pencil, Store } from "lucide-react";
 import { computeSdpProgress, SDP_STAGES } from "../../../lib/sdp/progress";
 import { listSdpDocuments, openSdpDocument, retrySdpDocumentRelay, uploadSdpDocument } from "../../../lib/sdp/driveRelay";
-import SDP_RegistrationDetail from "./SDP_RegistrationDetail";
+import SDP_QuickForm from "./SDP_QuickForm";
+import { SdpHeaderBanner, SDP_GRADIENT_CTA, SDP_GRADIENT_CTA_SHADOW } from "./SDP2_Shared";
 
 const mk = (d) => ({
   card: d ? "#17171B" : "#FFFFFF", sub: d ? "#1D1D22" : "#F8F9FA", line: d ? "rgba(255,255,255,.08)" : "rgba(0,0,0,.08)",
@@ -95,11 +96,15 @@ export default function SDP2_Detail({ supabase, theme = "dark", profile, entry, 
   };
 
   if (editing) {
-    // Pinjam form edit yang sudah ada (validasi & RLS teruji) — begitu
-    // selesai, kembali ke tampilan baru ini, bukan ke menu Archive.
+    // UPDATE (permintaan user - "perbaiki tampilan untuk melengkapi data
+    // datanya sama seperti registrasi"): form edit sekarang memakai wizard
+    // yang SAMA PERSIS dgn Registrasi SDP (SDP_QuickForm, mode editEntry) -
+    // bukan lagi SDP_RegistrationDetail (layout lama, beda dari form
+    // registrasi). Begitu selesai/keluar, refresh data & kembali ke
+    // tampilan detail ini (bukan ke menu Archive).
     return (
-      <SDP_RegistrationDetail supabase={supabase} theme={theme} profile={profile} entry={row}
-        onBack={() => setEditing(false)} onChanged={(updated) => { setRow(updated); setEditing(false); }} />
+      <SDP_QuickForm supabase={supabase} theme={theme} profile={profile} editEntry={row}
+        onExit={() => { setEditing(false); refresh(); }} />
     );
   }
 
@@ -120,10 +125,11 @@ export default function SDP2_Detail({ supabase, theme = "dark", profile, entry, 
         <ArrowLeft size={15} /> Kembali ke SDP Saya
       </button>
 
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ fontSize: 21, fontWeight: 800, letterSpacing: -0.3 }}>{row.sdp_name || "(Belum ada nama)"}</div>
-        <div style={{ fontSize: 12, fontFamily: "monospace", color: t.mid, marginTop: 3 }}>{row.sdp_id_new || "Draft"}{row.branch ? ` · ${row.branch}` : ""}</div>
-      </div>
+      {/* UPDATE (permintaan user - "buatkan style gradient teal->gelap utk
+          semua menu SDP Management"): judul polos diganti SdpHeaderBanner,
+          seragam dgn layar lain - SDP ID & branch ditaruh sbg subtitle. */}
+      <SdpHeaderBanner icon={Store} title={row.sdp_name || "(Belum ada nama)"}
+        subtitle={`${row.sdp_id_new || "Draft"}${row.branch ? ` · ${row.branch}` : ""}`} />
 
       {msg && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 13px", borderRadius: 10, marginBottom: 14, fontSize: 12.5, fontWeight: 600,
@@ -160,8 +166,11 @@ export default function SDP2_Detail({ supabase, theme = "dark", profile, entry, 
           )}
 
           {!prog.blocked && (
+            // UPDATE (permintaan user - gradient teal->gelap jadi primary
+            // color modul ini): aksi utama non-status (bukan status
+            // merah/amber/dll) di layar ini dapat gradient CTA, teks putih.
             <button onClick={() => setEditing(true)}
-              style={{ alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: 7, padding: "11px 17px", borderRadius: 11, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.sm, cursor: "pointer", color: t.hi, fontFamily: FF, fontSize: 12.5, fontWeight: 700 }}>
+              style={{ alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: 7, padding: "11px 17px", borderRadius: 11, border: "none", background: SDP_GRADIENT_CTA, boxShadow: SDP_GRADIENT_CTA_SHADOW, cursor: "pointer", color: "#fff", fontFamily: FF, fontSize: 12.5, fontWeight: 800 }}>
               <Pencil size={13} /> Lihat / ubah detail lengkap
             </button>
           )}

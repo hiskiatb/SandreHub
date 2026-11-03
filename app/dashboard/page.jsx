@@ -8,7 +8,8 @@
  * - Tambah userRole prop ke FormPendapatan
  * - Tambah Import Data Otomatis (PNL_ImportWizard) untuk role spm_sumatera
  */
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import supabase from "../../lib/supabase";
 import { useRouter } from "next/navigation";
 import { HubLogo } from "../../components/HubLogo";
@@ -21,7 +22,7 @@ import {
   Shield, Globe, Building2, Store, SlidersHorizontal,
   Table2, Wallet, PanelLeftClose, PanelLeftOpen,
   FileSpreadsheet, Users, Key, Briefcase, Wrench, Mail, Sparkles, Archive,
-  Database, TrendingUp, UserRoundCog,
+  Database, TrendingUp, UserRoundCog, Landmark,
 } from "lucide-react";
 
 import FormPendapatan   from "./components/PNL_FormPendapatan";
@@ -44,7 +45,7 @@ import ReportMerge_Module from "./components/ReportMerge_Module";
 import PNL_MPX_Menu       from "./components/PNL_MPX_Menu";
 import SDP_DseDatabase    from "./components/SDP_DseDatabase";
 import AdminMcMapping     from "./components/AdminMcMapping";
-import DSE_ProdAR         from "./components/DSE_ProdAR";
+import DSE_ProdAR, { CATEGORY_OPTIONS as DSE_CATEGORY_OPTIONS } from "./components/DSE_ProdAR";
 
 // ─── Role Maps ────────────────────────────────────────────────────────────────
 const IOH_ROLE_REGION_MAP = {
@@ -126,6 +127,7 @@ const buildGlobalCSS = (d, t) => `
     .hide-mobile { display: none !important; }
     .header-pad { padding-left: 12px !important; padding-right: 12px !important; gap: 6px !important; overflow-x: auto !important; }
     .content-pad { padding: 20px 16px !important; }
+          .content-pad-dse { padding: 0 16px 20px !important; }
     /* Header mobile sering kepotong/ketutup (tombol dark mode dkk kedorong
        keluar layar) krn date-picker (Bulan+Tahun) & grup kanan (theme/bell/
        profil) sama2 flexShrink:0 & lebar penuh seperti di desktop, padahal
@@ -146,6 +148,41 @@ const buildGlobalCSS = (d, t) => `
     .hdr-datepicker select:last-of-type { padding-right: 25px !important; }
     .hdr-cal-icon { margin-left: 6px !important; }
     .hdr-profile-name { display: none !important; }
+
+  }
+  .dash-card-chevron-mobile { display: none; }
+  /* ── Daftar Menu → gaya list menu app mobile (permintaan user -
+     "redesign seperti menu yang baik tampil di app mobile") ── HANYA di
+     layar SEMPIT beneran (hp, max-width 520px): kartu besar yg di-stack
+     vertikal diubah jadi baris horizontal ringkas (icon kiri lebih kecil,
+     judul 1 baris di tengah, chevron kanan) ala list iOS Settings / menu
+     app native. UPDATE (permintaan user - "pada ukuran layar fold yang
+     dibentangkan [Galaxy Z Fold 6 unfolded, 744px] dia seharusnya dapat
+     tampilan seperti desktop"): breakpoint SEBELUMNYA sempat dilebarin ke
+     860px utk benerin grid 2-kolom yg timpang di lebar tablet, tapi itu
+     malah bikin layar Fold-dibentangkan (744px, jelas cukup lebar utk
+     grid multi-kolom spt desktop) ikut kepaksa jadi list 1-kolom polos -
+     breakpoint diciutin lagi ke 520px (phone asli / Fold TERLIPAT) supaya
+     Fold-dibentangkan & tablet dapat grid multi-kolom responsive spt
+     desktop (grid default-nya sendiri sudah auto-fit minmax(250px,1fr),
+     otomatis jadi 2-3 kolom sesuai lebar layar, tidak perlu override). */
+  @media (max-width: 520px) {
+    .dash-grid { grid-template-columns: 1fr !important; gap: 10px !important; }
+    .dash-card {
+      flex-direction: row !important;
+      align-items: center !important;
+      padding: 13px 14px !important;
+      gap: 13px !important;
+      border-radius: 14px !important;
+    }
+    .dash-card-stripe { display: none !important; }
+    .dash-card-top { flex: 0 0 auto !important; }
+    .dash-card-icon { width: 42px !important; height: 42px !important; border-radius: 11px !important; }
+    .dash-card-text { flex: 1 1 auto !important; min-width: 0 !important; }
+    .dash-card-text h3 { font-size: 14.5px !important; margin-bottom: 2px !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }
+    .dash-card-text p { display: none !important; }
+    .dash-card-footer { display: none !important; }
+    .dash-card-chevron-mobile { display: flex !important; flex-shrink: 0; }
   }
   .snav {
     width: 100%; display: flex; align-items: center; gap: 10px;
@@ -308,8 +345,19 @@ function DashCard({ icon, title, desc, tag, active, onClick, t, d, accent = {} }
     bd:     accent.bd     || t.blueBd,
     shadow: accent.shadow || "rgba(237,28,36,0.18)",
   };
+  // UPDATE (permintaan user - "redesign seperti menu yang baik tampil di
+  // app mobile"): kartu vertikal besar yg di-stack ke bawah (icon di atas,
+  // judul, deskripsi 2 baris, baris "Buka modul" terpisah) makan banyak
+  // layar & terasa seperti web-card yg di-skala-kecilkan, bukan menu app
+  // mobile asli. className "dash-card*" di bawah dipakai CSS media query
+  // (lihat buildGlobalCSS, blok @media max-width:640px) utk UBAH TOTAL
+  // layout di layar sempit jadi baris horizontal ringkas ala list menu app
+  // (icon kiri + judul/subjudul 1 baris + chevron kanan, mirip iOS
+  // Settings / app launcher row) - desktop/tablet TIDAK berubah sama
+  // sekali, cuma style default (dipakai desktop) + override mobile.
   return (
     <div
+      className="dash-card"
       onClick={active ? onClick : undefined}
       onMouseEnter={() => setHov(true)}
       onMouseLeave={() => setHov(false)}
@@ -324,9 +372,9 @@ function DashCard({ icon, title, desc, tag, active, onClick, t, d, accent = {} }
         display: "flex", flexDirection: "column", gap: 16,
       }}
     >
-      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: ac.color, opacity: hov && active ? 1 : 0, transition: "opacity .16s" }} />
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-        <div style={{
+      <div className="dash-card-stripe" style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: ac.color, opacity: hov && active ? 1 : 0, transition: "opacity .16s" }} />
+      <div className="dash-card-top" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+        <div className="dash-card-icon" style={{
           width: 44, height: 44, borderRadius: 12, flexShrink: 0,
           display: "flex", alignItems: "center", justifyContent: "center",
           background: hov && active ? ac.color : ac.bg,
@@ -338,15 +386,20 @@ function DashCard({ icon, title, desc, tag, active, onClick, t, d, accent = {} }
             semua badge nya") - prop `tag` masih diterima/dilewatkan di
             tiap pemanggilan DashCard, cuma ga dirender lagi di sini. */}
       </div>
-      <div>
+      <div className="dash-card-text">
         <h3 style={{ fontSize: 16, fontWeight: 700, letterSpacing: "-0.015em", color: t.hi, marginBottom: 6, lineHeight: 1.3 }}>{title}</h3>
         <p style={{
           fontSize: 13, color: t.mid, lineHeight: 1.55, fontWeight: 400,
           display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
         }}>{desc}</p>
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 600, letterSpacing: "0.02em", color: active ? ac.color : t.lo }}>
+      <div className="dash-card-footer" style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 600, letterSpacing: "0.02em", color: active ? ac.color : t.lo }}>
         {active ? "Buka modul" : "Terkunci"}<ChevronRight size={13} strokeWidth={2} style={{ transform: hov && active ? "translateX(2px)" : "none", transition: "transform .16s" }} />
+      </div>
+      {/* Chevron khusus mobile - sembunyi di desktop (CSS), muncul di kanan
+          tengah baris saat layout jadi horizontal. */}
+      <div className="dash-card-chevron-mobile" style={{ color: active ? ac.color : t.lo }}>
+        <ChevronRight size={18} strokeWidth={2.2} />
       </div>
     </div>
   );
@@ -482,6 +535,42 @@ export default function DashboardPage() {
   const [pendingView,       setPendingView]      = useState(null);
   const [mobileOpen,        setMobileOpen]       = useState(false);
   const [disabledMonthsMap, setDisabledMonthsMap] = useState(new Map());
+  // UPDATE (permintaan user - "untuk menu besarnya akan muncul di header
+  // atas saja dan bisa dropdown dengan arrow penanda dan ui yang sangat
+  // bagus, disamping kiri dari button show sidebar"): `category` modul DSE
+  // Prod & AR (Penjualan&AR DSE / AR DSO / AR HoA) di-LIFT ke sini (dulu
+  // state lokal di dalam DSE_ProdAR.jsx) supaya bisa dikontrol dari
+  // dropdown di header - dikirim turun ke <DSE_ProdAR /> sebagai props.
+  const [dseCategory,       setDseCategory]      = useState("dse");
+  const [dseCategoryOpen,   setDseCategoryOpen]  = useState(false);
+  const [dseCategoryPos,    setDseCategoryPos]   = useState(null); // {left, top} - posisi tombol, dipakai portal
+  const dseCategoryBtnRef = useRef(null);
+  const dseCategoryMenuRef = useRef(null);
+  // UPDATE (permintaan user - "masih tidak kelihatan"): popup dropdown ini
+  // ternyata ke-CLIP (ilang total, bukan cuma ketutupan) oleh <header>,
+  // karena .header-pad punya `overflow-x: auto !important` di mobile
+  // (buat scroll baris date-picker) - begitu satu axis overflow diset
+  // non-visible, browser otomatis bikin axis satunya (overflow-y) ikut
+  // ke-clip juga, jadi apapun yg "nongol" keluar tinggi header (termasuk
+  // popup absolute ini) ikut kepotong/invisible. Fix: render popup-nya
+  // lewat React Portal ke document.body (posisinya dihitung manual dari
+  // getBoundingClientRect tombolnya) supaya dia keluar dari DOM tree
+  // header sepenuhnya & ga kena clip apapun.
+  useEffect(() => {
+    if (!dseCategoryOpen) return;
+    const btn = dseCategoryBtnRef.current;
+    if (btn) {
+      const r = btn.getBoundingClientRect();
+      setDseCategoryPos({ left: r.left, top: r.bottom + 8 });
+    }
+    const onClick = (e) => {
+      if (dseCategoryBtnRef.current && dseCategoryBtnRef.current.contains(e.target)) return;
+      if (dseCategoryMenuRef.current && dseCategoryMenuRef.current.contains(e.target)) return;
+      setDseCategoryOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [dseCategoryOpen]);
   // Grup "Archive" di Overview — menu lama yang dipertimbangkan dihapus ke
   // depannya, tapi code-nya sengaja belum disentuh/dihapus. Lihat-lihat saja
   // di sini, disembunyikan (collapsed) secara default supaya overview tidak
@@ -914,7 +1003,7 @@ export default function DashboardPage() {
 
       <main style={{ flex: 1, display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden", minWidth: 0 }}>
         {/* Header */}
-        <header className="header-pad" style={{ height: HEADER_H, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", gap: 12, background: d ? "rgba(17,17,19,0.92)" : "rgba(255,255,255,0.92)", borderBottom: `1px solid ${t.line}`, backdropFilter: "blur(24px)", zIndex: 40, position: "relative" }}>
+        <header className="header-pad" style={{ height: HEADER_H, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", gap: 12, background: d ? "rgba(17,17,19,0.92)" : "rgba(255,255,255,0.92)", borderBottom: `1px solid ${t.line}`, backdropFilter: "blur(24px)", zIndex: 100, position: "relative" }}>
           <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: "linear-gradient(90deg, #ED1C24 0%, #FFCB05 33%, #32BCAD 66%, #C6168D 100%)" }} />
           <div className="hdr-left" style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
             <div className="lg-sidebar-toggle" style={{ display: "none" }}>
@@ -923,6 +1012,63 @@ export default function DashboardPage() {
             <button className="mob-hamburger" onClick={() => setMobileOpen(true)} style={{ display: "none", width: 36, height: 36, alignItems: "center", justifyContent: "center", border: `1px solid ${t.line}`, background: t.inputBg, borderRadius: 8, cursor: "pointer", color: t.mid }}>
               <Menu size={17} />
             </button>
+            {/* UPDATE (permintaan user - "disamping kanan sidebar maksud
+                saya, dan pastikan popup option paling depan karena saat
+                ini ketutupan"): dropdown pemilih modul DSE Prod & AR
+                (Penjualan & AR DSE / AR DSO / AR HoA) - cuma tampil pas
+                lagi di halaman DSE Prod & AR (view === "dse-prod-ar"),
+                posisinya di KANAN tombol toggle sidebar (desktop) /
+                hamburger (mobile), bukan di kiri lagi. Popup-nya sempat
+                ketutupan sama toolbar sticky DSE_ProdAR.jsx (z-index sama
+                persis 40, menang krn urutan DOM content-pad SETELAH
+                header) - fix-nya di z-index header sendiri (lihat
+                <header> di atas, dinaikkan ke 100). */}
+            {view === "dse-prod-ar" && (
+              <div style={{ position: "relative", flexShrink: 0 }}>
+                <button ref={dseCategoryBtnRef} onClick={() => setDseCategoryOpen((v) => !v)}
+                  style={{ display: "flex", alignItems: "center", gap: 7, height: 36, padding: "0 10px 0 8px", borderRadius: 8, border: `1px solid ${dseCategoryOpen ? t.greenBd : t.line}`, background: dseCategoryOpen ? t.greenBg : t.inputBg, cursor: "pointer", fontFamily: "inherit" }}>
+                  {(() => {
+                    const CurIcon = DSE_CATEGORY_OPTIONS.find((o) => o.k === dseCategory)?.icon;
+                    return CurIcon ? <CurIcon size={15} color={t.green} /> : null;
+                  })()}
+                  {/* UPDATE (permintaan user - "mengapa disini nya masih hanya
+                      DSE": chip header harusnya ikut nampilin label
+                      lengkap yg baru diganti [DSE Prod. & AR / DSO/DSP AR
+                      / HoA AR], bukan shortLabel singkat lagi): shortLabel
+                      -> label. */}
+                  <span className="lg-hide-text" style={{ fontSize: 13, fontWeight: 700, color: t.hi, whiteSpace: "nowrap" }}>
+                    {DSE_CATEGORY_OPTIONS.find((o) => o.k === dseCategory)?.label}
+                  </span>
+                  <ChevronDown size={13} style={{ color: t.lo, transform: dseCategoryOpen ? "rotate(180deg)" : "rotate(0)", transition: "transform 0.15s" }} />
+                </button>
+                {typeof document !== "undefined" && createPortal(
+                  <AnimatePresence>
+                    {dseCategoryOpen && dseCategoryPos && (
+                      <motion.div ref={dseCategoryMenuRef} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 6 }} transition={{ duration: 0.13 }}
+                        style={{ position: "fixed", left: dseCategoryPos.left, top: dseCategoryPos.top, width: 272, background: t.surface, border: `1px solid ${t.line}`, borderRadius: 12, boxShadow: t.shadowLg, zIndex: 9999, overflow: "hidden", padding: 6 }}>
+                        {DSE_CATEGORY_OPTIONS.map((opt) => {
+                          const Icon = opt.icon;
+                          const active = dseCategory === opt.k;
+                          return (
+                            <button key={opt.k} onClick={() => { setDseCategory(opt.k); setDseCategoryOpen(false); }}
+                              style={{ display: "flex", alignItems: "flex-start", gap: 10, width: "100%", textAlign: "left", padding: "9px 10px", borderRadius: 9, border: "none", background: active ? t.greenBg : "transparent", cursor: "pointer", fontFamily: "inherit" }}>
+                              <div style={{ width: 30, height: 30, borderRadius: 8, background: active ? t.green : t.hover, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                                <Icon size={14} color={active ? "#fff" : t.mid} />
+                              </div>
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ fontSize: 13, fontWeight: 700, color: active ? t.green : t.hi }}>{opt.label}</div>
+                                <div style={{ fontSize: 11, color: t.mid, marginTop: 1, lineHeight: 1.35 }}>{opt.desc}</div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>,
+                  document.body
+                )}
+              </div>
+            )}
             {!hideDatePicker && (
               <div className="hdr-datepicker" style={{ display: "flex", alignItems: "center", border: `1px solid ${t.inputBd}`, borderRadius: 8, background: t.inputBg, height: 36, overflow: "hidden", flexShrink: 0, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", borderRight: `1px solid ${t.inputBd}`, height: "100%", position: "relative", minWidth: 0 }}>
@@ -985,7 +1131,7 @@ export default function DashboardPage() {
         </header>
 
         {/* Content */}
-        <div className="content-pad" style={{ flex: 1, overflowY: "auto", padding: "28px 28px 48px" }}>
+        <div className={`content-pad${view === "dse-prod-ar" ? " content-pad-dse" : ""}`} style={{ flex: 1, overflowY: "auto", padding: view === "dse-prod-ar" ? "0 28px 48px" : "28px 28px 48px" }}>
           <AnimatePresence mode="wait">
 
             {/* ── Overview ── */}
@@ -1017,7 +1163,7 @@ export default function DashboardPage() {
                   </div>
                 )}
 
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 14 }}>
+                <div className="dash-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 14 }}>
 
                   {/* MPX P&L Report — satu menu, isinya 4 modul pelaporan P&L
                       (lihat PNL_MPX_Menu.jsx). */}
@@ -1051,7 +1197,7 @@ export default function DashboardPage() {
                       ini sendiri (lihat DSE_ProdAR.jsx), bukan tujuan
                       navigasi sendiri lagi. */}
                   {(isSPM || isMPX) && (
-                    <DashCard icon={<TrendingUp size={20} />} title="DSE Prod. & AR"
+                    <DashCard icon={<Wallet size={20} />} title="DSE Prod. & AR"
                       desc="Upload produksi harian DSE (SP, Saldo, Voucher) dan AR/piutang outstanding, per Kode DSE."
                       tag={isMPX ? "Admin MC" : "SPM"} active={true} onClick={() => navigate("dse-prod-ar")} t={t} d={d}
                       accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.11)" : "rgba(26,158,144,0.07)", bd: d ? "rgba(50,188,173,0.28)" : "rgba(26,158,144,0.20)", shadow: "rgba(26,158,144,0.16)" }} />
@@ -1072,19 +1218,40 @@ export default function DashboardPage() {
                      sini (collapsed default) supaya overview lebih rapi. ── */}
                 {isSPM && (
                   <div style={{ marginTop: 28 }}>
-                    <button onClick={() => setArchiveOpen(v => !v)}
-                      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", background: "none", border: "none", cursor: "pointer", padding: "10px 2px", color: t.mid, fontFamily: "inherit" }}>
-                      <Archive size={14} />
-                      <span style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase" }}>Archive</span>
-                      <span style={{ fontSize: 12, color: t.lo, fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
-                        — menu lama, masih bisa dipakai, dipertimbangkan dihapus ke depannya
-                      </span>
-                      <span style={{ flex: 1 }} />
-                      {archiveOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                    {/* UPDATE (permintaan user - "rapikan", versi
+                        sebelumnya: icon+label+chevron di baris atas, lalu
+                        deskripsi 2-baris di bawah dgn chevron nongkrong
+                        sendirian di pojok atas-kanan, ga sejajar sama
+                        konten di bawahnya - keliatan ga seimbang):
+                        sekarang baris menu sungguhan ala list - icon kiri
+                        (center vertikal thdp SELURUH konten), label +
+                        deskripsi ditumpuk di tengah, chevron kanan (center
+                        vertikal juga) - 1 kesatuan baris yg rapi, konsisten
+                        sama pola DashCard mobile (icon-kiri/teks-tengah/
+                        chevron-kanan), bukan 2 baris terpisah yg chevronnya
+                        nyasar ke atas. */}
+                    <button onClick={() => setArchiveOpen(v => !v)} className="archive-toggle-btn"
+                      style={{ display: "flex", alignItems: "center", gap: 12, width: "100%",
+                        background: t.card, border: `1px solid ${t.line}`, borderRadius: 12, cursor: "pointer",
+                        padding: "13px 14px", color: t.mid, fontFamily: "inherit", textAlign: "left" }}>
+                      <div style={{
+                        width: 32, height: 32, borderRadius: 9, flexShrink: 0,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        background: t.hover, color: t.mid,
+                      }}>
+                        <Archive size={15} />
+                      </div>
+                      {/* UPDATE (permintaan user - "tidak perlu ada
+                          subtitle agar lebih rapi"): deskripsi di bawah
+                          label dihapus, cukup label "ARCHIVE" saja. */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: t.mid }}>Archive</div>
+                      </div>
+                      {archiveOpen ? <ChevronDown size={16} style={{ flexShrink: 0 }} /> : <ChevronRight size={16} style={{ flexShrink: 0 }} />}
                     </button>
 
                     {archiveOpen && (
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14, marginTop: 4, paddingTop: 4 }}>
+                      <div className="dash-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14, marginTop: 4, paddingTop: 4 }}>
 
                         {canSdp && (
                           <DashCard icon={<Users size={20} />} title="SDP Management (Archive)"
@@ -1249,8 +1416,8 @@ export default function DashboardPage() {
 
             {/* ── DSE Prod. & AR ── */}
             {view === "dse-prod-ar" && (isSPM || isMPX) && (
-              <motion.div key="dse-prod-ar" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                <DSE_ProdAR theme={theme} profile={profile} onBack={() => navigate("overview")} />
+              <motion.div key="dse-prod-ar" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <DSE_ProdAR theme={theme} profile={profile} onBack={() => navigate("overview")} category={dseCategory} setCategory={setDseCategory} />
               </motion.div>
             )}
 
