@@ -3,6 +3,7 @@ import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import supabase from "../../../lib/supabase";
 import { HubLogo } from "../../../components/HubLogo";
+import { PwaInstallBanner } from "../../../components/PwaInstallBanner";
 import { Mail, Lock, KeyRound, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, CheckCircle2, UserRound, ChevronRight, ShieldCheck } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -32,7 +33,7 @@ const mk = (d) => ({
 function SandraLoginInner() {
   const router       = useRouter();
   const searchParams = useSearchParams();
-  const [d, setD]    = useState(true);
+  const [d, setD]    = useState(false);
   const [stage, setStage] = useState("email");   // email | password | otp
   const [form,     setForm]     = useState({ email: "", password: "" });
   const [errors,   setErrors]   = useState([]);
@@ -48,8 +49,13 @@ function SandraLoginInner() {
   const verified = searchParams.get("verified") === "1";
   const [verifiedBanner, setVerifiedBanner] = useState(false);
 
+  // Kartu "Login sebagai Promotor" disembunyikan sementara (diminta user) -
+  // Promotor belum pakai SandraHub saat ini. Tidak dihapus sama sekali,
+  // cuma di-gate lewat flag ini supaya mudah dinyalakan lagi nanti.
+  const SHOW_PROMOTOR_LOGIN = false;
+
   useEffect(() => {
-    setD(localStorage.getItem("hub-theme") !== "light");
+    setD(localStorage.getItem("hub-theme") === "dark");
     if (verified) setVerifiedBanner(true);
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) router.replace("/dashboard");
@@ -292,20 +298,27 @@ function SandraLoginInner() {
           </div>
         </div>
 
-        <button onClick={()=>router.push("/promotor")}
-          style={{ marginTop:14, width:"100%", display:"flex", alignItems:"center", gap:13, padding:"14px 16px", borderRadius:14, cursor:"pointer", textAlign:"left", fontFamily:FONT,
-            background:d?"rgba(237,28,36,0.08)":"rgba(237,28,36,0.05)", border:`1.5px solid ${d?"rgba(237,28,36,0.35)":"rgba(237,28,36,0.28)"}`, transition:"transform .12s, box-shadow .15s, border-color .15s" }}
-          onMouseEnter={(e)=>{ e.currentTarget.style.boxShadow="0 8px 26px rgba(237,28,36,0.18)"; e.currentTarget.style.transform="translateY(-1px)"; }}
-          onMouseLeave={(e)=>{ e.currentTarget.style.boxShadow="none"; e.currentTarget.style.transform="none"; }}>
-          <span style={{ width:42, height:42, borderRadius:12, flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", background:"linear-gradient(135deg,#ED1C24,#C6168D)", color:"#fff", boxShadow:"0 4px 14px rgba(237,28,36,0.32)" }}>
-            <UserRound size={21} strokeWidth={2.2} />
-          </span>
-          <span style={{ flex:1, minWidth:0 }}>
-            <span style={{ display:"block", fontSize:14.5, fontWeight:800, letterSpacing:"-0.02em", color:t.hi }}>Login sebagai Promotor</span>
-            <span style={{ display:"block", fontSize:12, color:t.mid, marginTop:2 }}>Untuk tim promotor lapangan — masuk dengan akun Google</span>
-          </span>
-          <ChevronRight size={18} style={{ color:"#ED1C24", flexShrink:0 }} />
-        </button>
+        {/* Kartu "Login sebagai Promotor" - disembunyikan via SHOW_PROMOTOR_LOGIN
+            di atas (Promotor belum pakai SandraHub untuk saat ini). JSX & handler
+            tidak dihapus, cuma tidak dirender ketika flag false. */}
+        {SHOW_PROMOTOR_LOGIN && (
+          <button onClick={()=>router.push("/promotor")}
+            style={{ marginTop:14, width:"100%", display:"flex", alignItems:"center", gap:13, padding:"14px 16px", borderRadius:14, cursor:"pointer", textAlign:"left", fontFamily:FONT,
+              background:d?"rgba(237,28,36,0.08)":"rgba(237,28,36,0.05)", border:`1.5px solid ${d?"rgba(237,28,36,0.35)":"rgba(237,28,36,0.28)"}`, transition:"transform .12s, box-shadow .15s, border-color .15s" }}
+            onMouseEnter={(e)=>{ e.currentTarget.style.boxShadow="0 8px 26px rgba(237,28,36,0.18)"; e.currentTarget.style.transform="translateY(-1px)"; }}
+            onMouseLeave={(e)=>{ e.currentTarget.style.boxShadow="none"; e.currentTarget.style.transform="none"; }}>
+            <span style={{ width:42, height:42, borderRadius:12, flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", background:"linear-gradient(135deg,#ED1C24,#C6168D)", color:"#fff", boxShadow:"0 4px 14px rgba(237,28,36,0.32)" }}>
+              <UserRound size={21} strokeWidth={2.2} />
+            </span>
+            <span style={{ flex:1, minWidth:0 }}>
+              <span style={{ display:"block", fontSize:14.5, fontWeight:800, letterSpacing:"-0.02em", color:t.hi }}>Login sebagai Promotor</span>
+              <span style={{ display:"block", fontSize:12, color:t.mid, marginTop:2 }}>Untuk tim promotor lapangan — masuk dengan akun Google</span>
+            </span>
+            <ChevronRight size={18} style={{ color:"#ED1C24", flexShrink:0 }} />
+          </button>
+        )}
+
+        <PwaInstallBanner dark={d} />
 
         <div style={{ marginTop:18, textAlign:"center", fontSize:10.5, letterSpacing:"0.12em", textTransform:"uppercase", color:t.lo, opacity:0.35, fontWeight:600 }}>
           © 2026 SandraHub · S&D Sumatera

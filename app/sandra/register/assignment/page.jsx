@@ -63,7 +63,7 @@ const BSM_BRANDS = [
 
 export default function RegisterAssignment() {
   const router = useRouter();
-  const [d, setD]           = useState(true);
+  const [d, setD]           = useState(false);
   const [step, setStep]     = useState(1);     // 1=kode, 2=data, 3=done
   const [loading, setLoading] = useState(false);
   const [errMsg, setErrMsg]   = useState("");
@@ -80,7 +80,7 @@ export default function RegisterAssignment() {
   const [bsmBrand,   setBsmBrand]   = useState("");
 
   useEffect(() => {
-    setD(localStorage.getItem("sh-theme") !== "light");
+    setD(localStorage.getItem("sh-theme") === "dark");
   }, []);
 
   const t = mk(d);

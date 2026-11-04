@@ -18,6 +18,7 @@ import { useState, useEffect, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import supabase from "../../../lib/supabase";
 import { HubLogo } from "../../../components/HubLogo";
+import { PwaInstallBanner } from "../../../components/PwaInstallBanner";
 import { Mail, KeyRound, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, CheckCircle2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -37,7 +38,7 @@ const mk = (d) => ({
 
 function AdminMcLoginInner() {
   const router = useRouter();
-  const [d, setD] = useState(true);
+  const [d, setD] = useState(false);
   const [stage, setStage] = useState("email"); // email | otp
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
@@ -48,7 +49,7 @@ function AdminMcLoginInner() {
   const t = mk(d);
 
   useEffect(() => {
-    setD(localStorage.getItem("hub-theme") !== "light");
+    setD(localStorage.getItem("hub-theme") === "dark");
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) router.replace("/dashboard");
       else setChecking(false);
@@ -213,6 +214,8 @@ function AdminMcLoginInner() {
             </AnimatePresence>
           </div>
         </div>
+        <PwaInstallBanner dark={d} />
+
         <div style={{ marginTop: 18, textAlign: "center", fontSize: 10.5, letterSpacing: "0.12em", textTransform: "uppercase", color: t.lo, opacity: 0.35, fontWeight: 600 }}>
           © 2026 SandraHub · Admin MC
         </div>

@@ -273,13 +273,13 @@ export default function RegisterPage() {
   const [errMsg,       setErrMsg]       = useState("");
   const [errors,       setErrors]       = useState([]);
   const [loading,      setLoading]      = useState(false);
-  const [d,            setD]            = useState(true);
+  const [d,            setD]            = useState(false);
   const [showInfo,     setShowInfo]     = useState(false);
   const [checking,     setChecking]     = useState({ email: false, username: false });
   const [exists,       setExists]       = useState({ email: false, username: false });
 
   useEffect(() => {
-    setD(localStorage.getItem("sh-theme") !== "light");
+    setD(localStorage.getItem("sh-theme") === "dark");
     // Restore from sessionStorage
     const raw = sessionStorage.getItem("pending_reg");
     if (raw) {

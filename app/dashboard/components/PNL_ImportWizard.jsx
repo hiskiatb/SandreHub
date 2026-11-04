@@ -270,8 +270,14 @@ const FORM_DEFS={
       {key:"region",    label:"Region",              group:"dse_data",required:false,type:"text",aliases:["Region Name","Nama Region"]},
       {key:"branch",    label:"Branch",              group:"dse_data",required:false,type:"text",aliases:["Branch Name","Nama Branch"]},
       {key:"full_name", label:"Nama Admin",          group:"dse_data",required:false,type:"text",aliases:["Nama","Full Name"]},
-      {key:"email_1",   label:"Alamat Email Admin 1",group:"dse_data",required:false,type:"text",aliases:["Email Admin 1","Email 1","Email Admin","Alamat Email Admin"]},
-      {key:"email_2",   label:"Alamat Email Admin 2",group:"dse_data",required:false,type:"text",aliases:["Email Admin 2","Email 2"]},
+      // UPDATE (permintaan user - "satu mc bisa jadi ada beberapa email" /
+      // "email yang sama bisa dimapping ke beberapa mc sekaligus"): kolom
+      // email_1/email_2 DIHAPUS dari sini (dan dari tabel
+      // mf_dse_admin_mc_mapping) -> dipindah total ke tabel relasi
+      // many-to-many mf_dse_admin_mc_emails (lihat AdminMcMapping.jsx,
+      // tombol "Kelola Email" + "Upload Daftar Email" -> tidak lagi lewat
+      // wizard generik ini, karena wizard ini cuma bisa upsert 1 baris per
+      // PK (mc), sedangkan email butuh banyak baris per mc).
     ],
   },
 };

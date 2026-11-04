@@ -114,7 +114,7 @@ function Field({ label, note, children }) {
 
 export default function MartaRegisterPage() {
   const router      = useRouter();
-  const [d, setD]   = useState(true);
+  const [d, setD]   = useState(false);
   const [step, setStep] = useState(1); // 1 | 2 | 3(done)
   const t = mk(d);
 
@@ -134,7 +134,7 @@ export default function MartaRegisterPage() {
   const [errMsg,  setErrMsg]  = useState("");
 
   useEffect(() => {
-    setD(localStorage.getItem("hub-theme") !== "light");
+    setD(localStorage.getItem("hub-theme") === "dark");
     supabaseMarta.auth.getSession().then(({ data: { session } }) => {
       if (session) router.replace("/martahub");
     });

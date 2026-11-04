@@ -46,7 +46,7 @@ function Toast({ msg, type, onClose }) {
 
 export default function EmailMappingPage() {
   const router = useRouter();
-  const [d, setD] = useState(true);
+  const [d, setD] = useState(false);
   const [gate, setGate] = useState("checking"); // checking | ok | denied
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -59,7 +59,7 @@ export default function EmailMappingPage() {
   const say = (msg, type = "ok") => setToast({ msg, type });
 
   useEffect(() => {
-    setD(localStorage.getItem("hub-theme") !== "light");
+    setD(localStorage.getItem("hub-theme") === "dark");
     (async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { router.replace("/sandra/login"); return; }

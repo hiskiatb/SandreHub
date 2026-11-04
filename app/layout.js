@@ -15,6 +15,21 @@ const geistMono = Geist_Mono({
 export const metadata = {
   title: "SandraHub",
   description: "SandraHub - SPM Sumatera",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "SandraHub",
+  },
+  icons: {
+    icon: [
+      { url: "/sandra-icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/sandra-icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [
+      { url: "/sandra-apple-touch-icon.png", sizes: "180x180", type: "image/png" },
+    ],
+  },
 };
 
 // UPDATE (permintaan user - "pada tampilan layar kecil, dia terlalu
@@ -30,6 +45,8 @@ export const viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 5,
+  viewportFit: "cover",
+  themeColor: "#ffffff",
 };
 
 export default function RootLayout({ children }) {

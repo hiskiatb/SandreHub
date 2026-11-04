@@ -746,7 +746,7 @@ export default function MartaHubDashboard() {
   const router = useRouter();
   const [dark, setDark] = useState(() =>
     typeof window !== "undefined"
-      ? localStorage.getItem("hub-theme") !== "light"
+      ? localStorage.getItem("hub-theme") === "dark"
       : false
   );
   const [collapsed, setCollapsed] = useState(false);
@@ -834,10 +834,9 @@ export default function MartaHubDashboard() {
   const tabCount = (tab) => tab === "All" ? data.activities.length : data.activities.filter((a) => a.status === tab).length;
 
   useEffect(() => {
-    // Sync theme from hub-theme (set by auth pages), fallback to system preference
+    // Sync theme from hub-theme (set by auth pages); default to light when unset
     const saved = localStorage.getItem("hub-theme");
-    if (saved) setDark(saved !== "light");
-    else setDark(window.matchMedia("(prefers-color-scheme: dark)").matches);
+    setDark(saved === "dark");
     guardMarta(router, "/martahub").then((res) => {
       if (!res.ok) return; // guard sudah redirect
       // Role terbatas (lihat MARTA_RESTRICTED_PATH di lib/martaAccess.js)

@@ -87,7 +87,7 @@ function DeleteModal({ row, onConfirm, onCancel, d }) {
 
 export default function MappingPage() {
   const router  = useRouter();
-  const [d, setD] = useState(true);
+  const [d, setD] = useState(false);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading]   = useState(true);
   const [token, setToken]       = useState(null);
@@ -128,7 +128,7 @@ export default function MappingPage() {
 
   // ── Auth ──────────────────────────────────────────────────────────────────
   useEffect(() => {
-    setD(localStorage.getItem("sh-theme") !== "light");
+    setD(localStorage.getItem("sh-theme") === "dark");
     (async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { router.replace("/sandra/login"); return; }

@@ -89,7 +89,7 @@ function VerifyContent() {
   const [loading,   setLoading]  = useState(false);
   const [resending, setResending]= useState(false);
   const [errMsg,    setErrMsg]   = useState("");
-  const [d,         setD]        = useState(true);
+  const [d,         setD]        = useState(false);
   const [timer,     setTimer]    = useState(60);
   const [canResend, setCanResend]= useState(false);
   const [pending,   setPending]  = useState(null);
@@ -97,7 +97,7 @@ function VerifyContent() {
   const [shaking,   setShaking]  = useState(false);
 
   useEffect(() => {
-    setD(localStorage.getItem("sh-theme") !== "light");
+    setD(localStorage.getItem("sh-theme") === "dark");
     const raw = sessionStorage.getItem("pending_reg");
     if (raw) {
       const parsed = JSON.parse(raw);
