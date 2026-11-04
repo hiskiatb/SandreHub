@@ -24,8 +24,8 @@ import MartaShell, { T } from "../components/MartaShell";
 import { readWorkbook, deriveTable } from "../../../lib/martaSiteImport";
 import { passesRow, optionsFor, FilterTh, FilterMenu } from "../../dashboard/components/MFTS_TableFilter";
 import {
-  aoCreateExportJob, aoDeleteSubmissions, aoExportList, aoGetExportDownloadUrl, aoGetExportJob,
-  aoGetExportPartUrls, aoGetRadiusSetting, aoImportOutletMaster, aoInvokeExportJob, aoListOutlets,
+  aoCreateExportJob, aoCreateZipJob, aoDeleteSubmissions, aoGetExportDownloadUrl, aoGetExportJob,
+  aoGetExportPartUrls, aoGetRadiusSetting, aoImportOutletMaster, aoInvokeExportJob, aoInvokeZipJob, aoListOutlets,
   aoListPhotos, aoListReferencePhotos, aoListSubmissions, aoPublicUrl, aoSetRadiusSetting,
   aoUpdateReferencePhotoLabel, aoUploadReferencePhoto,
 } from "../../../lib/ao";
@@ -232,7 +232,6 @@ function SubmissionBody() {
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [zipping, setZipping] = useState(false);
   const [exporting, setExporting] = useState(false);
   // Progress nyata utk Export .xlsx & Download ZIP: {kind, label, pct}
   const [job, setJob] = useState(null);
@@ -241,6 +240,12 @@ function SubmissionBody() {
   // tidak ada job background yg sedang berjalan/baru selesai.
   const [exportJob, setExportJob] = useState(null); // { id, status, parts: [{path,size_bytes,rows,row_from,row_to,url}] } | null - 1 job bisa punya banyak "parts" (lihat file_parts di ao_export_jobs)
   const exportJobBusy = !!exportJob && exportJob.status !== "done" && exportJob.status !== "error";
+  // Job background utk "Download Foto (ZIP)" (edge function `ao-export-zip`)
+  // - pola identik dgn exportJob di atas, tabel & bucket sama, cuma edge
+  // function & nama kolom "rows"-nya beda (di sini "photos"). Dipisah dari
+  // exportJob supaya kedua progress bar/banner independen.
+  const [zipJob, setZipJob] = useState(null); // { id, status, parts: [{path,size_bytes,photos,url}], downloadedPaths: Set } | null
+  const zipJobBusy = !!zipJob && zipJob.status !== "done" && zipJob.status !== "error";
   // Menu pilihan Export Data (foto di dalam Excel / link foto saja)
   const [exportMenu, setExportMenu] = useState(false);
   const exportMenuRef = useRef(null);
@@ -411,90 +416,27 @@ function SubmissionBody() {
     setPreviewPhotos(await aoListPhotos(row.id));
   };
 
+  // "Download Foto (ZIP)" - dipindah ke job background (Supabase Edge
+  // Function `ao-export-zip`), sama pola & alasan persis dgn exportXlsxJob
+  // di bawah: men-download & menge-zip ribuan foto DI BROWSER sebelumnya
+  // gagal dua cara - "Failed to fetch" (ribuan koneksi sekaligus) lalu
+  // "can't construct the Blob" (1 Blob ZIP raksasa melebihi limit memori
+  // browser) begitu diperbaiki concurrency-nya. Memindah prosesnya ke
+  // server JUGA memberi efek yg diminta user: klik sekali -> link file
+  // ASLI (signed URL storage, bukan blob JS) di-auto-klik di bawah -> itu
+  // masuk ke tab Downloads bawaan browser dgn progress asli, bukan
+  // progress bar custom di halaman.
   const downloadZip = async () => {
-    setZipping(true);
-    setJob({ kind: "zip", label: "Menyiapkan daftar foto...", pct: 0 });
     try {
-      const list = await aoExportList({ dateFrom: dateFrom || null, dateTo: dateTo || null });
-      if (!list.length) { alert("Tidak ada foto pada rentang tanggal ini."); return; }
-      const { default: JSZip } = await import("jszip");
-      // CATATAN 1 (fetch): sebelumnya semua foto di-fetch() sekaligus lewat
-      // Promise.all tanpa batas - utk 1000+ foto ini membanjiri browser
-      // (jauh di atas batas koneksi per-origin, ~6) sampai sebagian request
-      // gagal dgn "Failed to fetch". Diperbaiki jadi antrean dgn concurrency
-      // terbatas (8 sekaligus) + retry ringan per foto.
-      //
-      // CATATAN 2 (memori): foto dikumpulkan dulu SEMUA ke 1 objek JSZip,
-      // lalu zip.generateAsync() nyoba bikin 1 Blob raksasa utk ~3700 foto
-      // (bisa belasan GB) - gagal dgn "can't construct the Blob" (limit
-      // memori Blob di browser). Diperbaiki jadi di-pecah per CHUNK_SIZE
-      // foto -> tiap chunk jadi 1 file .zip terpisah ("...Part 1 of N.zip"
-      // dst), di-generate & di-download SATU PER SATU (bukan ditahan semua
-      // di memori sekaligus) - jadi tiap Blob ukurannya jauh lebih kecil.
-      const CHUNK_SIZE = 500;
-      const chunks = [];
-      for (let i = 0; i < list.length; i += CHUNK_SIZE) chunks.push(list.slice(i, i + CHUNK_SIZE));
-      const multi = chunks.length > 1;
-
-      let done = 0;
-      let failed = 0;
-      const CONCURRENCY = 8;
-      const MAX_RETRY = 2;
-      const tag = dateFrom || dateTo ? `_${dateFrom || "awal"}_${dateTo || "akhir"}` : "";
-      const baseName = `Foto Etalase dan Tampak Depan Outlet${tag}`;
-
-      for (let c = 0; c < chunks.length; c++) {
-        const chunkList = chunks[c];
-        const zip = new JSZip();
-        let cursor = 0;
-        const worker = async () => {
-          for (;;) {
-            const i = cursor++;
-            if (i >= chunkList.length) return;
-            const item = chunkList[i];
-            let lastErr;
-            for (let attempt = 0; attempt <= MAX_RETRY; attempt++) {
-              try {
-                const res = await fetch(item.url);
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const blob = await res.blob();
-                zip.file(item.filename, blob);
-                lastErr = null;
-                break;
-              } catch (e) {
-                lastErr = e;
-              }
-            }
-            if (lastErr) { failed++; console.error("[downloadZip] gagal unduh foto:", item.filename, lastErr); }
-            done++;
-            const pctBase = (c / chunks.length) * 100;
-            const pctSpan = (1 / chunks.length) * 80;
-            setJob({
-              kind: "zip",
-              label: `Mengunduh foto ${done}/${list.length}${multi ? ` (bagian ${c + 1}/${chunks.length})` : ""}${failed ? ` - ${failed} gagal` : ""}`,
-              pct: Math.round(pctBase + (i / chunkList.length) * pctSpan),
-            });
-          }
-        };
-        await Promise.all(Array.from({ length: Math.min(CONCURRENCY, chunkList.length) }, worker));
-
-        let lastPct = -1;
-        const blob = await zip.generateAsync({ type: "blob" }, (m) => {
-          const pctBase = (c / chunks.length) * 100 + (1 / chunks.length) * 80;
-          const pct = Math.round(pctBase + (m.percent / 100) * ((1 / chunks.length) * 20));
-          if (pct !== lastPct) { lastPct = pct; setJob({ kind: "zip", label: `Mengompres ZIP${multi ? ` (bagian ${c + 1}/${chunks.length})` : ""}...`, pct }); }
-        });
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = multi ? `${baseName} - Part ${c + 1} of ${chunks.length}.zip` : `${baseName}.zip`;
-        a.click();
-        URL.revokeObjectURL(a.href);
-      }
-      if (failed) alert(`${failed} dari ${list.length} foto gagal diunduh (jaringan tidak stabil) dan tidak ikut masuk ZIP. Sisanya tetap disertakan.`);
+      const jobId = await aoCreateZipJob({ dateFrom: dateFrom || null, dateTo: dateTo || null });
+      setZipJob({ id: jobId, status: "pending", parts: [], downloadedPaths: new Set() });
+      setJob({ kind: "zip-job", label: "Menyiapkan job download...", pct: 0 });
+      aoInvokeZipJob(jobId).catch((e) => {
+        setZipJob((cur) => (cur && cur.id === jobId ? { ...cur, status: "error", errorMessage: String(e?.message || e) } : cur));
+      });
     } catch (e) {
-      console.error("[downloadZip] gagal:", e);
-      alert("Gagal membuat file ZIP." + (e?.message ? `\n\n${e.message}` : ""));
-    } finally { setZipping(false); setJob(null); }
+      alert(`Gagal membuat job download ZIP: ${e?.message || e}`);
+    }
   };
 
   // Export .xlsx - kolomnya mengikuti "Result Download" di template CMS yg
@@ -546,6 +488,36 @@ function SubmissionBody() {
     ["Foto Etalase 3", (r) => (r.photos || []).find((p) => p.jenis === "etalase" && p.urutan === 3)],
     ["Foto Tampak Depan", (r) => (r.photos || []).find((p) => p.jenis === "tapak_depan")],
   ];
+  // Mode "Dengan foto di Excel" - job berat dikerjakan server-side
+  // (Supabase Edge Function `ao-export-xlsx`), supaya tidak freeze browser
+  // ataupun kena timeout serverless Vercel. Alur: (1) insert baris job ke
+  // `ao_export_jobs` dgn filter saat ini sbg params, (2) invoke edge
+  // function-nya - TIDAK di-await sampai selesai (fire-and-forget, function
+  // lanjut jalan di background lewat EdgeRuntime.waitUntil di sisi server),
+  // (3) polling baris job itu tiap 2.5s (lihat useEffect di bawah) sampai
+  // status 'done'/'error' utk update progress bar & munculkan tombol
+  // Download. Catatan: filter kolom tambahan (dari `filters`/passesRow di
+  // tabel) TIDAK ikut dikirim ke job ini - server cuma mendukung filter yg
+  // sudah ada di RPC ao_list_submissions (rentang tanggal + search teks),
+  // sama spt query yg dipakai utk mengisi tabel itu sendiri.
+  const exportXlsxJob = useCallback(async () => {
+    // Tidak ada lagi guard baris di sini - mode "Dengan foto di Excel" skrg
+    // cuma menulis rumus =IMAGE(url) per cell (lihat komentar di atas file
+    // & di edge function `ao-export-xlsx`), jadi aman utk berapapun baris.
+    try {
+      const jobId = await aoCreateExportJob({ dateFrom: dateFrom || null, dateTo: dateTo || null, search: search || null, includePhotos: true });
+      setExportJob({ id: jobId, status: "pending", parts: [] });
+      setJob({ kind: "xlsx-job", label: "Menyiapkan job export...", pct: 0 });
+      // Fire-and-forget - sengaja tidak di-await (polling di bawah yg akan
+      // memantau progress baris, bukan response invoke ini).
+      aoInvokeExportJob(jobId).catch((e) => {
+        setExportJob((cur) => (cur && cur.id === jobId ? { ...cur, status: "error", errorMessage: String(e?.message || e) } : cur));
+      });
+    } catch (e) {
+      alert(`Gagal membuat job export: ${e?.message || e}`);
+    }
+  }, [dateFrom, dateTo, search]);
+
   const PHOTO_CELL_PX = 110; // sisi kotak thumbnail (persegi) di dalam cell
   const PHOTO_ROW_PT = 86;   // tinggi baris (point) - kira2 pas utk thumbnail 110px
 
@@ -617,35 +589,6 @@ function SubmissionBody() {
     } finally { setExporting(false); setJob(null); }
   }, [filtered]);
 
-  // Mode "Dengan foto di Excel" - job berat dikerjakan server-side
-  // (Supabase Edge Function `ao-export-xlsx`), supaya tidak freeze browser
-  // ataupun kena timeout serverless Vercel. Alur: (1) insert baris job ke
-  // `ao_export_jobs` dgn filter saat ini sbg params, (2) invoke edge
-  // function-nya - TIDAK di-await sampai selesai (fire-and-forget, function
-  // lanjut jalan di background lewat EdgeRuntime.waitUntil di sisi server),
-  // (3) polling baris job itu tiap 2.5s (lihat useEffect di bawah) sampai
-  // status 'done'/'error' utk update progress bar & munculkan tombol
-  // Download. Catatan: filter kolom tambahan (dari `filters`/passesRow di
-  // tabel) TIDAK ikut dikirim ke job ini - server cuma mendukung filter yg
-  // sudah ada di RPC ao_list_submissions (rentang tanggal + search teks),
-  // sama spt query yg dipakai utk mengisi tabel itu sendiri.
-  const exportXlsxJob = useCallback(async () => {
-    // Tidak ada lagi guard baris di sini - mode "Dengan foto di Excel" skrg
-    // cuma menulis rumus =IMAGE(url) per cell (lihat komentar di atas file
-    // & di edge function `ao-export-xlsx`), jadi aman utk berapapun baris.
-    try {
-      const jobId = await aoCreateExportJob({ dateFrom: dateFrom || null, dateTo: dateTo || null, search: search || null, includePhotos: true });
-      setExportJob({ id: jobId, status: "pending", parts: [] });
-      setJob({ kind: "xlsx-job", label: "Menyiapkan job export...", pct: 0 });
-      // Fire-and-forget - sengaja tidak di-await (polling di bawah yg akan
-      // memantau progress baris, bukan response invoke ini).
-      aoInvokeExportJob(jobId).catch((e) => {
-        setExportJob((cur) => (cur && cur.id === jobId ? { ...cur, status: "error", errorMessage: String(e?.message || e) } : cur));
-      });
-    } catch (e) {
-      alert(`Gagal membuat job export: ${e?.message || e}`);
-    }
-  }, [dateFrom, dateTo, search]);
 
   // Polling job export background (tiap 2.5s) - berhenti otomatis begitu
   // status 'done'/'error', atau kalau exportJob dikosongkan (user tutup).
@@ -688,6 +631,55 @@ function SubmissionBody() {
     const id = setInterval(tick, 2500);
     return () => { cancelled = true; clearInterval(id); };
   }, [exportJob?.id, exportJob?.status]);
+
+  // Polling job ZIP background (tiap 2.5s) - sama pola persis dgn polling
+  // exportJob di atas. Begitu ada bagian baru yg siap, link-nya (signed
+  // URL, file ASLI di storage) langsung di-"klik" otomatis sekali - itu yg
+  // bikin pengalamannya "klik sekali, masuk ke tab Downloads" spt web pada
+  // umumnya, bukan nunggu semua bagian lalu user klik manual satu-satu
+  // (tombol manual di banner bawah tetap ada sbg cadangan/re-download).
+  useEffect(() => {
+    if (!zipJob?.id || zipJob.status === "done" || zipJob.status === "error") return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const row = await aoGetExportJob(zipJob.id);
+        if (cancelled) return;
+        const parts = await aoGetExportPartUrls(row.file_parts);
+        if (cancelled) return;
+        setZipJob((cur) => {
+          const downloadedPaths = cur?.downloadedPaths || new Set();
+          for (const part of parts) {
+            if (downloadedPaths.has(part.path)) continue;
+            downloadedPaths.add(part.path);
+            const a = document.createElement("a");
+            a.href = part.url;
+            a.download = "";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+          }
+          if (row.status === "done") { setJob(null); return { id: row.id, status: "done", parts, totalPhotos: row.total_rows, downloadedPaths }; }
+          if (row.status === "error") { setJob(null); return { id: row.id, status: "error", errorMessage: row.error_message, parts, downloadedPaths }; }
+          const total = row.total_rows || 0;
+          const pct = total > 0 ? Math.round((row.processed_rows / total) * 95) : 0;
+          setJob({
+            kind: "zip-job",
+            label: total > 0
+              ? `Memproses foto ${row.processed_rows}/${total} (server)${parts.length ? ` - ${parts.length} bagian terkirim ke Downloads` : ""}...`
+              : "Menghitung jumlah foto...",
+            pct,
+          });
+          return { id: row.id, status: row.status, parts, totalPhotos: total, downloadedPaths };
+        });
+      } catch {
+        // koneksi gagal sesaat - dicoba lagi di tick berikutnya, jangan hentikan polling
+      }
+    };
+    tick();
+    const id = setInterval(tick, 2500);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [zipJob?.id, zipJob?.status]);
 
   return (
     <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 14, overflow: "hidden" }}>
@@ -780,9 +772,9 @@ function SubmissionBody() {
             )}
           </div>
 
-          <Btn compact onClick={downloadZip} disabled={zipping}>
-            {zipping ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Package size={14} />}
-            Download Foto (ZIP){zipping && job?.kind === "zip" ? ` ${job.pct}%` : ""}
+          <Btn compact onClick={downloadZip} disabled={zipJobBusy}>
+            {zipJobBusy ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Package size={14} />}
+            Download Foto (ZIP){zipJobBusy && job?.kind === "zip-job" ? ` ${job.pct}%` : ""}
           </Btn>
         </div>
       </div>
@@ -792,7 +784,7 @@ function SubmissionBody() {
       {job && (
         <div style={{ padding: "10px 16px", borderBottom: `1px solid ${BORDER}`, background: T.sub }}>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 700, color: T.mid, marginBottom: 6 }}>
-            <span>{job.kind === "zip" ? "Download Foto (ZIP)" : "Export Data"} - {job.label}</span>
+            <span>{job.kind === "zip-job" ? "Download Foto (ZIP)" : "Export Data"} - {job.label}</span>
             <span>{job.pct}%</span>
           </div>
           <div style={{ height: 6, borderRadius: 99, background: BORDER, overflow: "hidden" }}>
@@ -843,6 +835,48 @@ function SubmissionBody() {
             Export .xlsx (dengan foto) gagal: {exportJob.errorMessage || "unknown error"}
           </span>
           <button onClick={() => setExportJob(null)} aria-label="Tutup" style={{ border: "none", background: "transparent", cursor: "pointer", color: T.lo, padding: 4, display: "inline-flex" }}><X size={15} /></button>
+        </div>
+      )}
+
+      {/* Job ZIP (foto) - sama pola persis dgn banner exportJob di atas.
+          Bagian2-nya SUDAH otomatis "diklik" (native download, masuk tab
+          Downloads) begitu siap - lihat tick() di atas - jadi tombol di sini
+          cuma cadangan utk re-download kalau browser memblokir auto-download
+          beruntun atau user mau unduh ulang bagian tertentu. */}
+      {zipJob && zipJob.parts?.length > 0 && (zipJob.status === "done" || zipJob.status === "error" || zipJob.status === "processing") && (
+        <div style={{ padding: "10px 16px", borderBottom: `1px solid ${BORDER}`, background: zipJob.status === "error" ? "#FEF2F2" : "#F0FDF4" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: zipJob.parts.length ? 8 : 0 }}>
+            {zipJob.status === "error" ? <XCircle size={16} color="#DC2626" style={{ flex: "none" }} /> : <CheckCircle2 size={16} color="#16A34A" style={{ flex: "none" }} />}
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: T.hi, flex: 1 }}>
+              {zipJob.status === "done" && `${zipJob.parts.length} file ZIP (${(zipJob.totalPhotos || 0).toLocaleString("id-ID")} foto) sudah dikirim ke Downloads.`}
+              {zipJob.status === "processing" && `${zipJob.parts.length} bagian sudah dikirim ke Downloads - sisanya masih diproses di server...`}
+              {zipJob.status === "error" && `Download ZIP gagal: ${zipJob.errorMessage || "unknown error"}. ${zipJob.parts.length} bagian sebelum error tetap sudah terkirim.`}
+            </span>
+            {(zipJob.status === "done" || zipJob.status === "error") && (
+              <button onClick={() => setZipJob(null)} aria-label="Tutup" style={{ border: "none", background: "transparent", cursor: "pointer", color: T.lo, padding: 4, display: "inline-flex" }}><X size={15} /></button>
+            )}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {zipJob.parts.map((part, idx) => (
+              <a
+                key={part.path}
+                href={part.url} download
+                title={`${part.photos} foto - ${(part.size_bytes / (1024 * 1024)).toFixed(1)} MB`}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 11px", borderRadius: 8, background: T.primary, color: "#fff", fontSize: 11.5, fontWeight: 800, fontFamily: FONT, textDecoration: "none" }}
+              >
+                <Download size={12} /> Bagian {idx + 1} ({(part.size_bytes / (1024 * 1024)).toFixed(1)} MB)
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+      {zipJob?.status === "error" && !zipJob.parts?.length && (
+        <div style={{ padding: "10px 16px", borderBottom: `1px solid ${BORDER}`, background: "#FEF2F2", display: "flex", alignItems: "center", gap: 10 }}>
+          <XCircle size={16} color="#DC2626" style={{ flex: "none" }} />
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: T.hi, flex: 1 }}>
+            Download ZIP gagal: {zipJob.errorMessage || "unknown error"}
+          </span>
+          <button onClick={() => setZipJob(null)} aria-label="Tutup" style={{ border: "none", background: "transparent", cursor: "pointer", color: T.lo, padding: 4, display: "inline-flex" }}><X size={15} /></button>
         </div>
       )}
 
