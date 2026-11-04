@@ -2,11 +2,11 @@
 /**
  * DSE_ProdAR.jsx — "DSE Prod. & AR"
  *
- * Tab utama "Input Harian": Admin MC (role finance_mpx) langsung mengisi
+ * Tab utama "Input Harian": Admin District (role finance_mpx) langsung mengisi
  * produksi harian (SP, Saldo, Voucher) + AR/piutang per Kode DSE miliknya —
- * SATU entry amount per DSE per hari. Nama DSE dan MC juga bisa diedit
+ * SATU entry amount per DSE per hari. Nama DSE dan District juga bisa diedit
  * langsung dari sini (ditulis ke mf_dse_database).
- * RLS otomatis membatasi Admin MC hanya ke DSE dengan mc = partner_name-nya.
+ * RLS otomatis membatasi Admin District hanya ke DSE dengan mc = partner_name-nya.
  *
  * Tab "Riwayat": daftar + filter + export dari seluruh input yang tersimpan.
  *
@@ -27,7 +27,7 @@
  * bukan lagi sbg 2 baris/section penjualan terpisah.
  *
  * UPDATE (permintaan user - "mengapa belum pindah database dse ini", sama
- * seperti "Mapping Admin MC" sebelumnya): tab ke-4 "Database DSE" ditambahkan
+ * seperti "Mapping Admin District" sebelumnya): tab ke-4 "Database DSE" ditambahkan
  * di sini (isSPM saja) — dulu menu & DashCard TERPISAH di overview dashboard
  * ("Database DSE", render SDP_DseDatabase.jsx lewat view === "dse-database"
  * di page.jsx), sekarang dirender sbg tab di dalam halaman ini juga, supaya
@@ -47,7 +47,8 @@ import {
   Search, RefreshCw, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, Wallet, TrendingUp, Calendar, Info,
   Pencil, Save, ListChecks, History, Database, Trash2,
   Users, UserCheck, UserX, Ticket, CircleDollarSign, Clock,
-  Construction, SlidersHorizontal, Crown, Medal, MapPin, ArrowUpDown, Plus, RotateCcw,
+  SlidersHorizontal, Crown, Medal, MapPin, ArrowUpDown, Plus, RotateCcw, Copy, Printer, EyeOff, Eye, Minus,
+  FileImage, FileText,
 } from "lucide-react";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif`;
@@ -63,6 +64,11 @@ const TABLE_BP = 860; // di bawah ini → tampilan card (mobile, fold, layar sem
 // (permintaan user) tanpa menghapus kodenya — tinggal set true lagi kalau
 // suatu saat perlu dinyalakan.
 const SHOW_IMPORT_EXCEL = false;
+// UPDATE (permintaan user - "sembunyikan saja lihat detail struktural"):
+// toggle "Lihat Detail Struktural (District, Area, Region, Partner)" di tab
+// Informasi DSE disembunyikan dari UI (pola sama persis SHOW_IMPORT_EXCEL
+// - kodenya tetap ada, tinggal set true lagi kalau suatu saat perlu).
+const SHOW_STRUCTURAL_DETAIL_TOGGLE = false;
 
 const fmtID = (n) => Math.round(Number(n) || 0).toLocaleString("id-ID");
 // UPDATE (permintaan user - "jika textnya tidak muat untuk Mn Bn, ringkas
@@ -112,22 +118,127 @@ function resolveStatusAsOf(dseCode, dateStr, statusEvents, liveStatus) {
   // pada tanggal itu = status SEBELUM perubahan tercatat paling awal.
   return events[0].old_value || liveStatus;
 }
+// UPDATE (permintaan user - "pada status ini akan ada umurnya juga
+// otomatis... buat uinya sangat bagus"): badge "umur status" di sebelah pill
+// Status - makna beda per status: Active = sejak join_date (lgsg dari
+// field, tanpa riwayat), Vacant = sejak PALING BARU di-set Vacant (riwayat
+// terakhir), OJT/Interview = sejak PERTAMA KALI di-set OJT (riwayat
+// terlama). Pakai statusEvents yg sudah ada (sama persis sumber data dgn
+// resolveStatusAsOf di atas) - tidak perlu query baru.
+// UPDATE (permintaan user - "paling kecil 1 hari misal diset hari ini
+// berarti itungannya 1 Hari"): minimal selalu 1 (bukan 0) - DSE yg BARU
+// SAJA diset statusnya hari ini tetap dianggap "1 Hari", bukan "0 Hari"/
+// "Hari ini" yg kesannya belum kehitung.
+const daysSinceDate = (ymd) => {
+  if (!ymd) return null;
+  try {
+    const ms = new Date(todayISO() + "T00:00:00") - new Date(ymd + "T00:00:00");
+    return Math.max(1, Math.floor(ms / 86400000));
+  } catch {
+    return null;
+  }
+};
+function statusSinceEventDate(events, status, mode) {
+  if (!events || !events.length) return null;
+  const matches = events.filter((e) => e.new_value === status);
+  if (!matches.length) return null;
+  return mode === "first" ? matches[0].date : matches[matches.length - 1].date;
+}
+function statusAgeInfo(dseCode, status, statusEvents, joinDate) {
+  let sinceDate = null;
+  if (status === "Active") sinceDate = joinDate || null;
+  else if (status === "Vacant") sinceDate = statusSinceEventDate(statusEvents?.[dseCode], "Vacant", "last");
+  else if (status === "Interview") sinceDate = statusSinceEventDate(statusEvents?.[dseCode], "Interview", "first");
+  if (!sinceDate) return null;
+  const days = daysSinceDate(sinceDate);
+  if (days === null) return null;
+  return { days, sinceDate };
+}
+// Format umur jadi satuan paling enak dibaca (hari -> bulan -> tahun),
+// tooltip (title) di badge-nya tetap kasih jumlah hari persis + tanggal
+// biar ga kehilangan presisi walau tampilan ringkas.
+function humanizeAge(days) {
+  if (days === 0) return "Hari ini";
+  if (days === 1) return "1 hari";
+  if (days < 30) return `${days} hari`;
+  if (days < 365) {
+    const months = Math.round(days / 30);
+    return `${months} bln`;
+  }
+  const years = Math.floor(days / 365);
+  const remMonths = Math.round((days % 365) / 30);
+  return remMonths > 0 ? `${years} thn ${remMonths} bln` : `${years} thn`;
+}
 const emptyEntry = () => ({ qty_sp: 0, nilai_sp: 0, qty_saldo: 0, nilai_saldo: 0, qty_voucher: 0, nilai_voucher: 0, ar_piutang: 0, ar_bayar: 0, catatan: "" });
 // Format jam:menit lokal dari timestamptz, utk audit trail "Diperbarui HH:mm" per baris
 const fmtTime = (iso) => { if (!iso) return ""; try { return new Date(iso).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }); } catch { return ""; } };
 const DAY_NAMES = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
 const MONTH_NAMES = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+// ── Laporan Tunggakan (cetak / HR) ──────────────────────────────────────────
+// `computeArAsOf` menghitung status piutang SEBAGAIMANA ADANYA pada tanggal
+// cutoff tertentu (akhir bulan terpilih) — bukan cuma snapshot saldo hari
+// ini (`outstanding`/mf_dse_prod_ar yg live). Ini penting utk laporan HR:
+// "Sisa Tunggakan Akhir Bulan" HARUS mencakup piutang dari bulan2
+// sebelumnya yg masih belum lunas (bukan cuma piutang yg DIBUAT bulan ini),
+// karena itulah dasar potongan gaji — piutang lama yg belum dibayar tetap
+// jadi tanggungan DSE sampai benar2 lunas, terlepas kapan piutang itu
+// dibuat. `cutoffISO` = tanggal terakhir bulan terpilih (YYYY-MM-DD);
+// `monthISO` ("YYYY-MM") dipakai KHUSUS utk memisahkan "pembayaran yg
+// diterima BULAN INI saja" (arus kas periode ini) dari "pembayaran s.d.
+// akhir bulan" (dipakai utk hitung sisa kumulatif, bisa termasuk bayar dari
+// bulan2 lalu jg).
+function endOfMonthISO(monthISO) {
+  if (!monthISO) return null;
+  const [y, m] = monthISO.split("-").map(Number);
+  if (!y || !m) return null;
+  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+}
+function computeArAsOf(rawItems, cutoffISO, monthISO) {
+  const getPayments = (it) => (it.payments || it.ar_piutang_payments || []);
+  const inCutoff = (rawItems || []).filter((it) => !cutoffISO || String(it.tanggal_transaksi || "").slice(0, 10) <= cutoffISO);
+  const items = inCutoff.map((it) => {
+    const allPayments = getPayments(it).slice().sort((a, b) => new Date(a.tanggal_pembayaran) - new Date(b.tanggal_pembayaran) || new Date(a.created_at) - new Date(b.created_at));
+    const paymentsAsOf = cutoffISO ? allPayments.filter((p) => String(p.tanggal_pembayaran || "").slice(0, 10) <= cutoffISO) : allPayments;
+    const paidAsOf = paymentsAsOf.reduce((s, p) => s + fRaw(p.nominal), 0);
+    const belumDibayarAsOf = Math.max(0, fRaw(it.total) - paidAsOf);
+    const paymentsInMonth = monthISO ? allPayments.filter((p) => String(p.tanggal_pembayaran || "").slice(0, 7) === monthISO) : paymentsAsOf;
+    return { ...it, allPayments, paymentsAsOf, paymentsInMonth, paidAsOf, belumDibayarAsOf, lunasAsOf: belumDibayarAsOf <= 0 };
+  }).sort((a, b) => new Date(a.tanggal_transaksi) - new Date(b.tanggal_transaksi));
+  const totalUtang = items.reduce((s, it) => s + fRaw(it.total), 0);
+  const totalBayarAsOf = items.reduce((s, it) => s + it.paidAsOf, 0);
+  const totalBayarPeriod = items.reduce((s, it) => s + it.paymentsInMonth.reduce((ss, p) => ss + fRaw(p.nominal), 0), 0);
+  const sisaAkhir = items.reduce((s, it) => s + it.belumDibayarAsOf, 0);
+  return { items, totalUtang, totalBayarAsOf, totalBayarPeriod, sisaAkhir };
+}
 // UPDATE (permintaan user - "pada lebar layar tertentu singkat saja
 // penulisan bulannya menjadi 1 Nov 2026 agar tidak keluar batas"):
 // versi singkat nama bulan, dipakai di label periode (dseprod-period-
 // label) khusus di rentang lebar sempit (lihat fmtDayMonth pemakaiannya)
 // supaya teks ga overflow keluar kotak.
 const MONTH_NAMES_SHORT = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
-const fmtLongDate = (iso) => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return `${DAY_NAMES[d.getDay()]}, ${d.getDate()} ${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`; };
+// UPDATE (permintaan user - "seragamkan formatnya menjadi dd mmmm yyyy"):
+// dulu hari-nya TANPA leading zero ("1 November 2026") beda sama
+// fmtDayMonthFull yg udah dipakai di tempat lain ("01 November 2026") -
+// bikin 2 tampilan tanggal bersebelahan (mis. subtitle header popup vs
+// label field di bawahnya) keliatan beda format padahal tanggal yg sama.
+// pad2 (didefinisikan di bawah, aman dipanggil di sini krn body fungsi
+// ini baru jalan saat DIPANGGIL, bukan saat dideklarasikan - sama persis
+// alasan fmtDayMonthFull sebelumnya) nyamain semua ke 2-digit.
+const fmtLongDate = (iso) => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return `${DAY_NAMES[d.getDay()]}, ${pad2(d.getDate())} ${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`; };
 // Dipakai di trigger Periode mode Daily (tanpa nama hari, lbh ringkas & muat
 // di lebar box yg sama dgn label bulan "<Bulan> <Tahun>" mode Full Month).
-const fmtDayMonth = (iso) => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return `${d.getDate()} ${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`; };
+const fmtDayMonth = (iso) => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return `${pad2(d.getDate())} ${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`; };
 const fmtDayMonthShort = (iso) => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return `${d.getDate()} ${MONTH_NAMES_SHORT[d.getMonth()]} ${d.getFullYear()}`; };
+// UPDATE (permintaan user - "buat menjadi 02 november 2026"): pill nav
+// tanggal di popup edit DSE (DseInputRow) sempat pakai sistem tier
+// otomatis yg nyusut ikut lebar box (lihat popupDateLabelTiers di
+// bawah, sekarang sudah ga dipakai lagi utk pill ini) - hasilnya ga
+// konsisten/"berubah-ubah" krn ketergantungan pengukuran DOM yg
+// rawan race condition pas popup baru mount. User minta format TETAP
+// "02 November 2026" (tanggal 2 digit + nama bulan penuh + tahun),
+// jadi dibikin fungsi statis - deterministik murni dari tanggalnya,
+// ga pernah berubah krn ukuran layar/box.
+const fmtDayMonthFull = (iso) => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return `${pad2(d.getDate())} ${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`; };
 // UPDATE (permintaan user - "untuk tanggal ini, jika masih muat maka
 // panjangkan penulisan bulannya menjadi November, jika tidak muat jadi
 // 02 Nov 2026, jika ga muat juga jadi 02 Nov'26, jika tidak muat juga
@@ -162,28 +273,12 @@ function dateLabelTiers(iso) {
 }
 
 const DAY_NAMES_SHORT = ["M", "S", "S", "R", "K", "J", "S"];
-// UPDATE (bug fix - "tombol nav tanggal di popup edit DSE kepotong
-// mid-word jadi 'Minggu, 1 November 2...'"): pill ini (periodDateNavInline,
-// dipakai di header popup edit) dulu cuma pasang fmtLongDate() mentah +
-// CSS text-overflow:ellipsis polos, TANPA tingkatan fallback apa pun -
-// beda sama pill tanggal header utama (dateLabelTiers di atas) yg punya
-// 4 tingkat + pengukuran lebar box beneran. Sekarang pill popup ini dapet
-// tingkatan serupa (nama hari disingkat duluan baru tanggalnya, BUKAN
-// ellipsis mid-angka) + diukur sama persis caranya (lihat hook
-// popupDateLabelTiers dipakai di DseInputRow).
-function popupDateLabelTiers(iso) {
-  if (!iso) return ["", "", "", "", ""];
-  const d = new Date(iso + "T00:00:00");
-  const dayName = DAY_NAMES[d.getDay()];
-  const [full, shortMonthFull, shortMonthYy, shortest] = dateLabelTiers(iso);
-  return [
-    `${dayName}, ${full}`,           // tier 0: "Minggu, 02 November 2026"
-    `${dayName}, ${shortMonthFull}`, // tier 1: "Minggu, 02 Nov 2026"
-    shortMonthFull,                  // tier 2: "02 Nov 2026" (nama hari dibuang duluan)
-    shortMonthYy,                    // tier 3: "02 Nov'26"
-    shortest,                        // tier 4 (paling ringkas): "02 Nov"
-  ];
-}
+// UPDATE (permintaan user - "buat menjadi 02 november 2026"): pill nav
+// tanggal popup edit DSE (periodDateNavInline) DULU punya sistem tingkatan
+// fallback sendiri di sini (popupDateLabelTiers) yg menyusut otomatis
+// ikut lebar box - dihapus krn ga reliable (lihat komentar di
+// fmtDayMonthFull & DseInputRow), diganti format TETAP ("02 November
+// 2026", fungsinya fmtDayMonthFull di atas).
 // Grid kalender 1 bulan (utk PeriodPicker Excel-style) — sel kosong di awal
 // diisi "" (padding sblm tanggal 1 jatuh di hari apa), total selalu kelipatan 7.
 const buildMonthGrid = (ym) => {
@@ -310,14 +405,54 @@ function LoadingBlock({ t, label = "Memuat data…", minHeight = 160 }) {
   );
 }
 
+// UPDATE (permintaan user - "perbaiki UI nya menjadi lebih baik dan
+// animasi yang bagus"): toast dulu nongol/ilang MENDADAK (ga ada animasi
+// masuk/keluar sama sekali - render langsung muncul statis, unmount
+// langsung lenyap), kotak persegi polos nempel ke tepi layar, ikon
+// nangkring tanpa wadah. Dipoles total:
+//  - Animasi masuk (slide-up + fade + scale lewat keyframe toastSlideIn)
+//    DAN animasi keluar yg BENERAN (state `closing` lokal - trigger
+//    animasi toastSlideOut dulu, baru panggil onClose SESUDAH animasinya
+//    kelar lewat timeout, bukan unmount instan) - berlaku baik toast
+//    ilang sendiri (auto-dismiss) MAUPUN diklik tombol X manual.
+//  - Progress bar tipis di bagian bawah yg ngecil dari 100% -> 0% selaras
+//    persis sama durasi auto-dismiss (4500ms) - user dapat sinyal visual
+//    jelas kapan toast bakal ilang, bisa jg jadi alasan utk buru2 baca.
+//  - Ikon dibungkus badge lingkaran semi-transparan (bukan nangkring
+//    polos), radius card diperbesar (10->14) biar lebih modern, shadow
+//    dipertajam + ditambah tint warna sesuai tipe (bukan abu generik),
+//    card ga lagi maksain full-width (nempel kiri-kanan layar) - sekarang
+//    auto-width (max 420) & selalu nempel kanan, konsisten baik di mobile
+//    maupun desktop (dulu di mobile jadi lebar penuh terasa "nutup" layar).
 function Toast({ msg, type, onClose }) {
-  useEffect(() => { const t = setTimeout(onClose, 4500); return () => clearTimeout(t); }, [onClose]);
+  const [closing, setClosing] = useState(false);
+  const handleClose = () => setClosing(true);
+  useEffect(() => { const t = setTimeout(handleClose, 4500); return () => clearTimeout(t); }, []);
+  useEffect(() => {
+    if (!closing) return undefined;
+    const t = setTimeout(onClose, 220);
+    return () => clearTimeout(t);
+  }, [closing, onClose]);
   const bg = type === "error" ? "#DC2626" : type === "warn" ? "#D97706" : "#16A34A";
   return (
-    <div style={{ position: "fixed", bottom: 24, right: 24, left: 24, zIndex: 9999, display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderRadius: 10, background: bg, color: "#fff", fontSize: 13.5, fontWeight: 600, fontFamily: FONT, boxShadow: "0 8px 24px rgba(0,0,0,0.25)", maxWidth: 480, marginLeft: "auto" }}>
-      {type === "error" ? <AlertTriangle size={15} /> : <Check size={15} />}
-      <span style={{ flex: 1 }}>{msg}</span>
-      <button onClick={onClose} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 0, display: "flex" }}><X size={14} /></button>
+    <div style={{ position: "fixed", bottom: 24, right: 24, zIndex: 9999, maxWidth: 420, width: "calc(100% - 48px)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "13px 14px 13px 13px", borderRadius: 14, background: bg, color: "#fff", fontSize: 13.5, fontWeight: 600, fontFamily: FONT, boxShadow: `0 12px 32px -6px ${bg}66, 0 4px 14px rgba(0,0,0,0.22)`, position: "relative", overflow: "hidden", animation: `${closing ? "toastSlideOut" : "toastSlideIn"} 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) forwards` }}>
+        <span style={{ width: 26, height: 26, borderRadius: 999, background: "rgba(255,255,255,0.22)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          {type === "error" ? <AlertTriangle size={14} /> : <Check size={14} />}
+        </span>
+        <span style={{ flex: 1, lineHeight: 1.4 }}>{msg}</span>
+        <button onClick={handleClose} style={{ background: "rgba(255,255,255,0.14)", border: "none", borderRadius: 999, width: 22, height: 22, color: "#fff", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <X size={12} />
+        </button>
+        <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 2.5, background: "rgba(255,255,255,0.28)" }}>
+          <div style={{ height: "100%", background: "rgba(255,255,255,0.85)", animation: closing ? "none" : "toastProgress 4.5s linear forwards" }} />
+        </div>
+      </div>
+      <style>{`
+        @keyframes toastSlideIn { from { opacity: 0; transform: translateY(14px) scale(0.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        @keyframes toastSlideOut { from { opacity: 1; transform: translateY(0) scale(1); } to { opacity: 0; transform: translateY(8px) scale(0.96); } }
+        @keyframes toastProgress { from { width: 100%; } to { width: 0%; } }
+      `}</style>
     </div>
   );
 }
@@ -332,8 +467,8 @@ const HISTORY_FIELD_LABEL = {
   dse_code_3id: "DSE Code 3ID",
   mdi: "MDI",
   pt_name: "PT",
-  mc: "Micro Cluster",
-  branch: "Branch",
+  mc: "District",
+  branch: "Area",
   region: "Region",
   circle: "Circle",
   dse_status: "Status",
@@ -360,7 +495,7 @@ const HISTORY_FIELD_LABEL = {
 //    baris mf_dse_prod_ar di-UPDATE/DELETE: SP/Voucher/Saldo dipisah jelas
 //    dari AR/Piutang & Catatan di card yg sama, biar gampang dibaca mana yg
 //    penjualan mana yg piutang).
-function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose }) {
+function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose, onBack }) {
   // UPDATE (permintaan user - "riwayat perubahan, ini kita akan rework,
   // per masing masing sub menu, jadi ada Riwayat Informasi DSE, Riwayat
   // Penjualan SP, Riwayat Penjualan Voucher, dan juga Penjualan Saldo,
@@ -392,6 +527,13 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose })
   // bulan yg ditampilkan ikut bulan yg lagi aktif di induk (initialMonth),
   // tapi bisa digeser maju/mundur sendiri via historyMonth.
   const [historyMonth, setHistoryMonth] = useState(initialMonth || todayISO().slice(0, 7));
+  // UPDATE (permintaan user - "saya ingin lebih rapi dan selalu di
+  // scroll ke hari ini"): ref ke container scroll daftar tanggal di tab
+  // Penjualan SP/Voucher/Saldo (renderSalesTab) - dipakai useEffect di
+  // bawah utk auto-scroll ke baris "Hari Ini" tiap kali tab/bulan
+  // riwayat ganti & data selesai dimuat, biar admin ga perlu scroll
+  // manual nyari tanggal hari ini tiap buka popup.
+  const salesScrollRef = useRef(null);
   const [nameRows, setNameRows] = useState([]);
   const [prodRows, setProdRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -438,6 +580,33 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose })
     return () => { alive = false; };
   }, [dseCode]);
 
+  // UPDATE (permintaan user - "saya ingin lebih rapi dan selalu di
+  // scroll ke hari ini"): auto-scroll container daftar tanggal ke baris
+  // "Hari Ini" (kalau ada di bulan yg lagi ditampilkan) tiap kali tab
+  // riwayat (sp/voucher/saldo) atau bulan diganti, serta begitu loading
+  // selesai - dijalankan via requestAnimationFrame biar DOM baris2
+  // tanggalnya udah pasti selesai di-render dulu sebelum di-scroll.
+  useEffect(() => {
+    if (historyTab === "info" || loading) return;
+    const raf = requestAnimationFrame(() => {
+      const container = salesScrollRef.current;
+      const el = container?.querySelector('[data-today="1"]');
+      // FIX (permintaan user - "saat penjualan pertama kali dibuka dia
+      // kurang scroll kebawah, jadi walau tanggal hari ini sudah tampil,
+      // namun masih terpotong ... saya ingin langsung scroll max saat
+      // pertama kali tab dibuka"): `scrollIntoView({block:"nearest"})`
+      // cuma geser SECUKUPNYA biar baris kelihatan (bisa berhenti pas
+      // baris itu masih kepotong separuh di tepi bawah, krn "nearest"
+      // ga peduli baris itu kelihatan PENUH atau cuma sebagian). Baris
+      // "Hari Ini" SELALU baris PALING BAWAH (tanggal terbaru, ga ada
+      // tanggal setelah hari ini), jadi langsung set scrollTop ke
+      // scrollHeight (mentok paling bawah) - baris Hari Ini dijamin
+      // kelihatan UTUH, bukan cuma "nearest-enough".
+      if (container && el) container.scrollTop = container.scrollHeight;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [historyTab, historyMonth, loading]);
+
   const HistoryCard = ({ icon, iconColor, iconBg, badgeLabel, badgeColor, badgeBg, title, timeLabel, changedBy, children, onDeleteClick }) => (
     <div style={{ display: "flex", gap: 11, borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: "13px 14px" }}>
       <div style={{ width: 32, height: 32, borderRadius: 10, background: iconBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -451,9 +620,20 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose })
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
             <span style={{ fontSize: 10.5, color: t.lo, whiteSpace: "nowrap" }}>{timeLabel}</span>
+            {/* UPDATE (permintaan user - screenshot popup Riwayat Penjualan
+                SP, "ui nya sangat jelek, perbaiki total secara
+                keseluruhan ... tombol jelas tidak kekecilan"): SEMUA
+                tombol ikon kecil di modal riwayat ini (hapus di kartu
+                info, edit+reset di kartu per-tanggal SP/Voucher/Saldo,
+                nav bulan) dulu 22-28px - diperbesar jadi 32-38px di
+                seluruh modal ini biar target klik/tap jelas & konsisten,
+                bukan cuma kotak kecil yg gampang kepencet salah. */}
             {onDeleteClick && (
-              <button onClick={onDeleteClick} title="Hapus" style={{ width: 22, height: 22, borderRadius: 7, border: "none", background: "transparent", color: t.lo, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <Trash2 size={13} />
+              <button onClick={onDeleteClick} title="Hapus"
+                onMouseEnter={(ev) => { ev.currentTarget.style.background = t.redBg; ev.currentTarget.style.color = t.red; }}
+                onMouseLeave={(ev) => { ev.currentTarget.style.background = "transparent"; ev.currentTarget.style.color = t.lo; }}
+                style={{ width: 32, height: 32, borderRadius: 9, border: "none", background: "transparent", color: t.lo, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "background 0.12s, color 0.12s", flexShrink: 0 }}>
+                <Trash2 size={15} />
               </button>
             )}
           </div>
@@ -535,7 +715,15 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose })
         // langsung edit"): tanggal yg blm punya baris SAMA SEKALI di DB
         // (disintesis jadi 0 cuma utk ditampilin) - begitu diisi, insert
         // baris baru dulu (bukan update, krn belum ada barisnya).
-        const { error } = await supabase.from("mf_dse_prod_ar").insert({ dse_code: dseCode, tanggal: row.tanggal, ...patch });
+        // FIX (bug "null value in column mc ... violates not-null
+        // constraint"): insert ini dulu CUMA ngirim dse_code/tanggal/nilai
+        // - padahal kolom "mc" (District) di mf_dse_prod_ar itu NOT NULL.
+        // Baris baru yg dibuat dari sini (edit-inline di popup Riwayat)
+        // jadi selalu gagal insert kalau DSE-nya belum pernah punya baris
+        // sama sekali di tabel itu. `dse.mc` (prop DSE lengkap yg udah
+        // dikirim ke komponen ini) dipakai sbg sumber District-nya, sama
+        // persis kayak insert/upsert mf_dse_prod_ar lain di file ini.
+        const { error } = await supabase.from("mf_dse_prod_ar").insert({ dse_code: dseCode, tanggal: row.tanggal, mc: dse?.mc || null, ...patch });
         if (error) throw error;
       }
       setProdRows((rows) => {
@@ -588,8 +776,6 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose })
   const renderSalesTab = (kind, label, color, bg, Icon) => {
     const nilaiCol = nilaiColOf(kind);
     const totalNilai = monthDayRows.reduce((s, r) => s + fRaw(r[nilaiCol]), 0);
-    const [hy, hm] = historyMonth.split("-").map(Number);
-    const monthLabel = `${MONTH_NAMES[hm - 1]} ${hy}`;
     const today = todayISO();
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
@@ -599,21 +785,18 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose })
             utk SELURUH bulan yg lagi ditampilkan, plus navigasi
             maju/mundur bulan (ganti bulan = ganti isi monthDayRows,
             lihat useMemo di atas). */}
-        <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: bg, padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}>
-          <button onClick={() => setHistoryMonth((m) => shiftMonth(m, -1))} title="Bulan sebelumnya"
-            style={{ width: 28, height: 28, borderRadius: 8, border: "none", background: "rgba(255,255,255,0.55)", color, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <ChevronDown size={13} style={{ transform: "rotate(90deg)" }} />
-          </button>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 10, fontWeight: 800, color, textTransform: "uppercase", letterSpacing: 0.3 }}>Total Penjualan {label} · {monthLabel}</div>
-            <div style={{ fontSize: 17, fontWeight: 800, color: t.hi, fontVariantNumeric: "tabular-nums", marginTop: 1 }}>Rp {fmtID(totalNilai)}</div>
+        <div style={{ borderRadius: 16, border: `1px solid ${t.line}`, background: bg, padding: "12px 14px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ width: 26, height: 26, borderRadius: 8, background: "rgba(255,255,255,0.65)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: t.shadowSm }}>
+              <Icon size={13} color={color} />
+            </div>
+            <div style={{ fontSize: 10.5, fontWeight: 800, color, textTransform: "uppercase", letterSpacing: 0.3, flex: 1, minWidth: 0 }}>Total Penjualan {label}</div>
           </div>
-          <button onClick={() => setHistoryMonth((m) => shiftMonth(m, 1))} disabled={historyMonth >= today.slice(0, 7)} title="Bulan berikutnya"
-            style={{ width: 28, height: 28, borderRadius: 8, border: "none", background: historyMonth >= today.slice(0, 7) ? "transparent" : "rgba(255,255,255,0.55)", color: historyMonth >= today.slice(0, 7) ? t.line : color, cursor: historyMonth >= today.slice(0, 7) ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <ChevronDown size={13} style={{ transform: "rotate(-90deg)" }} />
-          </button>
+          <div style={{ fontSize: 19, fontWeight: 800, color: t.hi, fontVariantNumeric: "tabular-nums" }}>Rp {fmtID(totalNilai)}</div>
         </div>
 
+        <div style={{ position: "relative", marginTop: 2 }}>
+          <div ref={salesScrollRef} className="noScrollbar" style={{ maxHeight: 375, overflowY: "auto", scrollbarWidth: "none", display: "flex", flexDirection: "column", gap: 9, paddingRight: 2, paddingTop: 2, paddingBottom: 10 }}>
         {monthDayRows.map((row) => {
           const nilai = fRaw(row[nilaiCol]);
           const isEditing = editTanggal === row.tanggal;
@@ -621,8 +804,15 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose })
           const isConfirming = confirmTarget?.kind === kind && confirmTarget?.tanggal === row.tanggal;
           const isToday = row.tanggal === today;
           return (
-            <div key={row.tanggal} style={{ borderRadius: 14, border: `1px solid ${isToday ? color : t.line}`, background: t.card, boxShadow: t.shadowSm, padding: "13px 14px", position: "relative" }}>
-              <div style={{ display: "flex", gap: 11, alignItems: "flex-start" }}>
+            <div key={row.tanggal} data-today={isToday ? "1" : undefined} style={{ borderRadius: 14, border: `1px solid ${isToday ? color : t.line}`, background: t.card, boxShadow: t.shadowSm, padding: "13px 14px", position: "relative" }}>
+              {/* UPDATE (permintaan user - "mengapa icon icon ini tidak
+                  center"): container ikon dulu `alignItems:flex-start`
+                  (nempel ke atas) - jadi keliatan "ga center" krn
+                  kontennya di kanan 2 baris (tanggal + nominal). Diganti
+                  `center` biar ikon selalu center vertikal ngikutin
+                  TINGGI konten di sebelahnya, baik pas 2 baris (normal)
+                  maupun 3+ baris (lagi diedit, ada form). */}
+              <div style={{ display: "flex", gap: 11, alignItems: "center" }}>
                 <div style={{ width: 32, height: 32, borderRadius: 10, background: bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                   <Icon size={15} color={color} />
                 </div>
@@ -632,16 +822,25 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose })
                       <span style={{ fontSize: 12.5, fontWeight: 700, color: t.hi, whiteSpace: "nowrap" }}>{fmtLongDate(row.tanggal)}</span>
                       {isToday && <span style={{ flexShrink: 0, padding: "1.5px 7px", borderRadius: 999, background: color, color: "#fff", fontSize: 9, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.3 }}>Hari Ini</span>}
                     </div>
+                    {/* UPDATE (permintaan user - "untuk penjualan tidak perlu
+                        ada tombol hapus, cukup edit saja, karena mereka
+                        tinggal set 0 saja kan lalu save, jadi cukup icon
+                        edit yang lebih besar agar lebih rapi"): tombol
+                        Hapus (reset ke 0 + popup "ketik HAPUS") dihapus -
+                        reset ke 0 udah bisa langsung lewat alur Edit biasa
+                        (pensil -> ubah angka jadi 0 -> Simpan), jadi 2
+                        tombol terpisah utk 1 tujuan yg sama itu redundan.
+                        Tombol Edit yg tersisa diperbesar (32px -> 38px,
+                        ikon 14 -> 16) biar proporsional krn sendirian &
+                        lebih gampang di-tap. */}
                     {!isEditing && (
-                      <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-                        <button onClick={() => startEdit(row, kind)} title="Edit nilai hari ini" style={{ width: 22, height: 22, borderRadius: 7, border: "none", background: t.sub, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                          <Pencil size={11} />
+                      <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
+                        <button onClick={() => startEdit(row, kind)} title="Edit nilai hari ini"
+                          onMouseEnter={(ev) => { ev.currentTarget.style.background = bg; ev.currentTarget.style.color = color; }}
+                          onMouseLeave={(ev) => { ev.currentTarget.style.background = t.sub; ev.currentTarget.style.color = t.mid; }}
+                          style={{ width: 38, height: 38, borderRadius: 10, border: "none", background: t.sub, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "background 0.12s, color 0.12s" }}>
+                          <Pencil size={16} />
                         </button>
-                        {nilai > 0 && (
-                          <button onClick={() => { setConfirmTarget({ kind, tanggal: row.tanggal, label: `Penjualan ${label} ${fmtLongDate(row.tanggal)}` }); setConfirmTyped(""); }} title="Reset ke 0" style={{ width: 22, height: 22, borderRadius: 7, border: "none", background: "transparent", color: t.lo, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                            <Trash2 size={12} />
-                          </button>
-                        )}
                       </div>
                     )}
                   </div>
@@ -659,16 +858,16 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose })
                     <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
                       <div>
                         <div style={{ fontSize: 9.5, fontWeight: 700, color: t.lo, textTransform: "uppercase", letterSpacing: 0.2, marginBottom: 3 }}>Total Penjualan {label} (Rp)</div>
-                        <MoneyInput t={t} value={editDraft.nilai} onChange={(v) => setEditDraft((d) => ({ ...d, nilai: v }))} />
+                        <MoneyInput t={t} value={editDraft.nilai} onChange={(v) => setEditDraft((d) => ({ ...d, nilai: v }))} big prefix="Rp" accent={color} />
                       </div>
                       <div style={{ display: "flex", gap: 8, paddingTop: 10, borderTop: `1px dashed ${t.line}` }}>
                         <button onClick={() => setEditTanggal(null)} disabled={isSaving}
-                          style={{ height: 32, padding: "0 14px", borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: FONT }}>
+                          style={{ height: 40, padding: "0 16px", borderRadius: 10, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT }}>
                           Batal
                         </button>
                         <button onClick={() => saveEdit(row, kind)} disabled={isSaving}
-                          style={{ flex: 1, height: 32, borderRadius: 8, border: "none", background: t.teal, color: "#fff", fontWeight: 700, fontSize: 12, cursor: isSaving ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 5, opacity: isSaving ? 0.7 : 1, fontFamily: FONT }}>
-                          {isSaving ? <Loader2 size={13} className="spin" /> : <Save size={12} />} Simpan
+                          style={{ flex: 1, height: 40, borderRadius: 10, border: "none", background: t.teal, color: "#fff", fontWeight: 700, fontSize: 13, cursor: isSaving ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, opacity: isSaving ? 0.7 : 1, fontFamily: FONT }}>
+                          {isSaving ? <Loader2 size={14} className="spin" /> : <Save size={13} />} Simpan
                         </button>
                       </div>
                     </div>
@@ -684,38 +883,88 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose })
             </div>
           );
         })}
+          </div>
+          <div style={{ position: "absolute", top: 0, left: 0, right: 2, height: 14, background: `linear-gradient(${t.sub}, transparent)`, pointerEvents: "none", borderRadius: "14px 14px 0 0" }} />
+          <div style={{ position: "absolute", bottom: 0, left: 0, right: 2, height: 14, background: `linear-gradient(transparent, ${t.sub})`, pointerEvents: "none", borderRadius: "0 0 14px 14px" }} />
+        </div>
       </div>
     );
   };
 
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 9700, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "48px 16px", overflowY: "auto" }}
+    <div style={{ position: "fixed", inset: 0, zIndex: 9700, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div style={{ width: "100%", maxWidth: 560, background: t.card, borderRadius: 16, boxShadow: "0 24px 60px rgba(0,0,0,0.4)", overflow: "hidden", display: "flex", flexDirection: "column", maxHeight: "88vh" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 18px", borderBottom: `1px solid ${t.line}`, flexShrink: 0 }}>
-          <History size={16} color={t.teal} style={{ flexShrink: 0 }} />
+      <div style={{ width: "100%", maxWidth: 700, background: t.card, borderRadius: 16, boxShadow: "0 24px 60px rgba(0,0,0,0.4)", overflow: "hidden", display: "flex", flexDirection: "column", maxHeight: "88vh" }}>
+        {/* UPDATE (permintaan user - "perbaiki total header ini menjadi
+            sangat bagus"): header dipoles total - ikon riwayat skrg
+            dibungkus badge kotak bulat warna teal (bukan ikon polos
+            ngambang), judul dinaikkan ukurannya (14->16) + letter-spacing
+            dikit biar tegas, 2 chip ID (IM3/3ID) diubah dari teks+titik
+            polos jadi PILL berwarna (background tint sesuai warna
+            masing2 - amber utk IM3, pink utk 3ID) biar lebih "hidup" &
+            gampang dibedain sekilas, background header dikasih tint
+            teal tipis biar ga flat putih polos sama kaya body popup. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", borderBottom: `1px solid ${t.line}`, background: t.tealBg, flexShrink: 0 }}>
+          {/* UPDATE (permintaan user - "jadi nanti dia bukan berlapis
+              namun setelah di riwayat dia bisa back untuk ke menu form
+              penjualan"): popup Riwayat ini dulu nongol BERLAPIS di atas
+              popup Form Informasi & Penjualan (yg di belakang jadi dim) -
+              sekarang popup Form-nya ditutup DULU (cardOpen -> false,
+              lihat renderHistoryLink di DseInputRow) pas Riwayat dibuka,
+              jadi cuma 1 popup aktif tiap saat (ga numpuk). Tombol panah
+              kembali ini manggil onBack - nutup popup Riwayat INI sambil
+              buka lagi popup Form-nya (cardOpen -> true kembali). */}
+          <button onClick={onBack} title="Kembali ke Form Penjualan" style={{ width: 36, height: 36, borderRadius: 11, border: `1px solid ${t.inputBd}`, background: t.card, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, boxShadow: t.shadowSm }}>
+            <ChevronLeft size={17} />
+          </button>
+          <div style={{ width: 38, height: 38, borderRadius: 12, background: t.card, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: t.shadowSm }}>
+            <History size={18} color={t.teal} />
+          </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 14, fontWeight: 800, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dse?.ds_name || "Riwayat Perubahan"}</div>
-            {/* UPDATE (permintaan user - "untuk subtitlenya gunakan id im3
-                dan 3id sekaligus, dan juga jika ada namanya gunakan
-                namanya juga, buat dengan sangat rapi dan bagus"): kalau
-                nama sudah terisi, nama jadi JUDUL utama (lebih enak
-                dibaca drpd kode doang) & subtitle nampilin KEDUA id
-                (IM3+3ID, dibedain titik warna sama persis pola chip ID di
-                kartu - amber=IM3, pink=3ID) berdampingan; kalau nama msh
-                kosong, judul balik ke "Riwayat Perubahan" biasa & subtitle
-                tetap nampilin kedua id. */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: dse?.ds_name ? 2 : 0 }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, color: t.mid, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-                <span style={{ width: 5, height: 5, borderRadius: 999, background: "#F5B700", flexShrink: 0 }} /> {dse?.dse_code || dseCode}
+            <div style={{ fontSize: 16, fontWeight: 800, color: t.hi, letterSpacing: -0.1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dse?.ds_name || "Riwayat Perubahan"}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2.5px 8px", borderRadius: 999, background: "rgba(217,119,6,0.16)", border: "1px solid rgba(217,119,6,0.32)", fontSize: 10.5, color: "#92400E", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+                <span style={{ width: 5, height: 5, borderRadius: 999, background: "#D97706", flexShrink: 0 }} /> {dse?.dse_code || dseCode}
               </span>
               {dse?.dse_code_3id && (
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, color: t.mid, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-                  <span style={{ width: 5, height: 5, borderRadius: 999, background: "#C2187C", flexShrink: 0 }} /> {dse.dse_code_3id}
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2.5px 8px", borderRadius: 999, background: "rgba(190,24,93,0.15)", border: "1px solid rgba(190,24,93,0.3)", fontSize: 10.5, color: "#9D174D", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+                  <span style={{ width: 5, height: 5, borderRadius: 999, background: "#BE185D", flexShrink: 0 }} /> {dse.dse_code_3id}
                 </span>
               )}
             </div>
           </div>
+          {/* UPDATE (permintaan user - "maksud saya disamping kanan ini
+              dan jangan terlalu kecil buat proporsional"): dropdown
+              pilih bulan dipindah lagi - kali ini ke DALAM baris header
+              itu sendiri, persis di samping kiri tombol close (X), biar
+              "di atas" literally sebaris sama judul popup, bukan baris
+              terpisah di bawahnya. Ukuran dinaikkan (tinggi 30->36,
+              font 11.5->13) biar proporsional sama tombol X di
+              sebelahnya & gak keliatan kekecilan. Cuma muncul kalau
+              historyTab lagi di salah satu dari 3 tab penjualan (ga
+              relevan utk tab Informasi DSE). */}
+          {historyTab !== "info" && (() => {
+            const activeHt = HISTORY_TABS.find((ht) => ht.k === historyTab);
+            const selColor = activeHt?.color || t.teal;
+            const today = todayISO();
+            return (
+              <div style={{ position: "relative", flexShrink: 0 }}>
+                <select value={historyMonth} onChange={(e) => setHistoryMonth(e.target.value)} title="Pilih bulan"
+                  style={{
+                    appearance: "none", WebkitAppearance: "none", MozAppearance: "none",
+                    height: 36, padding: "0 32px 0 14px", borderRadius: 10, border: `1px solid ${selColor}33`,
+                    background: `${selColor}14`, color: selColor, fontWeight: 800, fontSize: 13, fontFamily: FONT,
+                    cursor: "pointer", outline: "none",
+                  }}>
+                  {Array.from({ length: 12 }, (_, i) => shiftMonth(today.slice(0, 7), -i)).map((ym) => {
+                    const [oy, om] = ym.split("-").map(Number);
+                    return <option key={ym} value={ym}>{MONTH_NAMES[om - 1]} {oy}</option>;
+                  })}
+                </select>
+                <ChevronDown size={13} color={selColor} style={{ position: "absolute", right: 11, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+              </div>
+            );
+          })()}
           <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 999, border: "none", background: t.inputBg, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><X size={14} /></button>
         </div>
         {/* UPDATE (permintaan user - "ini perbaiki"): tab bar riwayat
@@ -726,8 +975,9 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose })
             bukan cuma background tipis spt sebelumnya - biar 2 tab bar
             yg mirip ini (popup edit & popup riwayat) konsisten 1 bahasa
             visual. */}
-        <div style={{ padding: "12px 14px 0", flexShrink: 0 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+          <div style={{ width: 228, flexShrink: 0, borderRight: `1px solid ${t.line}`, background: t.sub, padding: "14px 10px", display: "flex", flexDirection: "column", gap: 7, overflowY: "auto" }}>
+            <div style={{ fontSize: 10, color: t.lo, marginBottom: 2, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, padding: "0 7px" }}>Kategori</div>
             {HISTORY_TABS.map((ht) => {
               const active = historyTab === ht.k;
               const Icon = ht.icon;
@@ -736,24 +986,47 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose })
               return (
                 <button key={ht.k} onClick={() => { setHistoryTab(ht.k); setEditTanggal(null); setConfirmTarget(null); setConfirmTyped(""); }}
                   style={{
-                    display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 12,
-                    border: `1.5px solid ${active ? tabColor : t.line}`,
-                    background: active ? t.card : t.sub,
-                    color: active ? t.hi : t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
-                    textAlign: "left", transition: "border-color 0.15s, box-shadow 0.15s, background 0.15s",
+                    position: "relative", overflow: "hidden",
+                    display: "flex", alignItems: "center", gap: 9, padding: "10px 10px", borderRadius: 12,
+                    border: `1px solid ${active ? `${tabColor}40` : "transparent"}`,
+                    background: active ? tabBg : "transparent",
+                    boxShadow: active ? `inset 3px 0 0 0 ${tabColor}, 0 3px 10px -4px ${tabColor}70` : "none",
+                    color: active ? t.hi : t.mid, fontSize: 13, fontWeight: active ? 700 : 600, cursor: "pointer", fontFamily: FONT,
+                    textAlign: "left", width: "100%", transition: "background 0.15s, box-shadow 0.15s, border-color 0.15s",
                   }}>
-                  <div style={{ width: 24, height: 24, borderRadius: 8, background: tabBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <div style={{ width: 26, height: 26, borderRadius: 8, background: active ? t.card : tabBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: active ? t.shadowSm : "none" }}>
                     <Icon size={13} color={tabColor} />
                   </div>
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ht.label}</span>
+                  <span style={{ whiteSpace: "nowrap" }}>{ht.label}</span>
                 </button>
               );
             })}
           </div>
-        </div>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <div style={{ overflowY: "auto", background: t.sub, padding: 14, flex: 1 }}>
           {loading ? (
-            <LoadingBlock t={t} label="Memuat riwayat…" minHeight={140} />
+            historyTab === "info" ? (
+              <LoadingBlock t={t} label="Memuat riwayat…" minHeight={140} />
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                <div style={{ borderRadius: 16, border: `1px solid ${t.line}`, background: t.sub, padding: "12px 14px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <NumSkeleton t={t} width={26} height={26} />
+                    <NumSkeleton t={t} width={130} height={11} />
+                  </div>
+                  <NumSkeleton t={t} width={140} height={22} />
+                </div>
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: "13px 14px", display: "flex", gap: 11, alignItems: "center" }}>
+                    <NumSkeleton t={t} width={32} height={32} />
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+                      <NumSkeleton t={t} width="55%" height={13} />
+                      <NumSkeleton t={t} width="35%" height={13} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
           ) : errMsg ? (
             <div style={{ padding: 20, textAlign: "center", color: t.red, fontSize: 12.5 }}>{errMsg}</div>
           ) : historyTab === "info" ? (
@@ -775,18 +1048,29 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose })
                       </HistoryCard>
                     );
                   } else if (r.field_name === "dse_status") {
-                    const statusColor = (v) => v === "Active" ? t.teal : v === "Vacant" ? t.red : t.mid;
-                    const statusBg = (v) => v === "Active" ? t.tealBg : v === "Vacant" ? "rgba(239,68,68,0.12)" : t.sub;
+                    // UPDATE (permintaan user - "perbaiki UI nya"): dulu
+                    // badge sebelum/sesudah nampilin VALUE MENTAH dari DB
+                    // (r.old_value/r.new_value) langsung - begitu status
+                    // "Interview" diganti label tampilannya jadi "OJT"
+                    // (lihat STATUS_OPTIONS), riwayat di sini KETINGGALAN
+                    // (masih nunjukkin "Interview" mentah, beda sama label
+                    // yg kelihatan di mana2 lagi - bikin bingung). Sekarang
+                    // SELALU lewat statusMetaOf() (satu-satunya sumber
+                    // kebenaran label+warna status), jadi otomatis ikut
+                    // kalau labelnya berubah lagi nanti, ga perlu disentuh
+                    // manual di 2 tempat.
+                    const oldMeta = statusMetaOf(r.old_value);
+                    const newMeta = statusMetaOf(r.new_value);
                     card = (
                       <HistoryCard key={r.id}
-                        icon={<UserCheck size={15} color={statusColor(r.new_value)} />} iconColor={statusColor(r.new_value)} iconBg={statusBg(r.new_value)}
-                        badgeLabel="Status" badgeColor={statusColor(r.new_value)} badgeBg={statusBg(r.new_value)}
+                        icon={<UserCheck size={15} color={newMeta.color} />} iconColor={newMeta.color} iconBg={newMeta.bg}
+                        badgeLabel="Status" badgeColor={newMeta.color} badgeBg={newMeta.bg}
                         title="Status DSE diubah" timeLabel={fmtTime(r.changed_at)} changedBy={by}
                         onDeleteClick={() => { setConfirmTarget({ kind: "info", id: r.id, label: "entri riwayat status ini" }); setConfirmTyped(""); }}>
                         <div style={{ fontSize: 12.5, color: t.mid, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                          <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 999, background: statusBg(r.old_value), color: statusColor(r.old_value), fontWeight: 700, fontSize: 11 }}>{r.old_value || "(kosong)"}</span>
+                          <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 999, background: oldMeta.bg, color: oldMeta.color, fontWeight: 700, fontSize: 11 }}>{oldMeta.label}</span>
                           <ChevronRight size={12} color={t.lo} style={{ flexShrink: 0 }} />
-                          <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 999, background: statusBg(r.new_value), color: statusColor(r.new_value), fontWeight: 700, fontSize: 11 }}>{r.new_value || "(kosong)"}</span>
+                          <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 999, background: newMeta.bg, color: newMeta.color, fontWeight: 700, fontSize: 11 }}>{newMeta.label}</span>
                         </div>
                       </HistoryCard>
                     );
@@ -821,6 +1105,8 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose })
           ) : (
             renderSalesTab("saldo", "Saldo MOBO", t.amber, t.amberBg, Wallet)
           )}
+        </div>
+          </div>
         </div>
       </div>
     </div>
@@ -875,9 +1161,20 @@ function StatTile({ t, icon, label, value, sub }) {
 // — kolom dse_status tidak lagi default "Active" supaya ID baru kelihatan
 // kosong dulu, bukan sok-tahu dianggap Active).
 const STATUS_OPTIONS = [
-  { v: "", label: "— Belum diisi —", color: "#8A8A96", bg: "rgba(138,138,150,0.10)" },
+  // UPDATE (permintaan user - "buat nama dse, status, dan join date,
+  // semuanya menjadi Belum diisi"): dulu label kosong pake tanda
+  // pisah kiri-kanan ("— Belum diisi —"), beda gaya sama placeholder
+  // Nama DSE/Join Date yg polos "Belum diisi" - disamain teksnya biar
+  // konsisten di 3 kolom itu.
+  { v: "", label: "Belum diisi", color: "#8A8A96", bg: "rgba(138,138,150,0.10)" },
   { v: "Active", label: "Active", color: "#16A34A", bg: "rgba(22,163,74,0.10)" },
-  { v: "Interview", label: "Interview", color: "#D97706", bg: "rgba(217,119,6,0.10)" },
+  // UPDATE (permintaan user - "soal status Interview diganti saja
+  // dengan OJT, itu merupakan singkatan dari On Job Training namun
+  // cukup OJT saja"): cuma LABEL yg ditampilkan diubah - value `v`
+  // internal (dipakai utk disimpan ke DB & semua perbandingan
+  // `status === "Interview"` di file ini) SENGAJA dibiarkan "Interview"
+  // supaya data lama yg udah kesimpen ga perlu migrasi/berubah.
+  { v: "Interview", label: "OJT", color: "#D97706", bg: "rgba(217,119,6,0.10)" },
   { v: "Vacant", label: "Vacant", color: "#DC2626", bg: "rgba(220,38,38,0.10)" },
 ];
 const statusMetaOf = (v) => STATUS_OPTIONS.find((s) => s.v === v) || STATUS_OPTIONS[0];
@@ -935,7 +1232,7 @@ function MoneyInput({ t, value, onChange, align, disabled, accent, big, prefix }
 
 // ── AR/Piutang — "masukkan nilai bayar, sisa dihitung otomatis" ────────────
 // UPDATE (permintaan user - "agar simple dia bisa masukkan nilai bayar jadi
-// berkurang aja utang saat ini"): Admin MC TIDAK lagi mengetik ulang angka
+// berkurang aja utang saat ini"): Admin District TIDAK lagi mengetik ulang angka
 // tunggakan manual tiap hari. "Utang Saat Ini" ditampilkan read-only (hasil
 // SISA tunggakan dari entry terakhir SEBELUM tanggal ini — lihat `prevAr` di
 // loadDseAndEntries), lalu admin tinggal masukkan "Bayar". "Sisa Tunggakan"
@@ -943,265 +1240,2168 @@ function MoneyInput({ t, value, onChange, align, disabled, accent, big, prefix }
 // ar_piutang hari ini (ar_bayar disimpan terpisah sbg histori pembayaran,
 // jadi audit "siapa bayar berapa kapan" tetap bisa ditelusuri lewat tab
 // Riwayat, bukan cuma angka sisa akhir).
-function ArPiutangInput({ t, dseCode, entryDate, profile, outstanding, onApplyLedger, onConfirmSave, saving, readOnly }) {
-  const [open, setOpen] = useState(false);
-  const [jenis, setJenis] = useState("piutang_baru"); // piutang_baru | bayar | koreksi
-  const [draft, setDraft] = useState(0);
-  const [catatan, setCatatan] = useState("");
-  const [catatanErr, setCatatanErr] = useState(false);
-  const [txSaving, setTxSaving] = useState(false);
-  const [txErr, setTxErr] = useState("");
-  const [histOpen, setHistOpen] = useState(false);
-  const [histRows, setHistRows] = useState([]);
-  const [histLoading, setHistLoading] = useState(false);
-  const [histErr, setHistErr] = useState("");
+// ── AR/Piutang — per-transaksi ──────────────────────────────────────────────
+// UPDATE (permintaan user - "rebuild AR jadi per-transaksi, bukan 1 saldo
+// jalan"): Setiap "Piutang Baru" sekarang jadi TRANSAKSI SENDIRI (ar_piutang_
+// items: tanggal, jatuh tempo, total masing2), dengan "Riwayat Pembayaran"
+// bertingkat per transaksi (ar_piutang_payments) — bukan lagi 1 saldo global
+// yg nambah/berkurang per baris ar_transactions. Pembayaran BISA diedit
+// langsung di tempat (bukan cuma lewat baris koreksi baru) — tiap edit
+// dicatat edited_by/edited_at utk jejak audit, tapi nilai yg tampil & dipakai
+// utk hitung "Belum Dibayar" SELALU nilai terbaru (bukan nilai asli + koreksi
+// berlapis).
+//
+// mf_dse_prod_ar (cache saldo per tanggal yg dibaca StatTiles/kolom Tunggakan
+// /export CSV) TETAP disinkronkan persis seperti sebelumnya lewat
+// onApplyLedger({ar_piutang, ar_bayar}) + onConfirmSave() — ar_piutang diisi
+// TOTAL "belum dibayar" dari SEMUA transaksi piutang milik DSE ini (bukan 1
+// transaksi saja), ar_bayar diisi nominal pembayaran HARI INI saja (0 kalau
+// aksinya bukan "terima pembayaran baru", misalnya saat buat piutang baru
+// atau mengedit pembayaran lama).
+//
+// ar_transactions (ledger lama, append-only) DIBIARKAN APA ADANYA — tidak ada
+// data lama yg dihapus; 2 baris placeholder yg sudah ada sudah dibackfill ke
+// ar_piutang_items lewat migration (lihat `ar_piutang_per_transaction`), dan
+// ledger lama tetap bisa dilihat read-only lewat "Riwayat Lama (Ledger)".
+// Komponen kecil (dipakai berulang di list & detail) - didefinisikan di
+// module scope, BUKAN di dalam ArPiutangInput, supaya tidak dibuat ulang
+// tiap render (react-hooks/static-components).
+function ArStatusPill({ t, lunas }) {
+  return (
+    <span style={{ fontSize: 10, fontWeight: 800, color: lunas ? t.teal : t.red, background: lunas ? t.tealBg : t.redBg, borderRadius: 6, padding: "3px 8px", display: "flex", alignItems: "center", gap: 3, whiteSpace: "nowrap" }}>
+      {lunas && <Check size={9} />} {lunas ? "Lunas" : "Belum Lunas"}
+    </span>
+  );
+}
 
-  const sebelum = fRaw(outstanding);
-  const nomDraft = fRaw(draft);
-  const sesudah = jenis === "piutang_baru" ? sebelum + nomDraft
-    : jenis === "bayar" ? Math.max(0, sebelum - nomDraft)
-    : Math.max(0, nomDraft); // koreksi: nominal = saldo yg benar (langsung)
-  const sisaCurrent = sebelum; // ditampilkan di luar modal, sebelum ada transaksi baru
-  const lunasCurrent = sisaCurrent === 0;
-  const lunasDraft = sesudah === 0;
-  const needsCatatan = jenis === "piutang_baru" || jenis === "koreksi";
-  const labelStyle = { fontSize: 9.5, color: t.lo, marginBottom: 2, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.2 };
+// ── Laporan Tunggakan siap cetak (HR) ───────────────────────────────────────
+// Dibuat utk kebutuhan "akhir bulan tunggakan DSE dipotong dari gaji" -
+// bukan cuma export CSV mentah (yg udah ada lewat tombol "Export CSV Bulan
+// Ini"), tapi 1 dokumen per DSE yg SIAP dilampirkan ke HR tanpa edit lagi:
+// ringkasan Utang/Bayar/Sisa + jejak audit transaksi/pembayaran lengkap
+// (tanggal, nominal, catatan, siapa yg mencatat) dalam 1 halaman. Dirender
+// sbg komponen murni (nerima `report` hasil computeArAsOf) supaya BISA
+// dipakai ulang baik di modal cetak per-DSE (ArCetakLaporanModal) maupun
+// cetak massal semua DSE yg masih nunggak (ArCetakBulkModal) - 1 definisi
+// tampilan, 2 cara pakai, konsisten persis.
+function ArReportDoc({ t, dseCode, dseCode3id, dseName, mc, branch, arMonth, report, generatedByName, generatedAt, pageBreak,
+  // UPDATE (permintaan user - AR DSO/DSP & AR HoA pakai "konsep yang sama
+  // persis" dgn AR DSE): dokumen cetak/export ini awalnya SELALU bicara
+  // soal "DSE" (judul, label ID, grid District/Area) - sekarang generik lwt
+  // props di bawah (default = persis tampilan DSE lama, non-breaking).
+  // `idLabel`/`nameLabel` ganti teks label kolom identitas, `showDualId`
+  // matikan chip ID ganda IM3/3ID (DSO/DSP & HoA cuma 1 kode), `showMc`/
+  // `showBranch` matikan kolom District/Area yg ga relevan (DSO/DSP level
+  // District sendiri ga perlu nampilin ulang District-nya di 2 tempat,
+  // HoA level Area ga ada District tunggal krn 1 Area = banyak District).
+  entityNoun = "DSE", idLabel = "ID DSE", nameLabel = "Nama DSE", showDualId = true, showMc = true, showBranch = true,
+}) {
+  const monthLabel = arMonth ? `${MONTH_NAMES[Number(arMonth.slice(5, 7)) - 1]} ${arMonth.slice(0, 4)}` : "Semua Periode";
+  // No. dokumen formal - deterministik dari dseCode+arMonth (BUKAN random),
+  // supaya re-cetak dokumen yg sama (mis. krn diminta ulang HR) selalu
+  // menghasilkan no. yg identik, bukan nomor baru tiap klik cetak.
+  const docSeed = `${dseCode || "DSE"}${arMonth || ""}`.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  let docHash = 0;
+  for (let i = 0; i < docSeed.length; i++) docHash = (docHash * 31 + docSeed.charCodeAt(i)) >>> 0;
+  const docNo = `AR/${(arMonth || "XXXX-XX").replace("-", "")}/${(docHash % 99999).toString().padStart(5, "0")}`;
+  // Referensi transaksi (no_transaksi) dari sistem cukup panjang & acak utk
+  // dipakai HR sbg nomor bolak-balik di dokumen formal ini - tampilkan versi
+  // pendek yg tetap bisa dilacak (6 char terakhir, monospace, sbg "kode
+  // ref" bukan ID penuh) ketimbang dump string mentah apa adanya.
+  const shortRef = (no) => (no ? no.slice(-6).toUpperCase() : "—");
+  const refMono = { fontFamily: "'SF Mono', 'Courier New', monospace", fontSize: 9, color: "#6B7280", letterSpacing: 0.3 };
 
-  const JENIS_META = {
-    piutang_baru: { label: "Piutang Baru", icon: Plus, color: t.red, bg: t.redBg },
-    bayar: { label: "Bayar", icon: Check, color: t.teal, bg: t.tealBg },
-    koreksi: { label: "Koreksi", icon: RotateCcw, color: t.mid, bg: t.sub },
-  };
-
-  const openModal = () => { setDraft(0); setCatatan(""); setCatatanErr(false); setTxErr(""); setJenis("piutang_baru"); setOpen(true); setHistOpen(false); };
-
-  const confirm = async () => {
-    if (needsCatatan && !catatan.trim()) { setCatatanErr(true); return; }
-    setTxErr("");
-    setTxSaving(true);
-    try {
-      const row = {
-        dse_code: dseCode, tanggal: entryDate, jenis,
-        nominal: nomDraft, saldo_sebelum: sebelum, saldo_sesudah: sesudah,
-        catatan: catatan.trim() || null,
-        created_by: profile?.id || null, created_by_name: profile?.full_name || null,
-      };
-      const { error: txError } = await supabase.from("ar_transactions").insert([row]);
-      if (txError) throw txError;
-      // Jaga mf_dse_prod_ar (cache saldo per tanggal) tetap sinkron dgn ledger
-      // ar_transactions - semua UI ringkasan lain (StatTiles, kolom Tunggakan,
-      // export CSV) baca dari sana, bukan ar_transactions langsung.
-      onApplyLedger({ ar_piutang: sesudah, ar_bayar: jenis === "bayar" ? nomDraft : 0 });
-      const ok = await onConfirmSave();
-      if (ok === false) throw new Error("Gagal menyimpan ke mf_dse_prod_ar.");
-      setOpen(false);
-    } catch (err) {
-      setTxErr(err.message || "Gagal menyimpan transaksi AR.");
-    } finally {
-      setTxSaving(false);
-    }
-  };
-
-  const loadHistory = async () => {
-    setHistOpen(true);
-    setHistLoading(true);
-    setHistErr("");
-    try {
-      const { data, error } = await supabase.from("ar_transactions").select("*").eq("dse_code", dseCode).order("created_at", { ascending: false }).limit(100);
-      if (error) throw error;
-      setHistRows(data || []);
-    } catch (err) {
-      setHistErr(err.message || "Gagal memuat riwayat AR.");
-    } finally {
-      setHistLoading(false);
-    }
-  };
+  const th = { textAlign: "left", padding: "7px 9px", border: "1px solid #D8DEE4", fontSize: 8.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4, color: "#4A5568", background: "#F1F4F8" };
+  const thR = { ...th, textAlign: "right" };
+  const td = { padding: "7px 9px", border: "1px solid #E7EBEF", verticalAlign: "top", fontSize: 10 };
+  const tdR = { ...td, textAlign: "right", whiteSpace: "nowrap" };
+  const label = { fontSize: 8.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5, color: "#8A94A3" };
+  const value = { fontSize: 12, fontWeight: 700, color: "#1A2230", marginTop: 2 };
 
   return (
-    <>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap" }}>
-        <span title="AR Saat Ini" style={{ fontSize: 11.5, fontWeight: 600, color: t.mid, whiteSpace: "nowrap", flexShrink: 0 }}>
-          Rp {fmtID(outstanding)}
-        </span>
-        <span style={{ fontSize: 10, fontWeight: 800, color: lunasCurrent ? t.teal : t.red, background: lunasCurrent ? t.tealBg : t.redBg, borderRadius: 6, padding: "3px 8px", display: "flex", alignItems: "center", gap: 3, whiteSpace: "nowrap", flexShrink: 0 }}>
-          {lunasCurrent && <Check size={9} />} {lunasCurrent ? "LUNAS" : `Sisa Rp ${fmtID(sisaCurrent)}`}
-        </span>
-        {!readOnly && (
-          <button type="button" onClick={openModal} title="Catat Transaksi AR" style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 7, border: "none", background: t.teal, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-            <CircleDollarSign size={13} />
-          </button>
-        )}
+    <div style={{ pageBreakAfter: pageBreak ? "always" : "auto", padding: "30px 32px", fontFamily: FONT, color: "#1A2230", background: "#fff", boxSizing: "border-box" }}>
+      {/* Letterhead korporat - identitas perusahaan + jenis dokumen, dgn
+          no. dokumen formal (bukan ID transaksi mentah) di kanan supaya
+          dokumen ini terbaca sbg surat resmi, bukan print-out data biasa. */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", paddingBottom: 14, marginBottom: 4, borderBottom: "3px solid #1A2230" }}>
+        {/* FIX (permintaan user - "hilangkan iohnya"): monogram kotak "IOH"
+            dihapus, nama perusahaan & subtitle tetap ada. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: 0.3 }}>INDOSAT OOREDOO HUTCHISON</div>
+            <div style={{ fontSize: 9.5, color: "#6B7280", fontWeight: 600, marginTop: 1 }}>Sales Performance Management — SPM Sumatera · SandraHub</div>
+          </div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ ...refMono, fontSize: 10, color: "#1A2230", fontWeight: 700 }}>No. {docNo}</div>
+          <div style={{ fontSize: 9, color: "#8A94A3", marginTop: 2 }}>Dicetak {generatedAt} oleh {generatedByName || "-"}</div>
+        </div>
       </div>
 
-      {open && !readOnly && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setOpen(false)}>
-          <div onClick={(ev) => ev.stopPropagation()} style={{ width: "100%", maxWidth: 400, maxHeight: "90vh", overflowY: "auto", borderRadius: 16, background: t.card, boxShadow: "0 20px 60px rgba(0,0,0,0.35)", padding: 20, fontFamily: FONT }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-              <div style={{ fontSize: 15, fontWeight: 800, color: t.hi, display: "flex", alignItems: "center", gap: 7 }}>
-                <CircleDollarSign size={16} color={t.teal} /> Catat Transaksi AR
-              </div>
-              <button type="button" onClick={() => setOpen(false)} style={{ background: "none", border: "none", color: t.lo, cursor: "pointer", display: "flex" }}><X size={16} /></button>
-            </div>
+      <div style={{ textAlign: "center", margin: "18px 0 20px" }}>
+        <div style={{ fontSize: 15.5, fontWeight: 800, letterSpacing: 0.4 }}>LAPORAN TUNGGAKAN PIUTANG (AR) {entityNoun.toUpperCase()}</div>
+        <div style={{ fontSize: 10.5, color: "#6B7280", marginTop: 3, fontWeight: 600 }}>Periode {monthLabel} — Ringkasan Piutang {entityNoun}</div>
+      </div>
 
-            {!histOpen ? (
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${2 + (showMc ? 1 : 0) + (showBranch ? 1 : 0)}, 1fr)`, gap: 14, padding: "12px 16px", background: "#F8F9FB", borderRadius: 10, marginBottom: 18 }}>
+        {/* UPDATE (permintaan user - "pada kode dse harusnya id dse dan
+            itu harusnya ada dua id yang digunakan"): label "Kode DSE"
+            diganti "ID DSE" (konsisten sama istilah yg dipakai di
+            tempat lain - ID DSE IM3/3ID), & sekarang nampilin KEDUA id
+            (IM3 + 3ID, kalau DSE itu punya keduanya) - dibedain titik
+            warna sama persis pola chip ID yg udah ada di seluruh file
+            ini (amber=IM3, pink=3ID), bukan cuma 1 kode polos lagi.
+            UPDATE (AR DSO/DSP & HoA): `showDualId=false` utk entitas yg
+            cuma punya 1 kode (District/Area), chip kedua & warna amber
+            di-skip - tampil 1 nilai polos saja. */}
+        <div>
+          <div style={label}>{idLabel}</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 2 }}>
+            <span style={{ ...value, display: "flex", alignItems: "center", gap: 5 }}>
+              {showDualId && <span style={{ width: 6, height: 6, borderRadius: 999, background: "#D97706", flexShrink: 0 }} />} {dseCode}
+            </span>
+            {showDualId && dseCode3id && (
+              <span style={{ ...value, display: "flex", alignItems: "center", gap: 5 }}>
+                <span style={{ width: 6, height: 6, borderRadius: 999, background: "#BE185D", flexShrink: 0 }} /> {dseCode3id}
+              </span>
+            )}
+          </div>
+        </div>
+        <div><div style={label}>{nameLabel}</div><div style={value}>{dseName || "-"}</div></div>
+        {showMc && <div><div style={label}>District</div><div style={value}>{mc || "-"}</div></div>}
+        {showBranch && <div><div style={label}>Area</div><div style={value}>{branch || "-"}</div></div>}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 10 }}>
+        <div style={{ border: "1px solid #D8DEE4", borderRadius: 10, padding: "12px 14px" }}>
+          <div style={label}>Total Utang</div>
+          <div style={{ fontSize: 9, color: "#8A94A3", marginTop: 1 }}>akumulasi s.d. akhir {monthLabel}</div>
+          <div style={{ fontSize: 16, fontWeight: 800, marginTop: 6 }}>Rp {fmtID(report.totalUtang)}</div>
+        </div>
+        <div style={{ border: "1px solid #D8DEE4", borderRadius: 10, padding: "12px 14px" }}>
+          <div style={label}>Total Bayar</div>
+          <div style={{ fontSize: 9, color: "#8A94A3", marginTop: 1 }}>diterima {monthLabel}</div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#1A9E90", marginTop: 6 }}>Rp {fmtID(report.totalBayarPeriod)}</div>
+        </div>
+        <div style={{ border: "2px solid #B3261E", borderRadius: 10, padding: "12px 14px", background: "#FCEBEA" }}>
+          <div style={{ ...label, color: "#B3261E" }}>Sisa Tunggakan Akhir Bulan</div>
+          <div style={{ fontSize: 9, color: "#C45650", marginTop: 1 }}>belum dibayar s.d. akhir bulan</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "#B3261E", marginTop: 6 }}>Rp {fmtID(report.sisaAkhir)}</div>
+        </div>
+      </div>
+      <div style={{ fontSize: 8.5, color: "#8A94A3", marginBottom: 18, lineHeight: 1.5, fontStyle: "italic" }}>
+        * &quot;Total Utang&quot; = akumulasi seluruh piutang yg timbul s.d. akhir periode {monthLabel}, TERMASUK piutang dari bulan-bulan sebelumnya yg masih belum lunas. &quot;Sisa Tunggakan Akhir Bulan&quot; = Total Utang dikurangi SELURUH pembayaran yg sudah diterima s.d. akhir periode ini (bukan hanya pembayaran bulan ini saja).
+      </div>
+
+      <div style={{ fontSize: 11, fontWeight: 800, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.3, color: "#1A2230" }}>Rincian Transaksi &amp; Riwayat Pembayaran (Jejak Audit)</div>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10, marginBottom: 8 }}>
+        <thead>
+          <tr>
+            <th style={th}>Tanggal</th>
+            <th style={th}>Jenis</th>
+            <th style={th}>Keterangan</th>
+            <th style={th}>Jatuh Tempo</th>
+            <th style={thR}>Nominal</th>
+            <th style={thR}>Belum Dibayar</th>
+            <th style={th}>Dicatat Oleh</th>
+          </tr>
+        </thead>
+        <tbody>
+          {report.items.length === 0 ? (
+            <tr><td colSpan={7} style={{ ...td, textAlign: "center", color: "#8A94A3" }}>Tidak ada transaksi piutang pada periode ini.</td></tr>
+          ) : report.items.flatMap((it, itIdx) => {
+            const zebra = itIdx % 2 === 1 ? { background: "#FAFBFC" } : {};
+            const out = [
+              <tr key={it.id} style={zebra}>
+                <td style={td}>{fmtDayMonth(it.tanggal_transaksi)}</td>
+                <td style={{ ...td, fontWeight: 700, color: "#B3261E" }}>Piutang Baru</td>
+                <td style={td}>{it.catatan || "-"}</td>
+                <td style={td}>{fmtDayMonth(it.jatuh_tempo)}</td>
+                <td style={{ ...tdR, fontWeight: 700 }}>Rp {fmtID(it.total)}</td>
+                <td style={{ ...tdR, fontWeight: 700, color: it.lunasAsOf ? "#1A9E90" : "#B3261E" }}>Rp {fmtID(it.belumDibayarAsOf)}</td>
+                <td style={td}>{it.created_by_name || "-"}</td>
+              </tr>,
+            ];
+            it.paymentsAsOf.forEach((p, pIdx) => {
+              out.push(
+                <tr key={p.id} style={{ background: zebra.background || "#F3FBF9" }}>
+                  <td style={td}>{fmtDayMonth(p.tanggal_pembayaran)}</td>
+                  <td style={{ ...td, color: "#1A9E90", fontWeight: 700 }}>{`Pembayaran ke-${pIdx + 1}`}</td>
+                  <td style={td}>
+                    Pembayaran utk piutang {fmtDayMonth(it.tanggal_transaksi)}
+                    {p.no_transaksi ? <span style={{ ...refMono, marginLeft: 6 }}>Ref. {shortRef(p.no_transaksi)}</span> : null}
+                    {p.edited_at ? <span style={{ fontStyle: "italic", color: "#8A94A3" }}> (diedit)</span> : null}
+                  </td>
+                  <td style={td}>—</td>
+                  <td style={{ ...tdR, color: "#1A9E90", fontWeight: 700 }}>− Rp {fmtID(p.nominal)}</td>
+                  <td style={tdR}>—</td>
+                  <td style={td}>{p.created_by_name || "-"}</td>
+                </tr>
+              );
+            });
+            return out;
+          })}
+        </tbody>
+      </table>
+
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 56, fontSize: 10.5 }}>
+        <div style={{ textAlign: "center", width: 190 }}>
+          <div style={{ fontWeight: 600, color: "#4A5568" }}>Mengetahui,</div>
+          <div style={{ height: 50 }} />
+          <div style={{ borderTop: "1px solid #1A2230", paddingTop: 5, fontWeight: 600 }}>( .......................... )</div>
+        </div>
+        <div style={{ textAlign: "center", width: 190 }}>
+          <div style={{ fontWeight: 600, color: "#4A5568" }}>Disetujui,</div>
+          <div style={{ height: 50 }} />
+          <div style={{ borderTop: "1px solid #1A2230", paddingTop: 5, fontWeight: 600 }}>( .......................... )</div>
+        </div>
+      </div>
+      {/* UPDATE (permintaan user - "Generate by SandraHub (Sales and
+          Distribution Sumatera Hub)"): footer sekarang menyertakan
+          kepanjangan nama SandraHub. */}
+      <div style={{ textAlign: "center", marginTop: 20, fontSize: 8, color: "#B0B8C3" }}>Dokumen ini dihasilkan otomatis oleh SandraHub (Sales and Distribution Sumatera Hub) dan sah tanpa tanda tangan basah untuk keperluan administrasi internal.</div>
+    </div>
+  );
+}
+
+// Modal pratinjau + trigger cetak 1 DSE — ikut konvensi @media print yg
+// sudah dipakai di SDP_MappingManager.jsx (sembunyikan semua elemen lain
+// lewat visibility:hidden, tampilkan cuma #ar-cetak-laporan) supaya hasil
+// cetak bersih tanpa perlu buka tab/window baru (hindari popup blocker).
+function ArCetakLaporanModal({ t, dseCode, dseCode3id, dseName, mc, branch, arMonth, report, profile, onClose, entityNoun = "DSE", idLabel = "ID DSE", nameLabel = "Nama DSE", showDualId = true, showMc = true, showBranch = true }) {
+  const generatedAt = new Date().toLocaleString("id-ID", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <style>{`
+        @media print {
+          body * { visibility: hidden !important; }
+          #ar-cetak-laporan, #ar-cetak-laporan * { visibility: visible !important; }
+          #ar-cetak-laporan { position: fixed; top: 0; left: 0; width: 100%; }
+          .ar-cetak-noprint { display: none !important; }
+        }
+      `}</style>
+      <div style={{ width: "100%", maxWidth: 840, maxHeight: "92vh", overflowY: "auto", borderRadius: 14, background: "#fff", boxShadow: "0 24px 60px rgba(0,0,0,0.4)" }}>
+        <div className="ar-cetak-noprint" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderBottom: "1px solid #ddd", position: "sticky", top: 0, background: "#fff", zIndex: 1, borderRadius: "14px 14px 0 0" }}>
+          <div style={{ fontWeight: 800, fontSize: 14, color: "#111" }}>Pratinjau Laporan Tunggakan — {dseCode}</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" onClick={() => window.print()} style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 14px", borderRadius: 8, border: "none", background: t.teal, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+              <Printer size={13} /> Cetak
+            </button>
+            <button type="button" onClick={onClose} style={{ width: 34, height: 34, borderRadius: 8, border: "1px solid #ddd", background: "#fff", color: "#555", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <X size={15} />
+            </button>
+          </div>
+        </div>
+        <div id="ar-cetak-laporan">
+          <ArReportDoc t={t} dseCode={dseCode} dseCode3id={dseCode3id} dseName={dseName} mc={mc} branch={branch} arMonth={arMonth} report={report} generatedByName={profile?.full_name} generatedAt={generatedAt} pageBreak={false} entityNoun={entityNoun} idLabel={idLabel} nameLabel={nameLabel} showDualId={showDualId} showMc={showMc} showBranch={showBranch} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Versi massal (permintaan user, opsional) - cetak laporan tunggakan SEMUA
+// DSE yg masih punya sisa di akhir bulan terpilih dalam 1 aksi, 1 halaman
+// per DSE (pageBreak) - dipakai dari toolbar tab "Riwayat & Laporan" di
+// komponen utama (bukan per-baris), karena butuh data SELURUH DSE sekaligus.
+function ArCetakBulkModal({ t, arMonth, list, profile, onClose }) {
+  const generatedAt = new Date().toLocaleString("id-ID", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <style>{`
+        @media print {
+          body * { visibility: hidden !important; }
+          #ar-cetak-bulk, #ar-cetak-bulk * { visibility: visible !important; }
+          #ar-cetak-bulk { position: fixed; top: 0; left: 0; width: 100%; }
+          .ar-cetak-noprint { display: none !important; }
+        }
+      `}</style>
+      <div style={{ width: "100%", maxWidth: 880, maxHeight: "92vh", overflowY: "auto", borderRadius: 14, background: "#fff", boxShadow: "0 24px 60px rgba(0,0,0,0.4)" }}>
+        <div className="ar-cetak-noprint" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderBottom: "1px solid #ddd", position: "sticky", top: 0, background: "#fff", zIndex: 1, borderRadius: "14px 14px 0 0" }}>
+          <div style={{ fontWeight: 800, fontSize: 14, color: "#111" }}>Pratinjau Laporan Tunggakan — {list.length} DSE</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" onClick={() => window.print()} style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 14px", borderRadius: 8, border: "none", background: t.teal, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+              <Printer size={13} /> Cetak Semua
+            </button>
+            <button type="button" onClick={onClose} style={{ width: 34, height: 34, borderRadius: 8, border: "1px solid #ddd", background: "#fff", color: "#555", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <X size={15} />
+            </button>
+          </div>
+        </div>
+        <div id="ar-cetak-bulk">
+          {list.map((row, i) => (
+            <ArReportDoc key={row.dseCode} t={t} dseCode={row.dseCode} dseCode3id={row.dseCode3id} dseName={row.dseName} mc={row.mc} branch={row.branch} arMonth={arMonth} report={row.report} generatedByName={profile?.full_name} generatedAt={generatedAt} pageBreak={i < list.length - 1} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ArPiutangInput({ t, dseCode, dseCode3id, dseName, mc, branch, entryDate, arMonth, profile, outstanding, onApplyLedger, onConfirmSave, saving, readOnly, inline,
+  // UPDATE (permintaan user - "selanjutnya sama dengan AR nya DSE gunakan
+  // konsep yang sama persis untuk DSO/DSP AR dan juga HoA AR"): komponen
+  // ini AWALNYA cuma utk piutang per-DSE (table ar_piutang_items/payments,
+  // kolom dse_code). Supaya logic (create/bayar/edit/hapus/lunasi/export/
+  // close-confirm/dst) PERSIS SAMA & ga dobel-maintain 3x, parameter2 di
+  // bawah bikin komponen ini generik per "entitas" - default-nya PERSIS
+  // perilaku lama (dipanggil tanpa prop2 ini di semua tempat existing utk
+  // AR DSE, jadi 100% non-breaking), dipakai beda cuma di 2 tempat baru
+  // (ArDsoInput utk DSO/DSP per District, ArHoaInput utk HoA per Area).
+  itemsTable = "ar_piutang_items", paymentsTable = "ar_piutang_payments", codeField = "dse_code", idPrefix = "DSE", entityNoun = "DSE",
+}) {
+  const [open, setOpen] = useState(!!inline);
+  const arMonthLabel = arMonth ? `${MONTH_NAMES[Number(arMonth.slice(5, 7)) - 1]} ${arMonth.slice(0, 4)}` : "";
+  // view: "list" (daftar transaksi piutang) | "create" (form Buat Piutang) |
+  // "detail" (1 transaksi + riwayat pembayaran) | "legacy" (ledger lama)
+  const [view, setView] = useState("list");
+  const [items, setItems] = useState([]);
+  const [itemsLoading, setItemsLoading] = useState(false);
+  const [itemsErr, setItemsErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [actionErr, setActionErr] = useState("");
+  const [selectedId, setSelectedId] = useState(null);
+  // UPDATE (permintaan user - "langsung tampilkan detail transaksi piutang
+  // maupun pembayaran, buat gampang dimengerti"): Riwayat Pembayaran per
+  // item sekarang bisa ditampilkan LANGSUNG di list (expand/collapse per
+  // kartu), tanpa wajib masuk ke `view === "detail"` dulu. `expandedIds`
+  // = set id item yg sedang expanded di list. Default: kalau total item
+  // sedikit (<=2) semuanya expanded otomatis sekali saat pertama kali
+  // termuat (nyaman, ga perlu klik apa2); kalau banyak, default collapsed
+  // supaya list ga langsung jadi sangat panjang - `autoExpandedRef` jaga
+  // ini cuma jalan SEKALI per load, supaya toggle manual user sesudahnya
+  // ga ketimpa ulang tiap re-render.
+  const [expandedIds, setExpandedIds] = useState(() => new Set());
+  const autoExpandedRef = useRef(false);
+  const toggleExpand = (id) => setExpandedIds((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  // true = tampilkan semua transaksi piutang (abaikan filter bulan); default
+  // false supaya list & export mengikuti bulan yg dipilih di picker (arMonth).
+  const [showAllMonths] = useState(false);
+  // Laporan Tunggakan siap cetak (HR) - lihat ArReportDoc/ArCetakLaporanModal.
+  const [showCetak, setShowCetak] = useState(false);
+  // UPDATE (permintaan user - "tidak perlu tombol Download Laporan (ada
+  // dropdown option PNG/PDF) itu di sebelah kiri tombol x saja"): dropdown
+  // kecil di header (gantiin tombol "Cetak Laporan" yg dulu ada di panel
+  // Filter Bulan terpisah, skrg panel itu dihapus total) - 2 opsi unduh
+  // LANGSUNG (PNG via html2canvas, PDF via pdf-lib yg bungkus PNG itu jadi
+  // 1 halaman) tanpa buka dulu modal pratinjau cetak (ArCetakLaporanModal
+  // masih ada, dipakai "headless" di sini - dirender TERSEMBUNYI off-screen
+  // sebentar cuma buat di-screenshot html2canvas, lalu dilepas lagi).
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
+  const [exportRendering, setExportRendering] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const exportCaptureRef = useRef(null);
+  // Konfirmasi "Lunasi Sekaligus" (permintaan user - tombol ini bisa
+  // terklik tidak sengaja & melunasi SEMUA piutang dalam 1 aksi, dampak
+  // finansial nyata ke perhitungan potongan gaji) - wajib klik kedua lewat
+  // modal konfirmasi sebelum lunasiSekaligus() benar2 jalan.
+  const [showLunasiConfirm, setShowLunasiConfirm] = useState(false);
+  // UPDATE (permintaan user - "ada konfirmasi jika belum simpan tapi
+  // klik sembarang untuk tutup"): popup AR ini bisa ditutup dgn klik
+  // backdrop ATAU tombol X kapan saja, TERMASUK saat ada form yg lagi
+  // diisi & belum disimpan (Buat Piutang, edit item, Pembayaran, edit
+  // pembayaran) - ketutup = input ilang tanpa peringatan. `showCloseConfirm`
+  // +`requestClose()` (lihat di bawah, setelah semua state form yg
+  // relevan dideklarasikan) nahan aksi tutup kalau ada perubahan belum
+  // disimpan & nanya konfirmasi dulu.
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+
+  // form "Buat Piutang"
+  const [cTotal, setCTotal] = useState(0);
+  const [cJatuhTempo, setCJatuhTempo] = useState("");
+  const [cCatatan, setCCatatan] = useState("");
+  const [cCatatanErr, setCCatatanErr] = useState(false);
+
+  // form "Pembayaran" (baru)
+  const [payOpen, setPayOpen] = useState(false);
+  const [payNominal, setPayNominal] = useState(0);
+  const [payTanggal, setPayTanggal] = useState(entryDate);
+  // UPDATE (permintaan user - "mengapa belum ada input keterangan" + "buat
+  // keterangan itu sebagai mandatory baik di pembayaran maupun piutang"):
+  // form "Buat Piutang"/edit piutang SUDAH wajib isi Keterangan (cCatatan/
+  // editItemCatatan, lihat validasi masing2) - tapi form PEMBAYARAN belum
+  // punya field ini sama sekali. Ditambah di sini, pola sama persis
+  // (textarea + border merah + pesan error kalau kosong saat Simpan).
+  const [payKeterangan, setPayKeterangan] = useState("");
+  const [payKeteranganErr, setPayKeteranganErr] = useState(false);
+
+  // form "Bayar Total (Alokasi Otomatis)" - permintaan user: kalau DSE punya
+  // 2+ piutang nunggak (misal piutang A 500rb kemarin, piutang B 300rb hari
+  // ini) dan bayar LUMP SUM yg nutup lebih dari 1 item sekaligus (cth bayar
+  // 600rb), jangan paksa user milih 1 item lalu input manual berkali-kali -
+  // sediakan opsi "alokasi otomatis": 1 nominal, sistem yg bagi ke
+  // item-item terlama dulu (FIFO by tanggal_transaksi, BUKAN jatuh tempo -
+  // beda dari urutan di picker manual yg berdasar urgensi jatuh tempo).
+  // Tetap opsional - picker manual per-item di atas tetap ada & tetap jadi
+  // default UI (ini cuma shortcut tambahan utk kasus lump-sum ini).
+  const [autoPayOpen, setAutoPayOpen] = useState(false);
+  const [autoPayNominal, setAutoPayNominal] = useState(0);
+  const [autoPayTanggal, setAutoPayTanggal] = useState(entryDate);
+
+  // edit pembayaran langsung (per baris riwayat)
+  const [editPayId, setEditPayId] = useState(null);
+  const [editNominal, setEditNominal] = useState(0);
+  const [editTanggal, setEditTanggal] = useState("");
+
+  // edit item piutang (permintaan user - "pertransactional bisa dihapus
+  // ataupun di edit") - item piutang sebelumnya cuma bisa dibuat, ga bisa
+  // diubah sama sekali. Reuse pola yg sama dgn edit pembayaran (toggle
+  // inline per-item, bukan form terpisah).
+  const [editItemOpen, setEditItemOpen] = useState(false);
+  const [editItemTotal, setEditItemTotal] = useState(0);
+  const [editItemJatuhTempo, setEditItemJatuhTempo] = useState("");
+  const [editItemCatatan, setEditItemCatatan] = useState("");
+
+  // UPDATE (lanjutan "ada konfirmasi jika belum simpan..."): dianggap ada
+  // perubahan belum disimpan kalau SALAH SATU form berikut lagi terbuka
+  // dgn isian non-default - form "Buat Piutang" (cTotal/cCatatan terisi),
+  // form "Pembayaran" (payNominal/payKeterangan terisi), ATAU sedang
+  // dalam mode edit (editItemOpen/editPayId, dianggap selalu "berisiko"
+  // krn bisa ada perubahan yg belum di-"Simpan"). `requestClose` dipanggil
+  // gantiin `setOpen(false)` langsung di backdrop/tombol X.
+  const hasUnsavedChanges = (
+    (view === "create" && (fRaw(cTotal) > 0 || cCatatan.trim() !== "")) ||
+    (payOpen && (fRaw(payNominal) > 0 || payKeterangan.trim() !== "")) ||
+    editItemOpen ||
+    editPayId !== null
+  );
+  const requestClose = () => {
+    if (hasUnsavedChanges) { setShowCloseConfirm(true); return; }
+    setOpen(false);
+  };
+  const discardAndClose = () => {
+    setShowCloseConfirm(false);
+    setPayOpen(false);
+    setEditItemOpen(false);
+    setEditPayId(null);
+    setOpen(false);
+  };
+
+  // Konfirmasi hapus (item piutang ATAU 1 pembayaran) - soft-delete (lihat
+  // migration `ar_piutang_soft_delete`): data TIDAK hilang dari DB (tetap
+  // ada jejak audit "ini pernah diinput lalu dihapus", relevan krn data ini
+  // jadi dasar potongan gaji/laporan HR formal), cuma disaring dari
+  // tampilan/agregat lewat `deleted_at`. Tombol Hapus bukan trash-icon
+  // polos yg bisa misklik - wajib lewat modal konfirmasi ini dulu (pola
+  // sama dgn showLunasiConfirm di bawah).
+  const [deleteTarget, setDeleteTarget] = useState(null); // { kind: "item"|"payment", item, payment? }
+
+  const [legacyRows, setLegacyRows] = useState([]);
+  const [legacyLoading, setLegacyLoading] = useState(false);
+
+  const labelStyle = { fontSize: 9.5, color: t.lo, marginBottom: 2, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.2 };
+  const defaultJatuhTempo = () => { try { const d = new Date((entryDate || new Date().toISOString().slice(0, 10)) + "T00:00:00"); d.setDate(d.getDate() + 30); return d.toISOString().slice(0, 10); } catch { return ""; } };
+
+  // 1 transaksi piutang + riwayat pembayarannya -> { ...item, payments, paid, belumDibayar, lunas }
+  const withComputed = (row) => {
+    // Soft-delete (lihat migration `ar_piutang_soft_delete`): pembayaran yg
+    // sudah di-"Hapus" tetap ADA di tabel (deleted_at terisi) utk jejak
+    // audit, tapi disaring di sini supaya ga ikut kehitung di
+    // paid/belumDibayar/Riwayat Pembayaran - sama persis spt filter
+    // `.is("deleted_at", null)` di level query utk item (lihat loadItems
+    // dkk), cuma utk payments disaring di JS krn dia nested select.
+    const payments = (row[paymentsTable] || []).filter((p) => !p.deleted_at).slice().sort((a, b) => new Date(a.tanggal_pembayaran) - new Date(b.tanggal_pembayaran) || new Date(a.created_at) - new Date(b.created_at));
+    const paid = payments.reduce((s, p) => s + fRaw(p.nominal), 0);
+    const belumDibayar = Math.max(0, fRaw(row.total) - paid);
+    return { ...row, payments, paid, belumDibayar, lunas: belumDibayar <= 0 };
+  };
+
+  const loadItems = useCallback(async () => {
+    if (!dseCode) return;
+    setItemsLoading(true);
+    setItemsErr("");
+    try {
+      const { data, error } = await supabase.from(itemsTable).select(`*, ${paymentsTable}(*)`).eq(codeField, dseCode).is("deleted_at", null).order("tanggal_transaksi", { ascending: false }).order("created_at", { ascending: false });
+      if (error) throw error;
+      setItems((data || []).map(withComputed));
+    } catch (err) {
+      setItemsErr(err.message || "Gagal memuat daftar piutang.");
+    } finally {
+      setItemsLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- itemsTable/paymentsTable/codeField cuma konstanta string yg dikirim parent per tab (ga pernah berubah selama 1 instance komponen ini hidup), withComputed fungsi murni yg didefinisikan ulang tiap render tapi stabil secara perilaku - masukin smua ke deps cuma bikin loadItems() re-create tiap render tanpa manfaat.
+  }, [dseCode]);
+
+  useEffect(() => { if (open || !inline) loadItems(); }, [open, inline, loadItems]);
+
+  // Auto-expand sekali di awal kalau item sedikit (<=2) - lihat komentar
+  // `expandedIds` di atas.
+  useEffect(() => {
+    if (!autoExpandedRef.current && items.length > 0) {
+      autoExpandedRef.current = true;
+      if (items.length <= 2) setExpandedIds(new Set(items.map((it) => it.id)));
+    }
+  }, [items]);
+
+  const loadLegacy = async () => {
+    setView("legacy");
+    setLegacyLoading(true);
+    try {
+      const { data, error } = codeField === "dse_code"
+        ? await supabase.from("ar_transactions").select("*").eq("dse_code", dseCode).order("created_at", { ascending: false }).limit(100)
+        : { data: [], error: null }; // ledger lama CUMA ada utk DSE
+      if (error) throw error;
+      setLegacyRows(data || []);
+    } catch (err) {
+      setLegacyRows([]);
+    } finally {
+      setLegacyLoading(false);
+    }
+  };
+
+  // Sinkronkan mf_dse_prod_ar: ar_piutang = total belum-dibayar SEMUA
+  // transaksi piutang DSE ini (bukan cuma 1 transaksi), ar_bayar = nominal
+  // pembayaran hari ini (0 kalau bukan aksi "terima pembayaran baru").
+  const syncLedger = async (freshItems, bayarHariIni) => {
+    const totalOutstanding = freshItems.reduce((s, it) => s + it.belumDibayar, 0);
+    onApplyLedger({ ar_piutang: totalOutstanding, ar_bayar: fRaw(bayarHariIni) });
+    const ok = await onConfirmSave();
+    if (ok === false) throw new Error("Gagal menyinkronkan saldo ke mf_dse_prod_ar.");
+  };
+
+  const openList = () => { setOpen(true); setView("list"); setActionErr(""); };
+  const openCreate = () => { setCTotal(0); setCJatuhTempo(defaultJatuhTempo()); setCCatatan(""); setCCatatanErr(false); setActionErr(""); setView("create"); };
+  const openDetail = (item) => { setSelectedId(item.id); setPayOpen(false); setEditPayId(null); setActionErr(""); setView("detail"); };
+
+  // Entry point "Bayar" dari LIST (bukan dari dalam detail 1 item) -
+  // permintaan user: "user pilih manual, buat dengan UI UX yang luar biasa
+  // baik" - alokasi pembayaran TETAP manual (bukan auto-FIFO jatuh tempo),
+  // tapi beri visibilitas semua item belum lunas SEBELUM user masuk ke form
+  // bayar 1 item, supaya pilihannya informed. Kalau cuma 1 item belum lunas,
+  // skip picker (ga ada pilihan nyata utk dibuat) - langsung ke form bayar
+  // item itu, sama seperti behavior lama.
+  const openPayEntry = () => {
+    const unpaid = items.filter((it) => !it.lunas);
+    if (unpaid.length === 0) return;
+    if (unpaid.length === 1) {
+      openDetail(unpaid[0]);
+      setPayNominal(0);
+      setPayTanggal(entryDate);
+      setPayKeterangan("");
+      setPayKeteranganErr(false);
+      setPayOpen(true);
+      return;
+    }
+    setActionErr("");
+    setView("pay-picker");
+  };
+
+  // Dipilih dari picker -> lanjut ke form bayar item itu (reuse detailView +
+  // confirmPayment yg sudah ada, picker cuma nambah 1 langkah SEBELUM-nya).
+  const choosePayItem = (item) => {
+    setSelectedId(item.id);
+    setEditPayId(null);
+    setActionErr("");
+    setPayNominal(0);
+    setPayTanggal(entryDate);
+    setPayKeterangan("");
+    setPayKeteranganErr(false);
+    setPayOpen(true);
+    setView("detail");
+  };
+
+  const selectedItem = items.find((it) => it.id === selectedId) || null;
+  const unpaidItemsSorted = items.filter((it) => !it.lunas).slice().sort((a, b) => new Date(a.jatuh_tempo || "9999-12-31") - new Date(b.jatuh_tempo || "9999-12-31"));
+
+  // Urutan KHUSUS utk alokasi otomatis: piutang TERTUA (tanggal_transaksi
+  // paling awal) dilunasi duluan - ini yg dimaksud user dgn "diukur dari
+  // age terakhir" (piutang a dibuat duluan, piutang b besoknya -> bayar
+  // gabungan nutup piutang a dulu). Sengaja beda dari unpaidItemsSorted
+  // (yg berdasar jatuh tempo, dipakai picker manual) karena tujuannya beda:
+  // picker manual = bantu user lihat urgensi; alokasi otomatis = tiru
+  // FIFO pelunasan utang yg wajar scr akuntansi (debt umur paling tua
+  // duluan).
+  const unpaidItemsByAge = items.filter((it) => !it.lunas).slice().sort((a, b) => new Date(a.tanggal_transaksi || "9999-12-31") - new Date(b.tanggal_transaksi || "9999-12-31"));
+
+  // Preview alokasi: given 1 nominal lump-sum, bagi habis ke
+  // unpaidItemsByAge (tertua dulu) pakai Math.min(sisa, belumDibayar) per
+  // item - item yg alokasinya 0 (nominal sudah habis sebelum sampai ke
+  // item itu) tetap masuk list (ditampilkan tapi alokasi Rp 0) supaya user
+  // bisa lihat mana yg KETINGGALAN kalau nominal kurang.
+  const buildAutoAllocationPreview = (nominal) => {
+    let sisa = fRaw(nominal);
+    const alokasi = [];
+    for (const it of unpaidItemsByAge) {
+      const bagian = sisa > 0 ? Math.min(sisa, it.belumDibayar) : 0;
+      sisa -= bagian;
+      alokasi.push({ item: it, bagian });
+    }
+    return { alokasi, sisaTidakTerpakai: Math.max(0, sisa) };
+  };
+  const autoAllocationPreview = buildAutoAllocationPreview(autoPayNominal);
+
+  const confirmCreate = async () => {
+    if (!cCatatan.trim()) { setCCatatanErr(true); return; }
+    if (fRaw(cTotal) <= 0) { setActionErr("Jumlah piutang harus lebih dari 0."); return; }
+    if (!cJatuhTempo) { setActionErr("Jatuh tempo wajib diisi."); return; }
+    setActionErr("");
+    setBusy(true);
+    try {
+      const row = {
+        [codeField]: dseCode, tanggal_transaksi: entryDate, jatuh_tempo: cJatuhTempo,
+        total: fRaw(cTotal), catatan: cCatatan.trim(),
+        created_by: profile?.id || null, created_by_name: profile?.full_name || null,
+      };
+      const { data, error } = await supabase.from(itemsTable).insert([row]).select(`*, ${paymentsTable}(*)`).single();
+      if (error) throw error;
+      const fresh = [withComputed(data), ...items];
+      setItems(fresh);
+      await syncLedger(fresh, 0);
+      setView("list");
+    } catch (err) {
+      setActionErr(err.message || "Gagal menyimpan piutang baru.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // UPDATE (permintaan user - "untuk AR pastikan tidak bisa bayar
+  // melebihi jumlah utang" -> "jumlah sisa tunggakan maksudnya"): nominal
+  // pembayaran dibatasi max SISA TUNGGAKAN item itu (item.belumDibayar),
+  // bukan nilai piutang kotor (item.total) - kalau sebagian sudah
+  // dibayar sebelumnya, batas yg berlaku ya sisanya, bukan nilai awal.
+  const confirmPayment = async (item, nominal, tanggal, keterangan) => {
+    if (!String(keterangan || "").trim()) { setPayKeteranganErr(true); return; }
+    if (fRaw(nominal) <= 0) { setActionErr("Jumlah bayar harus lebih dari 0."); return; }
+    if (fRaw(nominal) > item.belumDibayar) { setActionErr(`Jumlah bayar melebihi sisa tunggakan (Rp ${fmtID(item.belumDibayar)}).`); return; }
+    setActionErr("");
+    setBusy(true);
+    try {
+      const jenis = item.payments.length === 0 ? "uang_muka" : "cicilan";
+      const row = {
+        piutang_item_id: item.id, tanggal_pembayaran: tanggal || entryDate, nominal: fRaw(nominal), jenis,
+        keterangan: String(keterangan || "").trim(),
+        no_transaksi: `PTG-${(dseCode || idPrefix).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`,
+        created_by: profile?.id || null, created_by_name: profile?.full_name || null,
+      };
+      const { data: newPay, error } = await supabase.from(paymentsTable).insert([row]).select("*").single();
+      if (error) throw error;
+      const fresh = items.map((it) => it.id === item.id ? withComputed({ ...it, [paymentsTable]: [...it.payments, newPay] }) : it);
+      setItems(fresh);
+      await syncLedger(fresh, nominal);
+      setPayOpen(false);
+      setPayNominal(0);
+      setPayKeterangan("");
+      setPayKeteranganErr(false);
+    } catch (err) {
+      setActionErr(err.message || "Gagal menyimpan pembayaran.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const startEditPayment = (p) => { setEditPayId(p.id); setEditNominal(p.nominal); setEditTanggal(p.tanggal_pembayaran); setActionErr(""); };
+  const cancelEditPayment = () => setEditPayId(null);
+
+  // Edit langsung pembayaran yg sudah tersimpan (permintaan user: "Izinkan
+  // edit langsung" — bukan cuma koreksi lewat baris baru). edited_by/
+  // edited_at dicatat utk audit, tapi nilai yg dipakai utk hitung ulang
+  // "Belum Dibayar" SELALU nilai terbaru hasil edit ini.
+  const confirmEditPayment = async (item, payment) => {
+    if (fRaw(editNominal) <= 0) { setActionErr("Jumlah bayar harus lebih dari 0."); return; }
+    // UPDATE (permintaan user - "untuk AR pastikan tidak bisa bayar
+    // melebihi jumlah sisa tunggakan"): sama kayak confirmPayment, tapi
+    // nominal LAMA payment yg lagi diedit ini ditambahkan dulu ke batas
+    // (udah kepotong di item.belumDibayar skrg) - biar user tetap bisa
+    // mengubah tanggal/nominalnya sendiri tanpa ke-blok oleh nilainya
+    // sendiri, cuma ga boleh naik SAMPAI bikin total bayar lebih besar
+    // dari nilai piutangnya.
+    const maxEditNominal = item.belumDibayar + fRaw(payment.nominal);
+    if (fRaw(editNominal) > maxEditNominal) { setActionErr(`Jumlah bayar melebihi sisa tunggakan (Rp ${fmtID(maxEditNominal)}).`); return; }
+    setActionErr("");
+    setBusy(true);
+    try {
+      const patch = {
+        nominal: fRaw(editNominal), tanggal_pembayaran: editTanggal || payment.tanggal_pembayaran,
+        updated_at: new Date().toISOString(), edited_by: profile?.id || null, edited_by_name: profile?.full_name || null, edited_at: new Date().toISOString(),
+      };
+      const { data: updated, error } = await supabase.from(paymentsTable).update(patch).eq("id", payment.id).select("*").single();
+      if (error) throw error;
+      const fresh = items.map((it) => it.id === item.id ? withComputed({ ...it, [paymentsTable]: it.payments.map((p) => p.id === payment.id ? updated : p) }) : it);
+      setItems(fresh);
+      await syncLedger(fresh, 0);
+      setEditPayId(null);
+    } catch (err) {
+      setActionErr(err.message || "Gagal mengubah pembayaran.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Edit item piutang (total/jatuh tempo/catatan) - BARU, sebelumnya item
+  // cuma bisa dibuat. Warn (bukan block keras) kalau total baru < yg sudah
+  // dibayar - itu kondisi aneh (piutang jadi "lebih dari lunas") tapi bukan
+  // error teknis, jadi tetap diizinkan dgn pesan jelas supaya user sadar.
+  const startEditItem = (item) => { setEditItemTotal(item.total); setEditItemJatuhTempo(item.jatuh_tempo || ""); setEditItemCatatan(item.catatan || ""); setEditItemOpen(true); setActionErr(""); };
+  const cancelEditItem = () => setEditItemOpen(false);
+
+  const confirmEditItem = async (item) => {
+    if (fRaw(editItemTotal) <= 0) { setActionErr("Jumlah piutang harus lebih dari 0."); return; }
+    if (!editItemJatuhTempo) { setActionErr("Jatuh tempo wajib diisi."); return; }
+    if (!editItemCatatan.trim()) { setActionErr("Catatan wajib diisi."); return; }
+    setActionErr("");
+    setBusy(true);
+    try {
+      const patch = {
+        total: fRaw(editItemTotal), jatuh_tempo: editItemJatuhTempo, catatan: editItemCatatan.trim(),
+        updated_at: new Date().toISOString(),
+      };
+      const { data: updated, error } = await supabase.from(itemsTable).update(patch).eq("id", item.id).select(`*, ${paymentsTable}(*)`).single();
+      if (error) throw error;
+      const fresh = items.map((it) => it.id === item.id ? withComputed(updated) : it);
+      setItems(fresh);
+      await syncLedger(fresh, 0);
+      setEditItemOpen(false);
+    } catch (err) {
+      setActionErr(err.message || "Gagal mengubah piutang.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Hapus (soft-delete) - dipanggil dari modal konfirmasi `deleteTarget`
+  // (lihat deklarasi state di atas), BUKAN langsung dari tombol trash-icon.
+  // Item dgn pembayaran yg masih tercatat (belum dihapus) DIBLOK dari
+  // penghapusan - lebih aman/standar drpd cascade-delete diam2 (user harus
+  // hapus pembayarannya dulu satu2, supaya dia benar2 sadar apa yg ikut
+  // hilang dari hitungan), lihat komentar deleteTarget & tombol Hapus item.
+  const confirmDeletePayment = async (item, payment) => {
+    setActionErr("");
+    setBusy(true);
+    try {
+      const patch = { deleted_at: new Date().toISOString(), deleted_by: profile?.id || null, deleted_by_name: profile?.full_name || null };
+      const { data: updated, error } = await supabase.from(paymentsTable).update(patch).eq("id", payment.id).select("*").single();
+      if (error) throw error;
+      // withComputed menyaring payments yg deleted_at-nya terisi (lihat
+      // komentar di withComputed), jadi cukup ganti entry-nya dgn versi
+      // `updated` (sudah ada deleted_at) - otomatis hilang dari
+      // payments/paid/belumDibayar hasil withComputed.
+      const fresh = items.map((it) => it.id === item.id ? withComputed({ ...it, [paymentsTable]: it.payments.map((p) => p.id === payment.id ? updated : p) }) : it);
+      setItems(fresh);
+      await syncLedger(fresh, 0);
+      setDeleteTarget(null);
+    } catch (err) {
+      setActionErr(err.message || "Gagal menghapus pembayaran.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmDeleteItem = async (item) => {
+    if (item.payments.length > 0) { setActionErr("Tidak bisa menghapus piutang yg masih punya pembayaran tercatat. Hapus dulu semua pembayarannya."); setDeleteTarget(null); return; }
+    setActionErr("");
+    setBusy(true);
+    try {
+      const patch = { deleted_at: new Date().toISOString(), deleted_by: profile?.id || null, deleted_by_name: profile?.full_name || null };
+      const { error } = await supabase.from(itemsTable).update(patch).eq("id", item.id);
+      if (error) throw error;
+      const fresh = items.filter((it) => it.id !== item.id);
+      setItems(fresh);
+      await syncLedger(fresh, 0);
+      setDeleteTarget(null);
+      if (selectedId === item.id) setView("list");
+    } catch (err) {
+      setActionErr(err.message || "Gagal menghapus piutang.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // "Lunasi Sekaligus": bayar penuh SEMUA transaksi piutang yg masih belum
+  // lunas dalam satu aksi (adaptasi dari referensi - di sana per-pelanggan,
+  // di sini per-DSE karena domain kita memang level DSE, bukan pelanggan).
+  const lunasiSekaligus = async () => {
+    const belumLunas = items.filter((it) => !it.lunas);
+    if (belumLunas.length === 0) return;
+    setActionErr("");
+    setBusy(true);
+    try {
+      let working = items;
+      let totalBayarHariIni = 0;
+      for (const it of belumLunas) {
+        const row = {
+          piutang_item_id: it.id, tanggal_pembayaran: entryDate, nominal: it.belumDibayar,
+          jenis: it.payments.length === 0 ? "uang_muka" : "cicilan",
+          no_transaksi: `PTG-${(dseCode || idPrefix).toUpperCase()}-${Date.now().toString(36).toUpperCase()}-${it.id.slice(0, 4)}`,
+          created_by: profile?.id || null, created_by_name: profile?.full_name || null,
+        };
+        const { data: newPay, error } = await supabase.from(paymentsTable).insert([row]).select("*").single();
+        if (error) throw error;
+        totalBayarHariIni += fRaw(newPay.nominal);
+        working = working.map((x) => x.id === it.id ? withComputed({ ...x, [paymentsTable]: [...x.payments, newPay] }) : x);
+      }
+      setItems(working);
+      await syncLedger(working, totalBayarHariIni);
+    } catch (err) {
+      setActionErr(err.message || "Gagal melunasi sekaligus.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // "Bayar Total (Alokasi Otomatis)": insert 1 payment row per item yg
+  // kebagian alokasi > 0 (skip item dgn bagian 0 - ga ada gunanya nyimpen
+  // baris pembayaran Rp 0), urutan tertua dulu (unpaidItemsByAge), mirip
+  // pola lunasiSekaligus (multi-insert di loop + 1x syncLedger di akhir),
+  // bedanya nominal per-item di-cap pakai Math.min (bisa partial utk item
+  // TERAKHIR yg kebagian, kalau nominal totalnya ga cukup nutup semua).
+  const confirmAutoAllocatePayment = async (nominal, tanggal) => {
+    if (fRaw(nominal) <= 0) { setActionErr("Jumlah bayar harus lebih dari 0."); return; }
+    let sisaAlokasi = fRaw(nominal);
+    const dibayarkan = [];
+    for (const it of unpaidItemsByAge) {
+      const bagian = sisaAlokasi > 0 ? Math.min(sisaAlokasi, it.belumDibayar) : 0;
+      sisaAlokasi -= bagian;
+      if (bagian > 0) dibayarkan.push({ item: it, bagian });
+    }
+    if (dibayarkan.length === 0) { setActionErr("Tidak ada piutang yang bisa dialokasikan."); return; }
+    setActionErr("");
+    setBusy(true);
+    try {
+      let working = items;
+      let totalBayarHariIni = 0;
+      for (const alloc of dibayarkan) {
+        const it = alloc.item;
+        const bagian = alloc.bagian;
+        const row = {
+          piutang_item_id: it.id, tanggal_pembayaran: tanggal || entryDate, nominal: bagian,
+          jenis: it.payments.length === 0 ? "uang_muka" : "cicilan",
+          // eslint-disable-next-line react-hooks/purity -- Date.now() dipanggil dari onClick (event handler) saat konfirmasi, bukan saat render; pola identik dgn confirmPayment()/lunasiSekaligus() di atas yg tidak diflag (keduanya pakai Date.now() yg sama di sini).
+          no_transaksi: `PTG-${(dseCode || idPrefix).toUpperCase()}-${Date.now().toString(36).toUpperCase()}-${it.id.slice(0, 4)}`,
+          created_by: profile?.id || null, created_by_name: profile?.full_name || null,
+        };
+        const { data: newPay, error } = await supabase.from(paymentsTable).insert([row]).select("*").single();
+        if (error) throw error;
+        totalBayarHariIni += fRaw(newPay.nominal);
+        working = working.map((x) => x.id === it.id ? withComputed({ ...x, [paymentsTable]: [...x.payments, newPay] }) : x);
+      }
+      setItems(working);
+      await syncLedger(working, totalBayarHariIni);
+      setAutoPayOpen(false);
+      setAutoPayNominal(0);
+      setView("list");
+    } catch (err) {
+      setActionErr(err.message || "Gagal mengalokasikan pembayaran otomatis.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copyNoTransaksi = (no) => { try { navigator.clipboard.writeText(no); } catch {} };
+
+  const totalPiutang = items.reduce((s, it) => s + it.belumDibayar, 0);
+  // UPDATE (permintaan user - "pisahkan menjadi 3 kolom yang berbeda"):
+  // totalUtang/totalBayar dipakai utk kolom Utang & Bayar yg terpisah dari
+  // Sisa (= outstanding, prop dari cache mf_dse_prod_ar.ar_piutang - SUDAH
+  // dipakai jg oleh StatTile "AR / Piutang" di ringkasan, jadi nilainya
+  // tetap konsisten di semua tempat).
+  const totalUtang = items.reduce((s, it) => s + fRaw(it.total), 0);
+  const totalBayar = items.reduce((s, it) => s + it.paid, 0);
+  // FIX (bug "Sisa Piutang tidak sync" - kolom Sisa Piutang selalu nunjukin
+  // Rp 0 / LUNAS walau masih ada tunggakan): `outstanding` di sini adalah
+  // prop dari cache LAMA mf_dse_prod_ar.ar_piutang, dihitung sbg
+  // carry-forward dari tanggal SEBELUM entryDate (lihat query `.lt("tanggal",
+  // entryDate)` di loadDseAndEntries). Tapi di mode isRangeMode (SELALU true
+  // di tab AR, Full Month dipaksa) nilai itu sengaja DIKOSONGKAN total
+  // (`setPrevAr({})`) karena "saldo sebelum tanggal X" ga valid utk mode
+  // rentang - artinya `outstanding` SELALU 0 di tab AR, bukan nilai yg
+  // sinkron. Dipakai `totalPiutang` (live, SUM belumDibayar tiap item -
+  // sumber yg SAMA dgn kolom Total Piutang/Total Dibayar di tabel) sbg
+  // gantinya utk status Lunas & kolom Sisa Piutang.
+  const lunasCurrent = totalPiutang <= 0;
+  // UPDATE (permintaan user - "untuk kolom yang free buat berbeda
+  // sendiri"): DSE yg emang GA PERNAH punya transaksi piutang sama
+  // sekali (items.length === 0) beda kondisinya sama DSE yg PERNAH
+  // punya piutang tapi udah lunas dibayar (items.length > 0, tapi
+  // totalPiutang === 0 krn semua udah kebayar) - keduanya skrg sama2
+  // kena badge "LUNAS" hijau, padahal maknanya beda ("ga ada apa2" vs
+  // "lunas krn dibayar"). `hasAr` ngebedain 2 kondisi ini biar bisa
+  // dikasih gaya visual yg beda (lihat badge Status & warna angka di
+  // bawah).
+  const hasAr = items.length > 0;
+
+  // UPDATE (permintaan user - "pisahkan Status jadi kolom sendiri, tambah
+  // kolom Jatuh Tempo & Keterangan"): kolom "Jatuh Tempo"/"Keterangan" di
+  // tabel desktop menampilkan transaksi piutang BELUM LUNAS dgn jatuh
+  // tempo TERDEKAT (bukan transaksi terbaru) - itu yg paling relevan utk
+  // ditindaklanjuti. Kosong kalau semua transaksi sudah lunas.
+  const nearestUnpaid = items.filter((it) => !it.lunas && it.jatuh_tempo).sort((a, b) => new Date(a.jatuh_tempo) - new Date(b.jatuh_tempo))[0] || null;
+  const nearestOverdue = !!(nearestUnpaid && nearestUnpaid.jatuh_tempo && nearestUnpaid.jatuh_tempo < (entryDate || new Date().toISOString().slice(0, 10)));
+
+  // UPDATE (permintaan user - "jika di hover apakah bisa menampilkan
+  // keterangan detailnya..."): state hover tooltip utk sel2 AR agregat di
+  // tabel desktop (!inline) - lihat komentar lengkap di tempat dipakainya
+  // (td Total Piutang/Total Dibayar/dst di bawah). Cuma dipakai di cabang
+  // !inline, tapi dideklarasikan di sini (bukan di bawah JSX) krn hooks
+  // (useState) ga boleh konditional/di dalam cabang render.
+  const [hoverTipPos, setHoverTipPos] = useState(null);
+  // UPDATE (permintaan user - "perbaiki mengapa masih 1 id nya dan buat
+  // lebih bagus lagi ui nya saat di hover, dan sama seperti di prod
+  // selected cell akan ada pembedanya"): sebelumnya onCellEnter LANGSUNG
+  // return kalau items.length <= 1 - artinya sel AR (Total Piutang/Total
+  // Dibayar/Sisa Piutang/Status) utk DSE yg cuma punya 1 transaksi piutang
+  // SAMA SEKALI ga ada feedback apapun pas di-hover (ga ada tooltip, ga ada
+  // highlight), keliatan kayak hover-nya ga berfungsi. Sekarang highlight
+  // visual sel (ring teal + brightness) SELALU jalan di-hover - SAMA PERSIS
+  // pola `cellHoverHandlers` yg dipakai di kolom Produksi (SP/Voucher/
+  // Saldo/Total, lihat komentar di situ) - biar konsisten di seluruh tabel
+  // & user selalu dapat sinyal jelas sel mana yg lagi di-hover. Tooltip
+  // breakdown per-item (popup "Rincian N Piutang") tetap CUMA muncul kalau
+  // items.length > 1 (kalau cuma 1 item, angka agregat = angka item itu
+  // sendiri, breakdown jadi redundant - lihat kondisi render di bawah).
+  // UPDATE (permintaan user - "ini harusnya informasinya sesuai dengan
+  // yang di hover, misalkan yang di hover total piutang total 1,5 juta
+  // maka dia akan menampilkan rincian pembentuk 1.5 juta tersebut"):
+  // dulu tooltip breakdown SELALU nampilin rincian nilai KOTOR tiap item
+  // (it.total) apapun kolom yg di-hover - cocok utk kolom "Total Piutang"
+  // (emang jumlah kotor), tapi SALAH utk "Total Dibayar" (harusnya rincian
+  // pembayaran, bukan nilai kotor piutang) & "Sisa Piutang" (harusnya
+  // rincian sisa belum dibayar per item, bukan nilai kotor). Sekarang
+  // onCellEnter terima `kind` ("piutang"/"dibayar"/"sisa"/"status") dari
+  // tiap <td> pemanggilnya, disimpan di hoverTipPos, dipakai nentuin
+  // angka & daftar apa yg ditampilin di tooltip (lihat render tooltip di
+  // bawah) - jadi total yg kebentuk dari rincian SELALU match persis sama
+  // angka di sel yg lagi di-hover.
+  const onCellEnter = (ev, kind) => {
+    ev.currentTarget.style.filter = "brightness(0.96)";
+    ev.currentTarget.style.boxShadow = `inset 0 0 0 1.5px ${t.teal}70`;
+    if (items.length <= 1) return;
+    const r = ev.currentTarget.getBoundingClientRect();
+    const tipW = 300;
+    let x = r.right - tipW;
+    if (x < 8) x = 8;
+    let y = r.bottom + 8;
+    if (typeof window !== "undefined" && y + 360 > window.innerHeight) y = Math.max(8, r.top - 360 - 8);
+    setHoverTipPos({ x, y, cellLeft: r.left, cellRight: r.right, cellWidth: r.width, kind: kind || "piutang" });
+  };
+  const onCellLeave = (ev) => {
+    ev.currentTarget.style.filter = "none";
+    ev.currentTarget.style.boxShadow = "none";
+    setHoverTipPos(null);
+  };
+
+  // ── Grouping per bulan (permintaan user - "pada AR harusnya tetap bisa
+  // pilih bulan untuk export data per bulannya, pikirkan cara terbaik
+  // untuk mengelompokkannya") ────────────────────────────────────────────
+  // `arMonth` ("YYYY-MM") datang dari picker bulan yg sama dgn mode "Full
+  // Month" di tab Input (calViewMonth) - AR sekarang SELALU di mode bulan
+  // itu (lihat switchTab), jadi picker yg sama dipakai utk filter/export AR.
+  //
+  // Primary grouping: piutang yg DIBUAT di bulan terpilih (tanggal_transaksi
+  // di bulan itu) - konsisten dgn semantik "Full Month" yg sudah dipakai utk
+  // data penjualan di tab lain. Supplementary: pembayaran yg DITERIMA di
+  // bulan terpilih, TERLEPAS dari bulan piutangnya dibuat (piutang bulan lalu
+  // yg baru dibayar bulan ini) - keduanya ditampilkan terpisah & jelas
+  // labelnya supaya tidak ada yg ganda terhitung (piutang & pembayarannya
+  // adalah 2 hal berbeda utk akuntansi: timbulnya piutang vs kas masuk).
+  const monthItems = arMonth ? items.filter((it) => String(it.tanggal_transaksi || "").slice(0, 7) === arMonth) : items;
+  const monthPaymentRows = arMonth ? items.flatMap((it) => it.payments.filter((p) => String(p.tanggal_pembayaran || "").slice(0, 7) === arMonth).map((p) => ({ ...p, _item: it }))) : [];
+  const monthItemsTotal = monthItems.reduce((s, it) => s + fRaw(it.total), 0);
+  const monthPaymentsTotal = monthPaymentRows.reduce((s, p) => s + fRaw(p.nominal), 0);
+
+  // Laporan cetak: hitung status piutang per akhir bulan terpilih (arMonth),
+  // BUKAN cuma piutang yg dibuat bulan ini - lihat komentar computeArAsOf.
+  const cetakReport = useMemo(() => computeArAsOf(items, endOfMonthISO(arMonth), arMonth), [items, arMonth]);
+
+  const exportMonthCsv = () => {
+    const stamp = arMonth || "semua";
+    const rows1 = [["dse_code", "tanggal_transaksi", "jatuh_tempo", "total", "belum_dibayar", "status", "catatan"]]
+      .concat(monthItems.map((it) => [dseCode, it.tanggal_transaksi, it.jatuh_tempo, fRaw(it.total), it.belumDibayar, it.lunas ? "Lunas" : "Belum Lunas", (it.catatan || "").replace(/[\r\n]+/g, " ")]));
+    const rows2 = [["", "", "", "", "", "", ""], ["— Pembayaran diterima bulan ini —"], ["dse_code", "no_transaksi", "tanggal_pembayaran", "nominal", "jenis", "tanggal_transaksi_piutang"]]
+      .concat(monthPaymentRows.map((p) => [dseCode, p.no_transaksi || "", p.tanggal_pembayaran, fRaw(p.nominal), "Pembayaran", p._item.tanggal_transaksi]));
+    const esc = (v) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    const csv = rows1.concat(rows2).map((r) => r.map(esc).join(",")).join("\r\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `ar_piutang_${dseCode}_${stamp}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadReport = async (format) => {
+    setDownloadMenuOpen(false);
+    setActionErr("");
+    setExportBusy(true);
+    try {
+      const [{ default: html2canvas }] = await Promise.all([import("html2canvas")]);
+      setExportRendering(true);
+      // kasih waktu 1 frame render DOM node tersembunyi sebelum di-capture.
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const node = exportCaptureRef.current;
+      if (!node) throw new Error("Gagal menyiapkan laporan.");
+      const canvas = await html2canvas(node, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
+      const fileBase = `laporan_tunggakan_${dseCode}_${arMonth || "semua"}`;
+      if (format === "png") {
+        const dataUrl = canvas.toDataURL("image/png");
+        const a = document.createElement("a");
+        a.href = dataUrl; a.download = `${fileBase}.png`;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      } else {
+        const { PDFDocument } = await import("pdf-lib");
+        const pngDataUrl = canvas.toDataURL("image/png");
+        const pngBytes = await (await fetch(pngDataUrl)).arrayBuffer();
+        const pdfDoc = await PDFDocument.create();
+        const pngImage = await pdfDoc.embedPng(pngBytes);
+        const maxW = 595; // ~A4 portrait width dalam point @72dpi
+        const scale = Math.min(1, maxW / pngImage.width);
+        const pageW = pngImage.width * scale;
+        const pageH = pngImage.height * scale;
+        const page = pdfDoc.addPage([pageW, pageH]);
+        page.drawImage(pngImage, { x: 0, y: 0, width: pageW, height: pageH });
+        const pdfBytes = await pdfDoc.save();
+        const blob = new Blob([pdfBytes], { type: "application/pdf" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = `${fileBase}.pdf`;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      setActionErr("Gagal mengunduh laporan: " + (err?.message || "terjadi kesalahan"));
+    } finally {
+      setExportRendering(false);
+      setExportBusy(false);
+    }
+  };
+
+  const listView = (
+    <>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 14, gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 800, color: t.hi, display: "flex", alignItems: "center", gap: 7 }}>
+            <CircleDollarSign size={16} color={t.teal} /> Laporan Tunggakan Piutang (AR) {entityNoun}
+          </div>
+          <div style={{ fontSize: 10.5, color: t.mid, fontWeight: 600, marginTop: 3 }}>
+            Periode {arMonthLabel || "-"} — Ringkasan Piutang {entityNoun}
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+          <div style={{ position: "relative" }}>
+            <button type="button" onClick={() => setDownloadMenuOpen((v) => !v)} disabled={exportBusy} title="Download Laporan"
+              style={{ display: "flex", alignItems: "center", gap: 5, height: 30, padding: "0 10px", borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 11, fontWeight: 700, cursor: exportBusy ? "default" : "pointer", opacity: exportBusy ? 0.6 : 1 }}>
+              {exportBusy ? <Loader2 size={12} className="spin" /> : <FileDown size={12} color={t.teal} />} Download Laporan
+            </button>
+            {downloadMenuOpen && (
               <>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", borderRadius: 10, background: t.sub, marginBottom: 12 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: t.mid }}>Saldo Piutang Saat Ini</span>
-                  <span style={{ fontSize: 14, fontWeight: 800, color: t.hi }}>Rp {fmtID(outstanding)}</span>
-                </div>
-
-                <div style={labelStyle}>Jenis Transaksi</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 12 }}>
-                  {Object.entries(JENIS_META).map(([key, meta]) => {
-                    const Icon = meta.icon;
-                    const active = jenis === key;
-                    return (
-                      <button key={key} type="button" onClick={() => setJenis(key)}
-                        style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "9px 4px", borderRadius: 10, border: active ? `1.5px solid ${meta.color}` : `1px solid ${t.inputBd}`, background: active ? meta.bg : t.inputBg, cursor: "pointer" }}>
-                        <Icon size={15} color={active ? meta.color : t.mid} />
-                        <span style={{ fontSize: 10, fontWeight: 700, color: active ? meta.color : t.mid, textAlign: "center", lineHeight: 1.2 }}>{meta.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <div style={labelStyle}>{jenis === "koreksi" ? "Saldo Piutang yang Benar" : jenis === "bayar" ? "Jumlah Bayar" : "Jumlah Piutang Baru"}</div>
-                <MoneyInput t={t} value={draft} onChange={setDraft} accent={JENIS_META[jenis].color} big prefix="Rp" />
-
-                <div style={{ marginTop: 12 }}>
-                  <div style={labelStyle}>Catatan {needsCatatan ? "(wajib)" : "(opsional)"}</div>
-                  <textarea value={catatan} onChange={(ev) => { setCatatan(ev.target.value); if (catatanErr) setCatatanErr(false); }}
-                    placeholder={jenis === "koreksi" ? "Jelaskan transaksi mana yg dikoreksi & kenapa..." : jenis === "piutang_baru" ? "Keterangan piutang baru..." : "opsional"}
-                    rows={2}
-                    style={{ width: "100%", padding: "8px 10px", borderRadius: 9, border: `1px solid ${catatanErr ? t.red : t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12.5, fontFamily: FONT, outline: "none", boxSizing: "border-box", resize: "vertical" }} />
-                  {catatanErr && <div style={{ fontSize: 10.5, color: t.red, marginTop: 3, fontWeight: 600 }}>Catatan wajib diisi untuk {JENIS_META[jenis].label}.</div>}
-                </div>
-
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderRadius: 10, background: t.sub, marginTop: 12, gap: 8 }}>
-                  <div style={{ display: "flex", flexDirection: "column" }}>
-                    <span style={{ fontSize: 9.5, fontWeight: 700, color: t.lo, textTransform: "uppercase" }}>Saldo Sebelum</span>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: t.mid }}>Rp {fmtID(sebelum)}</span>
-                  </div>
-                  <ChevronRight size={14} color={t.lo} />
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
-                    <span style={{ fontSize: 9.5, fontWeight: 700, color: t.lo, textTransform: "uppercase" }}>Saldo Sesudah</span>
-                    <span style={{ fontSize: 13, fontWeight: 800, color: lunasDraft ? t.teal : t.red }}>Rp {fmtID(sesudah)}</span>
-                  </div>
-                </div>
-
-                {txErr && <div style={{ marginTop: 10, fontSize: 11, fontWeight: 600, color: t.red }}>{txErr}</div>}
-
-                <div style={{ display: "flex", gap: 8, marginTop: 16, paddingTop: 14, borderTop: `1px dashed ${t.line}` }}>
-                  <button type="button" onClick={() => setOpen(false)} style={{ flex: 1, height: 38, borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
-                    Batal
+                <div onClick={() => setDownloadMenuOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 20 }} />
+                <div className="periodFade" style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 21, minWidth: 150, borderRadius: 9, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden", transformOrigin: "top right" }}>
+                  <button type="button" onClick={() => downloadReport("png")} style={{ width: "100%", display: "flex", alignItems: "center", gap: 7, padding: "9px 11px", border: "none", background: "none", color: t.hi, fontSize: 11.5, fontWeight: 700, cursor: "pointer", textAlign: "left" }}>
+                    <FileImage size={13} color={t.teal} /> Sebagai PNG
                   </button>
-                  <button type="button" onClick={confirm} disabled={saving || txSaving} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, height: 38, borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: (saving || txSaving) ? "default" : "pointer", opacity: (saving || txSaving) ? 0.6 : 1 }}>
-                    {(saving || txSaving) ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Simpan
+                  <div style={{ height: 1, background: t.line }} />
+                  <button type="button" onClick={() => downloadReport("pdf")} style={{ width: "100%", display: "flex", alignItems: "center", gap: 7, padding: "9px 11px", border: "none", background: "none", color: t.hi, fontSize: 11.5, fontWeight: 700, cursor: "pointer", textAlign: "left" }}>
+                    <FileText size={13} color={t.teal} /> Sebagai PDF
                   </button>
                 </div>
-
-                <button type="button" onClick={loadHistory} style={{ width: "100%", marginTop: 10, background: "none", border: "none", color: t.teal, fontSize: 11.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: 4 }}>
-                  <History size={12} /> Riwayat Transaksi AR
-                </button>
-              </>
-            ) : (
-              <>
-                <button type="button" onClick={() => setHistOpen(false)} style={{ background: "none", border: "none", color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, marginBottom: 10, padding: 0 }}>
-                  <ChevronLeft size={13} /> Kembali
-                </button>
-                {histLoading ? (
-                  <div style={{ padding: 20, textAlign: "center", color: t.lo, fontSize: 12 }}>Memuat riwayat...</div>
-                ) : histErr ? (
-                  <div style={{ padding: 12, color: t.red, fontSize: 12 }}>{histErr}</div>
-                ) : histRows.length === 0 ? (
-                  <div style={{ padding: 20, textAlign: "center", color: t.lo, fontSize: 12 }}>Belum ada transaksi AR tercatat.</div>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: "60vh", overflowY: "auto" }}>
-                    {histRows.map((r) => {
-                      const meta = JENIS_META[r.jenis] || JENIS_META.koreksi;
-                      const Icon = meta.icon;
-                      const sign = r.jenis === "bayar" ? "−" : r.jenis === "piutang_baru" ? "+" : "";
-                      return (
-                        <div key={r.id} style={{ padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.line}`, background: t.sub }}>
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                            <span style={{ fontSize: 10, fontWeight: 800, color: meta.color, background: meta.bg, borderRadius: 999, padding: "3px 8px", display: "flex", alignItems: "center", gap: 4 }}>
-                              <Icon size={10} /> {meta.label}
-                            </span>
-                            <span style={{ fontSize: 10.5, color: t.lo, fontWeight: 600 }}>{fmtDayMonth(r.tanggal)}</span>
-                          </div>
-                          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginTop: 6 }}>
-                            <span style={{ fontSize: 13, fontWeight: 800, color: meta.color }}>{sign} Rp {fmtID(r.nominal)}</span>
-                            <span style={{ fontSize: 11, color: t.mid, fontWeight: 600 }}>Saldo: Rp {fmtID(r.saldo_sesudah)}</span>
-                          </div>
-                          {r.catatan && <div style={{ fontSize: 11, color: t.mid, marginTop: 4, lineHeight: 1.4 }}>{r.catatan}</div>}
-                          <div style={{ fontSize: 10, color: t.lo, marginTop: 5 }}>{fmtTime(r.created_at)}{r.created_by_name ? ` oleh ${r.created_by_name}` : ""}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
               </>
             )}
           </div>
+          {!inline && (
+            <button type="button" onClick={requestClose} title="Tutup"
+              style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <X size={15} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div style={{ borderRadius: 10, background: t.sub, padding: "10px 12px", marginBottom: 8, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
+        <div>
+          <div style={labelStyle}>ID DSE</div>
+          <div style={{ fontSize: 12, fontWeight: 800, color: t.hi, display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 6, height: 6, borderRadius: 999, background: "#D97706", flexShrink: 0 }} /> {dseCode}
+          </div>
+          {dseCode3id && (
+            <div style={{ fontSize: 12, fontWeight: 800, color: t.hi, display: "flex", alignItems: "center", gap: 5, marginTop: 2 }}>
+              <span style={{ width: 6, height: 6, borderRadius: 999, background: "#BE185D", flexShrink: 0 }} /> {dseCode3id}
+            </div>
+          )}
+        </div>
+        <div>
+          <div style={labelStyle}>Nama DSE</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: t.hi }}>{dseName || "-"}</div>
+        </div>
+        <div>
+          <div style={labelStyle}>District</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: t.hi }}>{mc || "-"}</div>
+        </div>
+        <div>
+          <div style={labelStyle}>Area</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: t.hi }}>{branch || "-"}</div>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 140px", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.line}` }}>
+          <div style={labelStyle}>Total Utang</div>
+          <div style={{ fontSize: 9.5, color: t.lo, fontWeight: 600, marginTop: 1 }}>akumulasi s.d. akhir {arMonthLabel || "-"}</div>
+          <div style={{ fontSize: 15, fontWeight: 800, color: t.hi, marginTop: 3 }}>Rp {fmtID(totalUtang)}</div>
+        </div>
+        <div style={{ flex: "1 1 140px", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.line}` }}>
+          <div style={labelStyle}>Total Bayar</div>
+          <div style={{ fontSize: 9.5, color: t.lo, fontWeight: 600, marginTop: 1 }}>diterima {arMonthLabel || "-"}</div>
+          <div style={{ fontSize: 15, fontWeight: 800, color: t.teal, marginTop: 3 }}>Rp {fmtID(totalBayar)}</div>
+        </div>
+        <div style={{ flex: "1 1 140px", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.red}`, background: t.redBg }}>
+          <div style={{ ...labelStyle, color: t.red }}>Sisa Tunggakan Akhir Bulan</div>
+          <div style={{ fontSize: 9.5, color: t.red, fontWeight: 600, marginTop: 1, opacity: 0.85 }}>belum dibayar s.d. akhir bulan</div>
+          <div style={{ fontSize: 15, fontWeight: 800, color: t.red, marginTop: 3 }}>Rp {fmtID(totalPiutang)}</div>
+        </div>
+      </div>
+
+
+      {/* FIX (bug "tampilannya hanya seperti ini" - tombol "+ Buat
+          Piutang" & "Lunasi Sekaligus" ga pernah kelihatan di tab AR
+          mode Full Month/range, TAMPILAN DEFAULT): blok ini sebelumnya
+          dibungkus `!readOnly`, PADAHAL `readOnly` yg dikirim ke
+          komponen ini DIIKAT LANGSUNG ke `isRangeMode` (lihat pemanggilan
+          <ArPiutangInput readOnly={isRangeMode}.../>), yg artinya SELALU
+          true di mode itu - persis bug yg sama yg udah diperbaiki utk
+          tombol "Edit AR" & container modalnya (lihat komentar2 di atas).
+          Bikin/lunasi piutang itu aksi CRUD piutang yg berdiri sendiri,
+          BUKAN "edit entry data per-tanggal", jadi ga boleh digerbang
+          readOnly juga - selalu tampil begitu modal/panel ini terbuka. */}
+      {actionErr && <div style={{ marginBottom: 10, fontSize: 11, fontWeight: 600, color: t.red }}>{actionErr}</div>}
+
+      {itemsLoading ? (
+        <div style={{ borderRadius: 10, border: `1px solid ${t.line}`, overflow: "hidden" }}>
+          {[0, 1, 2].map((i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 10px", borderBottom: i < 2 ? `1px solid ${t.line}` : "none", background: i % 2 === 1 ? t.sub : t.card }}>
+              <NumSkeleton t={t} width={72} height={12} />
+              <NumSkeleton t={t} width={80} height={12} />
+              <NumSkeleton t={t} width={120} height={12} />
+              <span style={{ marginLeft: "auto" }}><NumSkeleton t={t} width={70} height={14} /></span>
+            </div>
+          ))}
+        </div>
+      ) : itemsErr ? (
+        <div style={{ padding: 12, color: t.red, fontSize: 12 }}>{itemsErr}</div>
+      ) : (arMonth && !showAllMonths ? monthItems : items).length === 0 ? (
+        <div style={{ padding: 20, textAlign: "center", color: t.lo, fontSize: 12 }}>{arMonth && !showAllMonths ? `Tidak ada piutang dibuat di ${arMonthLabel}.` : "Belum ada transaksi piutang."}</div>
+      ) : (
+        <div style={{ borderRadius: 10, border: `1px solid ${t.line}`, overflow: "auto", maxHeight: inline ? "none" : "55vh" }}>
+          <table style={{ width: "100%", minWidth: 480, borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ background: t.sub }}>
+                <th style={{ textAlign: "left", padding: "7px 10px", fontSize: 9, fontWeight: 700, color: t.lo, textTransform: "uppercase", letterSpacing: 0.2, minWidth: 80, position: "sticky", top: 0, background: t.sub }}>Tanggal</th>
+                <th style={{ textAlign: "left", padding: "7px 10px", fontSize: 9, fontWeight: 700, color: t.lo, textTransform: "uppercase", letterSpacing: 0.2, minWidth: 90, position: "sticky", top: 0, background: t.sub }}>Jenis</th>
+                <th style={{ textAlign: "left", padding: "7px 10px", fontSize: 9, fontWeight: 700, color: t.lo, textTransform: "uppercase", letterSpacing: 0.2, minWidth: 130, position: "sticky", top: 0, background: t.sub }}>Keterangan</th>
+                <th style={{ textAlign: "right", padding: "7px 10px", fontSize: 9, fontWeight: 700, color: t.lo, textTransform: "uppercase", letterSpacing: 0.2, minWidth: 100, position: "sticky", top: 0, background: t.sub }}>Nominal</th>
+                <th style={{ textAlign: "right", padding: "7px 10px", fontSize: 9, fontWeight: 700, color: t.lo, textTransform: "uppercase", letterSpacing: 0.2, minWidth: 80, position: "sticky", top: 0, background: t.sub }}>Aksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(arMonth && !showAllMonths ? monthItems : items).flatMap((it, itIdx) => {
+                const isExpanded = expandedIds.has(it.id);
+                const isPayingThis = payOpen && selectedId === it.id;
+                const zebra = itIdx % 2 === 1 ? t.sub : t.card;
+                const rows = [];
+                rows.push(
+                  <tr key={it.id} role="button" tabIndex={0} onClick={() => toggleExpand(it.id)}
+                    onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleExpand(it.id); } }}
+                    aria-expanded={isExpanded} style={{ cursor: "pointer", background: zebra, borderBottom: `1px solid ${t.line}` }}>
+                    <td style={{ padding: "8px 10px", verticalAlign: "top", fontSize: 11, fontWeight: 700, color: t.hi, whiteSpace: "nowrap" }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        {isExpanded ? <ChevronUp size={11} color={t.lo} /> : <ChevronDown size={11} color={t.lo} />}
+                        {fmtDayMonth(it.tanggal_transaksi)}
+                      </span>
+                    </td>
+                    <td style={{ padding: "8px 10px", verticalAlign: "top", fontSize: 10.5, fontWeight: 800, color: t.red, whiteSpace: "nowrap" }}>Piutang Baru</td>
+                    <td style={{ padding: "8px 10px", verticalAlign: "top", fontSize: 11, fontWeight: 700, color: t.hi }}>
+                      {it.catatan || "-"}
+                      <div style={{ fontSize: 9.5, color: t.lo, marginTop: 2, display: "flex", alignItems: "center", gap: 3, fontWeight: 600 }}><Clock size={9} /> Jatuh Tempo {fmtDayMonth(it.jatuh_tempo)}</div>
+                    </td>
+                    <td style={{ padding: "8px 10px", verticalAlign: "top", textAlign: "right", whiteSpace: "nowrap" }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 800, color: t.hi, fontVariantNumeric: "tabular-nums" }}>Rp {fmtID(it.total)}</div>
+                      <div style={{ fontSize: 9.5, fontWeight: 600, marginTop: 2, color: it.lunas ? t.teal : t.red, fontVariantNumeric: "tabular-nums" }}>{it.lunas ? "Lunas" : `Sisa Rp ${fmtID(it.belumDibayar)}`}</div>
+                    </td>
+                    <td style={{ padding: "8px 10px", verticalAlign: "top", textAlign: "right", whiteSpace: "nowrap" }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }} onClick={(ev) => ev.stopPropagation()}>
+                        <ArStatusPill t={t} lunas={it.lunas} />
+                        <button type="button" onClick={(ev) => { ev.stopPropagation(); openDetail(it); setTimeout(() => startEditItem(it), 0); }} title="Edit transaksi"
+                          style={{ width: 22, height: 22, borderRadius: 6, border: "none", background: t.card, color: t.teal, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          <Pencil size={10} />
+                        </button>
+                        <button type="button" onClick={(ev) => { ev.stopPropagation(); setDeleteTarget({ kind: "item", item: it }); }} title="Hapus transaksi"
+                          style={{ width: 22, height: 22, borderRadius: 6, border: "none", background: t.card, color: t.red, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          <Trash2 size={10} />
+                        </button>
+                      </span>
+                    </td>
+                  </tr>
+                );
+                if (isExpanded) {
+                  if (it.payments.length === 0) {
+                    rows.push(
+                      <tr key={it.id + "-empty"} style={{ background: zebra, borderBottom: `1px solid ${t.line}` }}>
+                        <td colSpan={5} style={{ padding: 12, textAlign: "center", color: t.lo, fontSize: 11 }}>Belum ada pembayaran.</td>
+                      </tr>
+                    );
+                  } else {
+                    rows.push(...it.payments.map((p) => paymentRow(it, p, true)));
+                  }
+                  rows.push(
+                    <tr key={it.id + "-actions"} style={{ background: zebra, borderBottom: `1px solid ${t.line}` }}>
+                      <td colSpan={5} style={{ padding: "10px 10px 12px" }}>
+                        {!it.lunas && isPayingThis && (
+                          <div style={{ padding: 11, borderRadius: 10, border: `1px solid ${t.line}`, background: t.sub }}>
+                            <div style={labelStyle}>Jumlah Bayar</div>
+                            <MoneyInput t={t} value={payNominal} onChange={setPayNominal} accent={t.teal} prefix="Rp" />
+                            <div style={{ marginTop: 8 }}>
+                              <div style={labelStyle}>Tanggal Bayar</div>
+                              <input type="date" onClick={(ev) => { if (!ev.currentTarget.disabled) ev.currentTarget.showPicker?.(); }} value={payTanggal} onChange={(ev) => setPayTanggal(ev.target.value)}
+                                style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12.5, fontWeight: 600, fontFamily: FONT, outline: "none", boxSizing: "border-box" }} />
+                            </div>
+                            <div style={{ marginTop: 8 }}>
+                              <div style={labelStyle}>Keterangan</div>
+                              <textarea value={payKeterangan} onChange={(ev) => { setPayKeterangan(ev.target.value.toUpperCase()); if (payKeteranganErr) setPayKeteranganErr(false); }} rows={2} maxLength={100} placeholder="cth. TRANSFER BCA, TUNAI, DLL"
+                                style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: `1px solid ${payKeteranganErr ? t.red : t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12.5, fontWeight: 600, fontFamily: FONT, outline: "none", boxSizing: "border-box", resize: "vertical" }} />
+                              {payKeteranganErr && <div style={{ fontSize: 10.5, color: t.red, marginTop: 3, fontWeight: 600 }}>Keterangan pembayaran wajib diisi.</div>}
+                            </div>
+                            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                              <button type="button" onClick={() => setPayOpen(false)} style={{ flex: 1, height: 32, borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>Batal</button>
+                              <button type="button" onClick={() => confirmPayment(it, payNominal, payTanggal, payKeterangan)} disabled={busy} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, height: 32, borderRadius: 8, border: "none", background: t.teal, color: "#fff", fontSize: 11.5, fontWeight: 700, cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
+                                {busy ? <Loader2 size={12} className="spin" /> : <Save size={12} />} Simpan
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                }
+                return rows;
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* UPDATE (permintaan user - "buat lebih lebar... jadi 1 tabel baru
+          dibawahnya ada 2 button, Lakukan pembayaran atau Tambah Piutang
+          Baru"): tombol aksi utama dipindah dari ATAS tabel (sebelumnya
+          user harus scroll lewat tombol dulu baru ketemu tabel) ke BAWAH
+          tabel - urutan baca jadi "lihat dulu riwayat/piutang yg ada, baru
+          ambil aksi" (konsisten sama pola umum pembukuan: data dulu, aksi
+          nyusul). Label juga diperjelas jadi kalimat aksi penuh ("Lakukan
+          Pembayaran"/"Tambah Piutang Baru") drpd label singkat sebelumnya. */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
+        <div style={{ display: "flex", gap: 8 }}>
+          {unpaidItemsSorted.length > 0 && (
+            <button type="button" onClick={openPayEntry} disabled={busy} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, height: 38, borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 12, fontWeight: 700, cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
+              <CircleDollarSign size={13} /> Lakukan Pembayaran{unpaidItemsSorted.length > 1 ? ` (${unpaidItemsSorted.length})` : ""}
+            </button>
+          )}
+          <button type="button" onClick={openCreate} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, height: 38, borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+            <Plus size={13} color={t.teal} /> Tambah Piutang Baru
+          </button>
+        </div>
+      </div>
+
+      {false && (
+        <button type="button" onClick={loadLegacy} style={{ width: "100%", marginTop: 10, background: "none", border: "none", color: t.lo, fontSize: 10.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: 4 }}>
+          <History size={11} /> Riwayat Lama (Ledger)
+        </button>
+      )}
+    </>
+  );
+
+  const createView = (
+    <>
+      <button type="button" onClick={() => setView("list")} style={{ background: "none", border: "none", color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, marginBottom: 10, padding: 0 }}>
+        <ChevronLeft size={13} /> Kembali
+      </button>
+      <div style={{ fontSize: 14, fontWeight: 800, color: t.hi, marginBottom: 12, display: "flex", alignItems: "center", gap: 7 }}><Plus size={14} color={t.red} /> Piutang Baru</div>
+
+      <div style={labelStyle}>Jumlah Piutang</div>
+      <MoneyInput t={t} value={cTotal} onChange={setCTotal} accent={t.red} big prefix="Rp" />
+
+      <div style={{ marginTop: 12 }}>
+        <div style={labelStyle}>Jatuh Tempo</div>
+        <input type="date" onClick={(ev) => { if (!ev.currentTarget.disabled) ev.currentTarget.showPicker?.(); }} value={cJatuhTempo} onChange={(ev) => setCJatuhTempo(ev.target.value)}
+          style={{ width: "100%", padding: "8px 10px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13, fontWeight: 600, fontFamily: FONT, outline: "none", boxSizing: "border-box" }} />
+      </div>
+
+      <div style={{ marginTop: 12 }}>
+        <div style={labelStyle}>Keterangan Piutang (wajib)</div>
+        <textarea value={cCatatan} onChange={(ev) => { setCCatatan(ev.target.value.toUpperCase()); if (cCatatanErr) setCCatatanErr(false); }}
+          placeholder="Keterangan piutang baru..." rows={2} maxLength={100}
+          style={{ width: "100%", padding: "8px 10px", borderRadius: 9, border: `1px solid ${cCatatanErr ? t.red : t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13, fontWeight: 600, fontFamily: FONT, outline: "none", boxSizing: "border-box", resize: "vertical" }} />
+        <div style={{ fontSize: 10, color: t.lo, marginTop: 3, textAlign: "right" }}>{cCatatan.length}/100</div>
+        {cCatatanErr && <div style={{ fontSize: 10.5, color: t.red, marginTop: 3, fontWeight: 600 }}>Keterangan piutang wajib diisi.</div>}
+      </div>
+
+      {actionErr && <div style={{ marginTop: 10, fontSize: 11, fontWeight: 600, color: t.red }}>{actionErr}</div>}
+
+      <div style={{ display: "flex", gap: 8, marginTop: 16, paddingTop: 14, borderTop: `1px dashed ${t.line}` }}>
+        <button type="button" onClick={() => setView("list")} style={{ flex: 1, height: 38, borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>Batal</button>
+        <button type="button" onClick={confirmCreate} disabled={saving || busy} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, height: 38, borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: (saving || busy) ? "default" : "pointer", opacity: (saving || busy) ? 0.6 : 1 }}>
+          {(saving || busy) ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Simpan
+        </button>
+      </div>
+    </>
+  );
+
+  // UPDATE: diubah dari `const paymentRow = (item, p) => {...}` jadi
+  // function declaration (hoisted) - supaya bisa dipanggil dari `listView`
+  // (Riwayat Pembayaran sekarang dirender LANGSUNG di list, lihat komentar
+  // `expandedIds`) walau secara urutan baris listView ada SEBELUM
+  // deklarasi ini di source.
+  // UPDATE (permintaan user - "lognya buat dalam bentuk tabel saja"):
+  // Riwayat Pembayaran per item dulu dirender sbg KARTU bertumpuk (tiap
+  // pembayaran = 1 kotak dgn border+background sendiri) - buat log yg
+  // isinya bisa banyak baris, itu makan tempat vertikal banyak & susah
+  // di-scan sbg DERETAN angka (harus baca per-kartu, ga bisa bandingin
+  // kolom sejajar). Diganti jadi baris <tr> tabel beneran (dipakai bareng
+  // <table>/<thead> di 2 tempat pemanggilnya, lihat UPDATE di situ) - 4
+  // kolom: Tanggal (+ konteks kecil diterima oleh/no transaksi/diedit di
+  // bawahnya), Nominal, Sisa Setelah Ini, Aksi. Mode EDIT tetap pakai
+  // form penuh yg sama persis (MoneyInput+date) - cuma dibungkus <td
+  // colSpan=4> biar forms-nya tetap lega, ga dipaksa muat di 1 sel kolom
+  // sempit.
+  // UPDATE (permintaan user - "lebih mudah dipahami jika seperti laporan
+  // tunggakannya"): fungsi ini sekarang dipakai di 2 KONTEKS tabel
+  // berbeda - tabel ringkas 3-kolom (Tanggal/Nominal/Aksi) di
+  // `detailView` (fokus 1 transaksi, kolom Jenis/Keterangan redundan krn
+  // konteksnya udah jelas dari halaman detail), & tabel gabungan
+  // report-style 5-kolom (Tanggal/Jenis/Keterangan/Nominal/Aksi) di
+  // `listView` yg digabung bareng baris "Piutang Baru"-nya (match persis
+  // struktur ArReportDoc). Parameter `withTypeCol` yg nentuin mode mana.
+  function paymentRow(item, p, withTypeCol = false) {
+    const isEditing = editPayId === p.id;
+    // "Belum Dibayar" SETELAH pembayaran ini, dihitung berdasar urutan
+    // pembayaran yg sudah terurut tanggal (riwayat kumulatif).
+    const idx = item.payments.findIndex((x) => x.id === p.id);
+    const paidUpToHere = item.payments.slice(0, idx + 1).reduce((s, x) => s + fRaw(x.nominal), 0);
+    const sisaSetelahIni = Math.max(0, fRaw(item.total) - paidUpToHere);
+    if (isEditing) {
+      return (
+        <tr key={p.id}>
+          <td colSpan={withTypeCol ? 5 : 3} style={{ padding: "10px 12px", background: t.sub }}>
+            <div style={labelStyle}>Ubah Jumlah Bayar</div>
+            <MoneyInput t={t} value={editNominal} onChange={setEditNominal} accent={t.teal} prefix="Rp" />
+            <div style={{ marginTop: 8 }}>
+              <div style={labelStyle}>Tanggal Bayar</div>
+              <input type="date" onClick={(ev) => { if (!ev.currentTarget.disabled) ev.currentTarget.showPicker?.(); }} value={editTanggal} onChange={(ev) => setEditTanggal(ev.target.value)}
+                style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12.5, fontWeight: 600, fontFamily: FONT, outline: "none", boxSizing: "border-box" }} />
+            </div>
+            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+              <button type="button" onClick={cancelEditPayment} style={{ flex: 1, height: 32, borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>Batal</button>
+              <button type="button" onClick={() => confirmEditPayment(item, p)} disabled={busy} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, height: 32, borderRadius: 8, border: "none", background: t.teal, color: "#fff", fontSize: 11.5, fontWeight: 700, cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
+                {busy ? <Loader2 size={12} className="spin" /> : <Save size={12} />} Simpan
+              </button>
+            </div>
+          </td>
+        </tr>
+      );
+    }
+    // UPDATE (permintaan user - "buat dalam bentuk tabel yang lebih
+    // mudah dilihat dan dipahami"): versi tabel 4-kolom sebelumnya masih
+    // SEMPIT di layar HP - kolom Tanggal kepaksa nampung 3 baris info
+    // (tanggal + nama penerima + no. transaksi panjang) yg bikin teksnya
+    // kepotong/wrap jelek, sementara kolom Nominal & Sisa jadi rebutan
+    // sisa ruang yg tinggal dikit. Disederhanakan jadi 3 kolom: TANGGAL
+    // (cuma tanggal + nama penerima, ringkas), NOMINAL (angka pembayaran
+    // BESAR sbg fokus utama, dgn "Sisa Rp X" kecil di bawahnya - bukan
+    // kolom terpisah lagi, krn ke-2 nya terkait ERAT & lebih enak dibaca
+    // bertumpuk drpd berebut kolom), AKSI. No. transaksi & status "diedit"
+    // ga dihapus infonya - dipindah jadi tombol/ikon kecil di kolom Aksi
+    // (title tooltip nampilin detail lengkapnya saat di-hover/tap-hold),
+    // bukan teks panjang yg numpuk & bikin baris tabel jadi 2 baris.
+    return (
+      <tr key={p.id} style={{ borderBottom: `1px solid ${t.line}` }}>
+        <td style={{ padding: "9px 10px", verticalAlign: "top" }}>
+          <div style={{ fontSize: 11.5, fontWeight: 700, color: t.hi, whiteSpace: "nowrap" }}>{fmtDayMonth(p.tanggal_pembayaran)}</div>
+          {!withTypeCol && <div style={{ fontSize: 9.5, color: t.lo, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.created_by_name || "-"}</div>}
+        </td>
+        {withTypeCol && (
+          <td style={{ padding: "9px 10px", verticalAlign: "top", fontSize: 10.5, fontWeight: 800, color: t.teal, whiteSpace: "nowrap" }}>{`Pembayaran ke-${idx + 1}`}</td>
+        )}
+        {withTypeCol && (
+          <td style={{ padding: "9px 10px", verticalAlign: "top", fontSize: 10.5, fontWeight: 600, color: t.mid }}>
+            Diterima oleh {p.created_by_name || "-"}
+            {p.edited_at && <span style={{ fontStyle: "italic", color: t.lo }}> · diedit</span>}
+          </td>
+        )}
+        <td style={{ padding: "9px 10px", textAlign: "right", verticalAlign: "top", whiteSpace: "nowrap" }}>
+          <div style={{ fontSize: 12.5, fontWeight: 800, color: t.teal, fontVariantNumeric: "tabular-nums" }}>+Rp {fmtID(p.nominal)}</div>
+        </td>
+        {/* FIX: sama kayak Edit/Hapus item di atas - dibebaskan dari gate
+            `!readOnly` (yg SELALU true di tab AR). Edit/Hapus SATU baris
+            pembayaran bukan aksi "range tanggal". */}
+        <td style={{ padding: "9px 10px", textAlign: "right", verticalAlign: "top", whiteSpace: "nowrap" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <button type="button" title={`Salin No. Transaksi: ${p.no_transaksi}`} onClick={() => copyNoTransaksi(p.no_transaksi)}
+              style={{ width: 22, height: 22, borderRadius: 6, border: "none", background: t.sub, color: t.lo, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Copy size={10} />
+            </button>
+            <button type="button" onClick={() => startEditPayment(p)} title="Edit pembayaran"
+              style={{ width: 22, height: 22, borderRadius: 6, border: "none", background: t.sub, color: t.teal, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Pencil size={10} />
+            </button>
+            <button type="button" onClick={() => setDeleteTarget({ kind: "payment", item, payment: p })} title="Hapus pembayaran"
+              style={{ width: 22, height: 22, borderRadius: 6, border: "none", background: t.sub, color: t.red, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Trash2 size={10} />
+            </button>
+          </span>
+          {!withTypeCol && p.edited_at && <div title={`Diubah oleh ${p.edited_by_name || "-"}`} style={{ fontSize: 8.5, color: t.lo, fontStyle: "italic", marginTop: 3 }}>diedit</div>}
+        </td>
+      </tr>
+    );
+  }
+
+  const detailView = selectedItem && (
+    <>
+      <button type="button" onClick={() => setView("list")} style={{ background: "none", border: "none", color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, marginBottom: 10, padding: 0 }}>
+        <ChevronLeft size={13} /> Kembali
+      </button>
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 8 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: t.hi }}>Detail Piutang — {dseName || dseCode}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          <ArStatusPill t={t} lunas={selectedItem.lunas} />
+          {/* FIX: sama kayak di atas - dibebaskan dari gate `!readOnly`. */}
+          {!editItemOpen && (
+            <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <button type="button" title="Edit Piutang" onClick={() => startEditItem(selectedItem)} style={{ background: "none", border: "none", color: t.teal, cursor: "pointer", display: "flex" }}><Pencil size={13} /></button>
+              <button type="button" title="Hapus Piutang" onClick={() => setDeleteTarget({ kind: "item", item: selectedItem })} style={{ background: "none", border: "none", color: t.red, cursor: "pointer", display: "flex" }}><Trash2 size={13} /></button>
+            </span>
+          )}
+        </div>
+      </div>
+
+      {editItemOpen ? (
+        <div style={{ padding: 12, borderRadius: 10, border: `1px solid ${t.teal}`, marginBottom: 12 }}>
+          <div style={labelStyle}>Jumlah Piutang</div>
+          <MoneyInput t={t} value={editItemTotal} onChange={setEditItemTotal} accent={t.red} prefix="Rp" />
+          {fRaw(editItemTotal) < selectedItem.paid && (
+            <div style={{ marginTop: 6, fontSize: 10.5, color: t.amber, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
+              <AlertTriangle size={10} /> Jumlah baru lebih kecil dari yg sudah dibayar (Rp {fmtID(selectedItem.paid)}).
+            </div>
+          )}
+          <div style={{ marginTop: 8 }}>
+            <div style={labelStyle}>Jatuh Tempo</div>
+            <input type="date" onClick={(ev) => { if (!ev.currentTarget.disabled) ev.currentTarget.showPicker?.(); }} value={editItemJatuhTempo} onChange={(ev) => setEditItemJatuhTempo(ev.target.value)}
+              style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12.5, fontWeight: 600, fontFamily: FONT, outline: "none", boxSizing: "border-box" }} />
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <div style={labelStyle}>Catatan</div>
+            <textarea value={editItemCatatan} onChange={(ev) => setEditItemCatatan(ev.target.value.toUpperCase())} rows={2} maxLength={100}
+              style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12.5, fontWeight: 600, fontFamily: FONT, outline: "none", boxSizing: "border-box", resize: "vertical" }} />
+          </div>
+          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+            <button type="button" onClick={cancelEditItem} style={{ flex: 1, height: 32, borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>Batal</button>
+            <button type="button" onClick={() => confirmEditItem(selectedItem)} disabled={busy} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, height: 32, borderRadius: 8, border: "none", background: t.teal, color: "#fff", fontSize: 11.5, fontWeight: 700, cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
+              {busy ? <Loader2 size={12} className="spin" /> : <Save size={12} />} Simpan
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
+          <div style={{ padding: "9px 11px", borderRadius: 10, background: t.sub }}>
+            <div style={labelStyle}>Tanggal Transaksi</div>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>{fmtDayMonth(selectedItem.tanggal_transaksi)}</div>
+          </div>
+          <div style={{ padding: "9px 11px", borderRadius: 10, background: t.sub }}>
+            <div style={labelStyle}>Jatuh Tempo</div>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: t.hi, display: "flex", alignItems: "center", gap: 4 }}><Clock size={11} /> {fmtDayMonth(selectedItem.jatuh_tempo)}</div>
+          </div>
+          <div style={{ padding: "9px 11px", borderRadius: 10, background: t.sub }}>
+            <div style={labelStyle}>Total</div>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>Rp {fmtID(selectedItem.total)}</div>
+          </div>
+          <div style={{ padding: "9px 11px", borderRadius: 10, background: t.sub }}>
+            <div style={labelStyle}>Belum Dibayar</div>
+            <div style={{ fontSize: 12.5, fontWeight: 800, color: selectedItem.lunas ? t.teal : t.red }}>Rp {fmtID(selectedItem.belumDibayar)}</div>
+          </div>
+        </div>
+      )}
+
+      {!editItemOpen && selectedItem.catatan && <div style={{ fontSize: 11.5, color: t.mid, marginBottom: 12, lineHeight: 1.4 }}>{selectedItem.catatan}</div>}
+
+      {!payOpen && actionErr && <div style={{ marginBottom: 10, fontSize: 11, fontWeight: 600, color: t.red }}>{actionErr}</div>}
+
+      <div style={{ fontSize: 11.5, fontWeight: 800, color: t.hi, marginBottom: 8, display: "flex", alignItems: "center", gap: 5 }}>
+        <History size={12} /> Riwayat Pembayaran
+      </div>
+
+      {selectedItem.payments.length === 0 ? (
+        <div style={{ padding: 16, textAlign: "center", color: t.lo, fontSize: 12, background: t.sub, borderRadius: 10 }}>Belum ada pembayaran.</div>
+      ) : (
+        <div style={{ borderRadius: 10, border: `1px solid ${t.line}`, overflow: "hidden", maxHeight: inline ? "none" : "40vh", overflowY: inline ? "visible" : "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ background: t.sub }}>
+                <th style={{ textAlign: "left", padding: "7px 10px", fontSize: 9.5, fontWeight: 700, color: t.lo, textTransform: "uppercase", letterSpacing: 0.2, position: "sticky", top: 0, background: t.sub }}>Tanggal</th>
+                <th style={{ textAlign: "right", padding: "7px 10px", fontSize: 9.5, fontWeight: 700, color: t.lo, textTransform: "uppercase", letterSpacing: 0.2, position: "sticky", top: 0, background: t.sub }}>Nominal</th>
+                <th style={{ textAlign: "right", padding: "7px 10px", fontSize: 9.5, fontWeight: 700, color: t.lo, textTransform: "uppercase", letterSpacing: 0.2, position: "sticky", top: 0, background: t.sub }}>Aksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {selectedItem.payments.map((p) => paymentRow(selectedItem, p))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* FIX: sama kelas bug - form "Pembayaran" di detail view juga
+          dibebaskan dari gate !readOnly. */}
+      {!selectedItem.lunas && (
+        payOpen ? (
+          <div style={{ marginTop: 12, padding: 12, borderRadius: 10, border: `1px solid ${t.line}` }}>
+            <div style={labelStyle}>Jumlah Bayar</div>
+            <MoneyInput t={t} value={payNominal} onChange={setPayNominal} accent={t.teal} big prefix="Rp" />
+            <div style={{ marginTop: 8 }}>
+              <div style={labelStyle}>Tanggal Bayar</div>
+              <input type="date" onClick={(ev) => { if (!ev.currentTarget.disabled) ev.currentTarget.showPicker?.(); }} value={payTanggal} onChange={(ev) => setPayTanggal(ev.target.value)}
+                style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12.5, fontWeight: 600, fontFamily: FONT, outline: "none", boxSizing: "border-box" }} />
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <div style={labelStyle}>Keterangan</div>
+              <textarea value={payKeterangan} onChange={(ev) => { setPayKeterangan(ev.target.value.toUpperCase()); if (payKeteranganErr) setPayKeteranganErr(false); }} rows={2} maxLength={100} placeholder="cth. TRANSFER BCA, TUNAI, DLL"
+                style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: `1px solid ${payKeteranganErr ? t.red : t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12.5, fontWeight: 600, fontFamily: FONT, outline: "none", boxSizing: "border-box", resize: "vertical" }} />
+              {payKeteranganErr && <div style={{ fontSize: 10.5, color: t.red, marginTop: 3, fontWeight: 600 }}>Keterangan pembayaran wajib diisi.</div>}
+            </div>
+            {actionErr && <div style={{ marginTop: 8, fontSize: 11, fontWeight: 600, color: t.red }}>{actionErr}</div>}
+            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+              <button type="button" onClick={() => setPayOpen(false)} style={{ flex: 1, height: 36, borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Batal</button>
+              <button type="button" onClick={() => confirmPayment(selectedItem, payNominal, payTanggal, payKeterangan)} disabled={busy} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, height: 36, borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 12, fontWeight: 700, cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
+                {busy ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Simpan
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button type="button" onClick={() => { setPayNominal(0); setPayTanggal(entryDate); setPayKeterangan(""); setPayKeteranganErr(false); setPayOpen(true); }} style={{ width: "100%", marginTop: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, height: 38, borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+            <CircleDollarSign size={13} /> Pembayaran
+          </button>
+        )
+      )}
+    </>
+  );
+
+  // Picker "pilih item yg mau dibayar" - entry point BARU (openPayEntry)
+  // untuk kasus DSE punya 2+ item piutang belum lunas. Alokasi tetap MANUAL
+  // (user yg klik item mana), tapi list ini disusun utk membantu keputusan:
+  // diurutkan jatuh tempo TERDEKAT dulu (nudge visual ke urgensi, tanpa
+  // memaksa FIFO), + badge TERLAMBAT/merah, segera/amber, aman/netral, +
+  // nominal belum dibayar & catatan supaya user bisa bandingkan antar item
+  // tanpa harus buka detail satu-satu dulu.
+  const pickerView = (
+    <>
+      <button type="button" onClick={() => setView("list")} style={{ background: "none", border: "none", color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, marginBottom: 10, padding: 0 }}>
+        <ChevronLeft size={13} /> Kembali
+      </button>
+      <div style={{ fontSize: 14, fontWeight: 800, color: t.hi, marginBottom: 4, display: "flex", alignItems: "center", gap: 7 }}>
+        <CircleDollarSign size={14} color={t.teal} /> Pilih Piutang yang Dibayar
+      </div>
+      <div style={{ fontSize: 11.5, color: t.lo, marginBottom: 12, lineHeight: 1.4 }}>
+        {dseName ? `${dseName} — ` : ""}{unpaidItemsSorted.length} transaksi belum lunas, diurutkan dari jatuh tempo paling mendesak.
+      </div>
+
+      {unpaidItemsSorted.length > 1 && (
+        <div style={{ fontSize: 9.5, fontWeight: 800, color: t.lo, letterSpacing: 0.3, marginBottom: 7 }}>PILIH SALAH SATU CARA BAYAR</div>
+      )}
+
+      {/* Opsi tambahan (permintaan user): kalau DSE bayar 1 nominal gabungan
+          yg nutup lebih dari 1 piutang sekaligus (cth piutang A 500rb +
+          piutang B 300rb, lalu bayar 600rb), ga perlu pilih 1 item & input
+          manual berkali-kali - masukkan total bayarnya di sini, sistem
+          otomatis bagi ke piutang TERTUA dulu (lihat komentar
+          unpaidItemsByAge). Picker manual di bawah tetap ada & tetap jadi
+          cara default (sesuai preferensi user sebelumnya). */}
+      {unpaidItemsSorted.length > 1 && (
+        <div style={{ marginBottom: 14, borderRadius: 10, border: `1.5px solid ${t.teal}55`, background: `${t.teal}0d`, overflow: "hidden" }}>
+          <button type="button" onClick={() => setAutoPayOpen((v) => !v)}
+            style={{ width: "100%", textAlign: "left", padding: "11px 12px", background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 800, color: t.hi }}>
+              <span style={{ fontSize: 8.5, fontWeight: 800, color: t.teal, background: `${t.teal}1a`, borderRadius: 5, padding: "2px 6px", letterSpacing: 0.2, whiteSpace: "nowrap" }}>OPSI 1</span>
+              <CircleDollarSign size={13} color={t.teal} /> Bayar Gabungan (Alokasi Otomatis)
+            </span>
+            {autoPayOpen ? <ChevronLeft size={13} style={{ transform: "rotate(-90deg)" }} color={t.mid} /> : <ChevronRight size={13} style={{ transform: "rotate(90deg)" }} color={t.mid} />}
+          </button>
+          {!autoPayOpen && (
+            <div style={{ padding: "0 12px 11px", fontSize: 10.5, color: t.mid, lineHeight: 1.4 }}>
+              Satu nominal, otomatis dibagi ke piutang paling lama (tertua) dulu. Cocok kalau DSE bayar sekaligus untuk beberapa transaksi.
+            </div>
+          )}
+          {autoPayOpen && (
+            <div style={{ padding: "0 12px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", gap: 8 }}>
+                <label style={{ flex: 1.3, display: "flex", flexDirection: "column", gap: 3 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: t.mid }}>Total Dibayar</span>
+                  <MoneyInput t={t} value={autoPayNominal} onChange={setAutoPayNominal} accent={t.teal} prefix="Rp" />
+                </label>
+                <label style={{ flex: 1, display: "flex", flexDirection: "column", gap: 3 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: t.mid }}>Tanggal Bayar</span>
+                  <input type="date" onClick={(ev) => { if (!ev.currentTarget.disabled) ev.currentTarget.showPicker?.(); }} value={autoPayTanggal || entryDate} onChange={(ev) => setAutoPayTanggal(ev.target.value)}
+                    style={{ height: 34, borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12, fontWeight: 600, padding: "0 8px", fontFamily: FONT }} />
+                </label>
+              </div>
+
+              {fRaw(autoPayNominal) > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "8px 9px", borderRadius: 8, background: t.sub, border: `1px solid ${t.line}` }}>
+                  {autoAllocationPreview.alokasi.map(({ item: it, bagian }) => (
+                    <div key={it.id} style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, fontSize: 10.5 }}>
+                      <span style={{ color: bagian > 0 ? t.mid : t.lo, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {fmtDayMonth(it.tanggal_transaksi)}{it.catatan ? ` · ${it.catatan}` : ""}
+                      </span>
+                      <span style={{ fontWeight: 700, color: bagian > 0 ? t.teal : t.lo, whiteSpace: "nowrap" }}>
+                        {bagian > 0 ? `Rp ${fmtID(bagian)}` : "—"}
+                      </span>
+                    </div>
+                  ))}
+                  {autoAllocationPreview.sisaTidakTerpakai > 0 && (
+                    <div style={{ marginTop: 2, paddingTop: 6, borderTop: `1px dashed ${t.line}`, fontSize: 10, fontWeight: 700, color: t.amber }}>
+                      Sisa Rp {fmtID(autoAllocationPreview.sisaTidakTerpakai)} melebihi total piutang belum lunas — tidak akan dipakai.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {actionErr && <div style={{ fontSize: 11, fontWeight: 600, color: t.red }}>{actionErr}</div>}
+
+              <button type="button" onClick={async () => { await confirmAutoAllocatePayment(autoPayNominal, autoPayTanggal); }} disabled={busy || fRaw(autoPayNominal) <= 0}
+                style={{ height: 36, borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 12, fontWeight: 700, cursor: (busy || fRaw(autoPayNominal) <= 0) ? "default" : "pointer", opacity: (busy || fRaw(autoPayNominal) <= 0) ? 0.6 : 1 }}>
+                Konfirmasi Alokasi Otomatis
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!autoPayOpen && actionErr && <div style={{ marginBottom: 10, fontSize: 11, fontWeight: 600, color: t.red }}>{actionErr}</div>}
+
+      {unpaidItemsSorted.length > 1 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "2px 0 10px" }}>
+          <div style={{ flex: 1, height: 1, background: t.line }} />
+          <span style={{ fontSize: 9.5, fontWeight: 800, color: t.lo, letterSpacing: 0.3, whiteSpace: "nowrap" }}>OPSI 2 — PILIH SATU TRANSAKSI</span>
+          <div style={{ flex: 1, height: 1, background: t.line }} />
+        </div>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: inline ? "none" : "55vh", overflowY: inline ? "visible" : "auto" }}>
+        {unpaidItemsSorted.map((it) => {
+          const todayIso = entryDate || new Date().toISOString().slice(0, 10);
+          const msPerDay = 86400000;
+          let daysDiff = null;
+          try { daysDiff = Math.round((new Date(it.jatuh_tempo + "T00:00:00") - new Date(todayIso + "T00:00:00")) / msPerDay); } catch { daysDiff = null; }
+          const isOverdue = daysDiff != null && daysDiff < 0;
+          const isSoon = daysDiff != null && daysDiff >= 0 && daysDiff <= 7;
+          const urgentColor = isOverdue ? t.red : isSoon ? t.amber : t.mid;
+          const urgentBg = isOverdue ? t.redBg : isSoon ? t.amberBg : t.sub;
+          const badgeLabel = daysDiff == null ? null : isOverdue ? `TERLAMBAT ${Math.abs(daysDiff)} HARI` : daysDiff === 0 ? "JATUH TEMPO HARI INI" : isSoon ? `${daysDiff} HARI LAGI` : `${daysDiff} HARI LAGI`;
+          return (
+            <button key={it.id} type="button" onClick={() => choosePayItem(it)}
+              style={{ textAlign: "left", padding: "11px 12px", borderRadius: 10, border: `1.5px solid ${isOverdue ? t.red : isSoon ? t.amber : t.line}`, background: t.sub, cursor: "pointer", transition: "transform 0.1s, box-shadow 0.1s" }}
+              onMouseEnter={(ev) => { ev.currentTarget.style.boxShadow = `0 0 0 2px ${isOverdue ? t.red : isSoon ? t.amber : t.teal}22`; }}
+              onMouseLeave={(ev) => { ev.currentTarget.style.boxShadow = "none"; }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                {badgeLabel && (
+                  <span style={{ fontSize: 9.5, fontWeight: 800, color: urgentColor, background: urgentBg, borderRadius: 6, padding: "3px 7px", display: "flex", alignItems: "center", gap: 3, whiteSpace: "nowrap" }}>
+                    <Clock size={9} /> {badgeLabel}
+                  </span>
+                )}
+                <span style={{ fontSize: 10, color: t.lo, fontWeight: 600, marginLeft: "auto", whiteSpace: "nowrap" }}>Dibuat {fmtDayMonth(it.tanggal_transaksi)}</span>
+              </div>
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginTop: 7, gap: 8 }}>
+                <span style={{ fontSize: 10.5, color: t.mid, display: "flex", alignItems: "center", gap: 3, whiteSpace: "nowrap" }}>
+                  <Clock size={10} /> Jatuh Tempo {fmtDayMonth(it.jatuh_tempo)}
+                </span>
+                <span style={{ fontSize: 14, fontWeight: 800, color: urgentColor, whiteSpace: "nowrap" }}>Rp {fmtID(it.belumDibayar)}</span>
+              </div>
+              {it.catatan && (
+                <div style={{ fontSize: 10.5, color: t.mid, marginTop: 5, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                  {it.catatan}
+                </div>
+              )}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4, marginTop: 7, color: t.teal, fontSize: 10.5, fontWeight: 700 }}>
+                Bayar Ini <ChevronRight size={12} />
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </>
+  );
+
+  const legacyView = (
+    <>
+      <button type="button" onClick={() => setView("list")} style={{ background: "none", border: "none", color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, marginBottom: 10, padding: 0 }}>
+        <ChevronLeft size={13} /> Kembali
+      </button>
+      <div style={{ fontSize: 12.5, color: t.lo, marginBottom: 10, lineHeight: 1.4 }}>
+        Ledger lama (sebelum per-transaksi) — tersimpan permanen, hanya utk referensi.
+      </div>
+      {legacyLoading ? (
+        <div style={{ padding: 20, textAlign: "center", color: t.lo, fontSize: 12 }}>Memuat...</div>
+      ) : legacyRows.length === 0 ? (
+        <div style={{ padding: 20, textAlign: "center", color: t.lo, fontSize: 12 }}>Tidak ada riwayat ledger lama.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: "50vh", overflowY: "auto" }}>
+          {legacyRows.map((r) => (
+            <div key={r.id} style={{ padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.line}`, background: t.sub }}>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 10.5, fontWeight: 700, color: t.mid }}>{r.jenis}</span>
+                <span style={{ fontSize: 10.5, color: t.lo }}>{fmtDayMonth(r.tanggal)}</span>
+              </div>
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: t.hi, marginTop: 4 }}>Rp {fmtID(r.nominal)}</div>
+              {r.catatan && <div style={{ fontSize: 11, color: t.mid, marginTop: 3 }}>{r.catatan}</div>}
+            </div>
+          ))}
         </div>
       )}
     </>
   );
-}
 
-// ── Satu baris DSE: identitas (Status/Nama/Join Date, editable, SELALU satu
-// per DSE) + SATU blok penjualan (SP/Voucher/Saldo + AR/Piutang). Kode DSE
-// IM3 & 3ID ditampilkan BERDAMPINGAN sbg identitas (bukan lagi 2 baris
-// penjualan terpisah per brand — permintaan user: "tidak perlu dipisah
-// untuk IM3 dan 3ID, kita akan mencatat amount penjualan per dse nya namun
-// tetap perlu dilampirkan untuk ID keduanya"). Dirender sbg baris <table>
-// di desktop, kartu di mobile (isCardView) — satu komponen, dua layout. ──
-function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChange, identityEdit, onSave, saving, dirty, prevOutstanding, audit, onShowHistory, readOnly, mode, rank, isToday, entryDate, onPickDate, periodMode, periodSubtitle, profile }) {
+  const formContent = view === "list" ? listView : view === "create" ? createView : view === "detail" ? detailView : view === "pay-picker" ? pickerView : legacyView;
+
+  return (
+    <>
+      {!inline && (
+        // UPDATE (permintaan user - keputusan UX: pisahkan "Sisa" jadi 2
+        // kolom - "Sisa Piutang" (nominal polos) & "Status" (pill
+        // Lunas/Belum Lunas + tombol buka modal, karena di situ user
+        // natural-nya klik utk kelola piutang yg belum lunas), tambah
+        // kolom "Jatuh Tempo" & "Keterangan" (transaksi belum lunas dgn
+        // jatuh tempo terdekat). Urutan final: Total Piutang, Total
+        // Dibayar, Sisa Piutang, Status, Jatuh Tempo, Keterangan - SATU
+        // tombol per baris (di kolom Status), bukan diduplikasi.
+        //
+        // UPDATE (permintaan user - "jika di hover apakah bisa menampilkan
+        // keterangan detailnya misal rincian piutang, rincian pembayaran,
+        // rincian jatuh tempo jika ada beberapa piutang"): kolom2 di bawah
+        // ini NILAI AGREGAT (total semua `items` per DSE) - kalau DSE punya
+        // >1 item piutang, angka agregat itu nyembunyiin rincian per item
+        // (jumlah masing2, tanggal jatuh tempo masing2, pembayaran
+        // masing2). Ditambahkan tooltip hover (onCellEnter/onCellLeave di
+        // bawah) yg nunjukin breakdown lengkap per item - CUMA kalau
+        // items.length > 1 (kalau cuma 1 item, angka agregat = angka item
+        // itu sendiri, tooltip jadi redundant, jadi di-skip - pola sama
+        // kyk unpaidItemsSorted.length <= 1 auto-skip di openPayEntry).
+        // Dibuat CSS/JS-hover ringan (bukan nambah state per-row di parent
+        // list), posisinya pakai createPortal ke document.body + "fixed"
+        // dari getBoundingClientRect sel yg dihover - PERSIS pola yg sama
+        // dgn RankMetricMenu/categoryMenuPortal (lihat komentar di atasnya)
+        // - supaya TIDAK ketutup/kepotong overflow-x:auto container tabel
+        // atau ketindihan kolom Aksi yg position:sticky. pointerEvents:
+        // "none" di card tooltip supaya murni informatif, ga ganggu klik
+        // apapun di baris (termasuk ga nge-trigger buka modal Edit AR).
+        <>
+          {/* UPDATE (permintaan user - "kalo loading tunjukkan bahwa
+              loading"): ke-4 kolom AR ini (Total Piutang/Total Dibayar/
+              Sisa Piutang/Status) dihitung dari `items` yg di-fetch
+              SENDIRI per baris (lihat setItemsLoading di atas) - SELAMA
+              fetch itu belum selesai, `items` masih array kosong, jadi
+              angka2 ini keliatan "Rp 0" & status "LUNAS" padahal cuma
+              BELUM KETAHUAN, bukan beneran lunas - menyesatkan kalau
+              dibiarkan diam2 seolah data final. Sekarang selama
+              `itemsLoading`, ke-4 kolom ini diganti skeleton pulsing
+              (NumSkeleton, pola sama kyk StatTile ringkasan atas) biar
+              user jelas lihat "masih dimuat", bukan baca angka final yg
+              keliru. */}
+          {/* UPDATE (permintaan user - "rapikan untuk ar ini, buat sangat
+              bagus, dan utk kolom yg free buat berbeda sendiri"): grup
+              kolom AR (Total Piutang..Keterangan) dipoles total -
+              background grup dikasih tint abu sangat tipis (`t.sub`)
+              biar KETERLIHATAN sbg 1 grup terpisah dari kolom identitas
+              DSE di kiri (border pemisah tegas tetap ada), angka
+              Total Piutang/Dibayar jadi tabular-nums biar rata digit.
+              Status "bebas piutang" (DSE yg emang GA PERNAH punya
+              transaksi, `!hasAr`) dikasih badge NETRAL abu2 "Bebas"
+              (bukan hijau "LUNAS" yg nyiratnya "lunas krn dibayar") +
+              angka2 di baris itu didimkan (t.lo, bukan warna tegas)
+              supaya baris yg emang ga ada aktivitas piutang keliatan
+              beda sekilas dari baris yg ADA riwayat piutang (baik yg
+              masih belum lunas maupun yg udah lunas dibayar). */}
+          <td onClick={(ev) => ev.stopPropagation()} onMouseEnter={(ev) => onCellEnter(ev, "piutang")} onMouseLeave={onCellLeave} style={{ padding: "10px 12px", minWidth: 110, textAlign: "right", borderLeft: `2px solid ${t.line}`, background: t.sub, cursor: "default", fontWeight: 700, color: hasAr ? t.hi : t.lo, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", transition: "filter 0.12s, box-shadow 0.12s" }}>
+            {itemsLoading ? <NumSkeleton t={t} width={64} height={14} /> : <>Rp {fmtID(totalUtang)}</>}
+          </td>
+          <td onClick={(ev) => ev.stopPropagation()} onMouseEnter={(ev) => onCellEnter(ev, "dibayar")} onMouseLeave={onCellLeave} style={{ padding: "10px 12px", minWidth: 110, textAlign: "right", background: t.sub, cursor: "default", fontWeight: 700, color: hasAr ? t.teal : t.lo, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", transition: "filter 0.12s, box-shadow 0.12s" }}>
+            {itemsLoading ? <NumSkeleton t={t} width={64} height={14} /> : <>Rp {fmtID(totalBayar)}</>}
+          </td>
+          <td onClick={(ev) => ev.stopPropagation()} onMouseEnter={(ev) => onCellEnter(ev, "sisa")} onMouseLeave={onCellLeave} style={{ padding: "10px 12px", minWidth: 110, textAlign: "right", background: t.sub, cursor: "default", fontWeight: 700, color: !hasAr ? t.lo : lunasCurrent ? t.teal : t.red, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", transition: "filter 0.12s, box-shadow 0.12s" }}>
+            {/* FIX: pakai totalPiutang (live, dari items) - bukan prop
+                `outstanding` yg SELALU 0 di tab AR (lihat komentar di
+                `lunasCurrent` di atas). */}
+            {itemsLoading ? <NumSkeleton t={t} width={64} height={14} /> : <>Rp {fmtID(totalPiutang)}</>}
+          </td>
+          <td onClick={(ev) => ev.stopPropagation()} onMouseEnter={(ev) => onCellEnter(ev, "sisa")} onMouseLeave={onCellLeave} style={{ padding: "10px 12px", minWidth: 118, background: t.sub, cursor: "default", transition: "filter 0.12s, box-shadow 0.12s" }}>
+            {itemsLoading ? <NumSkeleton t={t} width={78} height={18} /> : !hasAr ? (
+              <span style={{ fontSize: 10, fontWeight: 800, color: t.lo, background: t.inputBg, border: `1px solid ${t.inputBd}`, borderRadius: 6, padding: "3px 8px", display: "flex", alignItems: "center", gap: 3, whiteSpace: "nowrap", width: "fit-content" }}>
+                <Minus size={9} /> BEBAS
+              </span>
+            ) : (
+              <span style={{ fontSize: 10, fontWeight: 800, color: lunasCurrent ? t.teal : t.red, background: lunasCurrent ? t.tealBg : t.redBg, borderRadius: 6, padding: "3px 8px", display: "flex", alignItems: "center", gap: 3, whiteSpace: "nowrap", width: "fit-content" }}>
+                {lunasCurrent && <Check size={9} />} {lunasCurrent ? "LUNAS" : "BELUM LUNAS"}
+              </span>
+            )}
+          </td>
+          <td onClick={(ev) => ev.stopPropagation()} onMouseEnter={onCellEnter} onMouseLeave={onCellLeave} style={{ padding: "10px 12px", minWidth: 128, background: t.sub, cursor: "default", whiteSpace: "nowrap", transition: "filter 0.12s, box-shadow 0.12s" }}>
+            {nearestUnpaid ? (
+              <span style={{ fontSize: 11.5, fontWeight: 700, color: nearestOverdue ? t.red : t.mid, display: "flex", alignItems: "center", gap: 3 }}>
+                <Clock size={10} /> {fmtDayMonth(nearestUnpaid.jatuh_tempo)}
+              </span>
+            ) : (
+              <span style={{ fontSize: 11.5, color: t.lo }}>—</span>
+            )}
+          </td>
+          {/* UPDATE (permintaan user - "buat lebih bagus lagi ui nya saat
+              di hover"): tooltip breakdown dipoles - masuk pakai animasi
+              `.periodFade` yg sama dgn dropdown Download Laporan (fade +
+              translateY + scale halus, bukan "nyentak" langsung muncul),
+              header dikasih ikon + dseCode jadi chip kecil terpisah
+              (bukan nempel 1 baris sama "Rincian N Piutang" biar ga
+              padat/susah dipisahin mata), tiap item piutang skrg jadi
+              "kartu" sendiri (background t.sub, radius, border) dgn
+              accent bar warna di kiri (teal kalau LUNAS, merah kalau
+              BELUM LUNAS) - biar status tiap item kebaca sekilas tanpa
+              harus baca badge teksnya, konsisten sama pola accent-bar yg
+              dipakai di tempat lain file ini (badge urgent, dll). */}
+          {/* UPDATE (permintaan user - "ini harusnya informasinya sesuai
+              dengan yang di hover, misalkan yang di hover total piutang
+              total 1,5 juta maka dia akan menampilkan rincian pembentuk
+              1.5 juta tersebut"): konten tooltip skrg ngikutin `kind` dari
+              sel yg di-hover (lihat onCellEnter) - hover "Total Piutang"
+              nampilin rincian nilai KOTOR tiap item (jumlahnya = angka di
+              sel itu), hover "Total Dibayar" nampilin rincian nilai yg
+              SUDAH DIBAYAR per item (jumlahnya = Total Dibayar), hover
+              "Sisa Piutang"/Status nampilin rincian SISA belum dibayar
+              per item (jumlahnya = Sisa Piutang) - jadi apapun kolom yg
+              di-hover, total rincian di tooltip SELALU persis sama dgn
+              angka di sel tsb, ga ada lagi yg ga nyambung. */}
+          {hoverTipPos && items.length > 1 && typeof document !== "undefined" && (() => {
+            const tipKind = hoverTipPos.kind || "piutang";
+            const tipItems = tipKind === "dibayar" ? items.filter((it) => it.paid > 0) : tipKind === "sisa" ? items.filter((it) => it.belumDibayar > 0) : items;
+            const tipTitle = tipKind === "dibayar" ? `Rincian ${tipItems.length} Pembayaran` : tipKind === "sisa" ? `Rincian ${tipItems.length} Sisa Piutang` : `Rincian ${items.length} Piutang`;
+            const amountOf = (it) => (tipKind === "dibayar" ? it.paid : tipKind === "sisa" ? it.belumDibayar : it.total);
+            return createPortal(
+              <div className="periodFade" style={{ position: "fixed", left: hoverTipPos.x, top: hoverTipPos.y, zIndex: 9999, width: 300, maxHeight: 360, overflowY: "auto", background: t.card, border: `1px solid ${t.line}`, borderRadius: 12, boxShadow: "0 10px 32px rgba(0,0,0,0.26)", padding: 12, pointerEvents: "none", transformOrigin: "top right" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 9, paddingBottom: 9, borderBottom: `1px solid ${t.line}`, fontSize: 11, fontWeight: 800, color: t.hi }}>
+                  <CircleDollarSign size={12} color={t.teal} /> {tipTitle}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                  {tipItems.length === 0 ? (
+                    <div style={{ fontSize: 11, color: t.lo, textAlign: "center", padding: "6px 0" }}>Tidak ada data.</div>
+                  ) : tipItems.map((it) => (
+                    <div key={it.id} style={{ display: "flex", gap: 8, borderRadius: 8, background: t.sub, border: `1px solid ${t.line}`, borderLeft: `3px solid ${it.lunas ? t.teal : t.red}`, padding: "7px 9px" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                          <span style={{ fontSize: 11.5, fontWeight: 800, color: t.hi }}>Rp {fmtID(amountOf(it))}</span>
+                          <span style={{ fontSize: 9, fontWeight: 800, color: it.lunas ? t.teal : t.red, background: it.lunas ? t.tealBg : t.redBg, borderRadius: 6, padding: "2px 6px", whiteSpace: "nowrap" }}>
+                            {it.lunas ? "LUNAS" : "BELUM LUNAS"}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 10, color: t.lo, marginTop: 2 }}>
+                          Dibuat {fmtDayMonth(it.tanggal_transaksi)} · Jatuh Tempo {fmtDayMonth(it.jatuh_tempo)}
+                        </div>
+                        {it.catatan && (
+                          <div style={{ fontSize: 10, color: t.mid, marginTop: 2, fontStyle: "italic", lineHeight: 1.3 }}>{it.catatan}</div>
+                        )}
+                        {it.payments.length > 0 && (
+                          <div style={{ marginTop: 4, paddingLeft: 8, borderLeft: `2px solid ${t.line}`, display: "flex", flexDirection: "column", gap: 2 }}>
+                            {it.payments.map((p) => (
+                              <div key={p.id} style={{ fontSize: 10, color: t.teal }}>
+                                + Rp {fmtID(p.nominal)} pada {fmtDayMonth(p.tanggal_pembayaran)}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>,
+              document.body
+            );
+          })()}
+          {/* UPDATE (permintaan user - "pada ar, kolom catatan hilangkan
+              saja, ganti dengan kolom AKSI, isinya button EDIT AR"): kolom
+              "Aksi" - satu tombol berlabel jelas "Edit AR" yg buka modal
+              list piutang (openList, state lokal di komponen ini) - ini
+              SEKARANG jadi satu-satunya trigger (tombol ikon di kolom
+              Status di atas dihapus, supaya ga redundan 2 tombol utk 1
+              aksi yg sama; kolom Status jadi pill status polos saja).
+              FIX (bug "aksinya cuma —, ga pernah muncul"): sebelumnya
+              tombol ini dibungkus `!readOnly`, PADAHAL `readOnly` yg
+              dikirim ke komponen ini DIIKAT LANGSUNG ke `isRangeMode`
+              (lihat pemanggilan <ArPiutangInput readOnly={isRangeMode}
+              .../> & <DseInputRow readOnly={isRangeMode}.../>), yg
+              artinya SELALU true kapanpun tab AR nampilin lebih dari 1
+              tanggal (mode Full Month / range, TAMPILAN DEFAULT tab AR)
+              - jadi tombolnya GA PERNAH kelihatan, selalu fallback ke
+              "—", persis pola bug yg udah diperbaiki di tab Info (lihat
+              komentar `isRangeMode` di atas). Buka modal piutang itu aksi
+              CRUD piutang yg berdiri sendiri, BUKAN "edit entry data
+              per-tanggal", jadi ga perlu & ga boleh digerbang readOnly -
+              selalu tampil & bisa diklik di mode manapun.
+              FREEZE (permintaan user - "kolom ini akan di freeze selalu
+              di paling kanan"): td ini PALING KANAN tabel, jadi dibuat
+              position:"sticky" + right:0 biar nempel pas tabel di-scroll
+              horizontal (dibungkus overflowX:auto) - background SOLID
+              (t.card) biar konten kolom lain yg scroll di baliknya ga
+              numpuk transparan, + boxShadow tipis di kiri sbg pembatas
+              visual drpd borderLeft biasa. */}
+          <td onClick={(ev) => ev.stopPropagation()} style={{ padding: "10px 12px", minWidth: 118, cursor: "default", position: "sticky", right: 0, zIndex: 2, background: t.card, boxShadow: "-6px 0 8px -6px rgba(0,0,0,0.18)" }}>
+            <button type="button" onClick={openList} title="Edit Piutang / AR" style={{ display: "flex", alignItems: "center", gap: 5, height: 28, padding: "0 11px", borderRadius: 7, border: "none", background: t.teal, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap" }}>
+              <CircleDollarSign size={12} /> Edit AR
+            </button>
+          </td>
+        </>
+      )}
+
+      {/* FIX (bug "Edit AR diklik ga ada yg terjadi" di mode Full Month/
+          AR tab - TAMPILAN DEFAULT tab AR): tombol "Edit AR" di td compact
+          (!inline, lihat komentar di atas tombolnya) sudah benar TIDAK
+          digerbang readOnly lagi - tapi modal/panel yg dia buka (blok di
+          bawah ini) KEMARIN masih dibungkus `!readOnly` juga (baik versi
+          inline maupun versi modal portal non-inline), PADAHAL readOnly
+          yg dikirim ke komponen ini SELALU true di mode itu (readOnly=
+          {isRangeMode}, lihat pemanggilan <ArPiutangInput>) - jadi
+          openList() tetap jalan (state `open` jadi true) tapi blok JSX
+          modalnya sendiri render null karena `!readOnly` gugur, kelihatan
+          "ga kejadian apa-apa" pas diklik. Buka/liat modal piutang itu
+          aksi CRUD piutang yg berdiri sendiri (sama seperti tombolnya),
+          BUKAN "edit entry data per-tanggal", jadi modalnya juga ga
+          boleh digerbang readOnly - cukup gerbang `open` saja. State
+          write-actions DI DALAM modal (formContent) tetap benar
+          digerbang `!readOnly` di tempatnya sendiri (lihat baris2 yg
+          masih pakai `!readOnly` di atas: tombol tambah/hapus/dll),
+          supaya tetap read-only semestinya - cuma container modalnya
+          yg harus selalu bisa muncul. */}
+      {inline ? (
+        open && (
+          <div style={{ width: "100%", borderRadius: 14, background: t.card, padding: 16, fontFamily: FONT, boxSizing: "border-box" }}>
+            {formContent}
+          </div>
+        )
+      ) : (
+        // FIX (error konsol "<tr> cannot contain a nested <div>" / hydration
+        // error): komponen !inline ini dirender DI DALAM <tr> (td compact di
+        // tabel AR) - modal position:fixed di atas sebelumnya JSX biasa,
+        // bukan portal, jadi React menaruh <div> ini sbg anak langsung <tr>,
+        // HTML tidak valid. Dibungkus createPortal ke document.body, sama
+        // persis pola yg sudah dipakai modal "Cetak Laporan" (showCetak) di
+        // bawah komponen ini - keluar dari pohon <table> sepenuhnya.
+        open && typeof document !== "undefined" && createPortal(
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={requestClose}>
+            {/* UPDATE (permintaan user - "buat responsive lebarkan sesuai
+                ukuran layar agar mudah dibaca"): popup Piutang/AR ini
+                sebelumnya dipatok maxWidth:420 TETAP di semua ukuran layar
+                - begitu isinya ada tabel gabungan 5-kolom (Tanggal/Jenis/
+                Keterangan/Nominal/Aksi), 420px jelas kesempitan, teks &
+                angka kepotong/numpuk. Diganti `min(640px, 94vw)` - di
+                layar lebar modal melebar sampai 640px (jauh lebih lega
+                utk tabel), di HP tetap aman (94vw, ga pernah nabrak tepi
+                layar). */}
+            <div onClick={(ev) => ev.stopPropagation()} style={{ width: "100%", maxWidth: "min(860px, 96vw)", maxHeight: "90vh", overflowY: "auto", borderRadius: 16, background: t.card, boxShadow: "0 20px 60px rgba(0,0,0,0.35)", padding: 20, fontFamily: FONT, boxSizing: "border-box" }}>
+              {formContent}
+            </div>
+          </div>,
+          document.body
+        )
+      )}
+
+      {inline && readOnly && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap" }}>
+          <span title="AR Saat Ini" style={{ fontSize: 11.5, fontWeight: 600, color: t.mid, whiteSpace: "nowrap", flexShrink: 0 }}>
+            Rp {fmtID(totalPiutang)}
+          </span>
+          <span style={{ fontSize: 10, fontWeight: 800, color: lunasCurrent ? t.teal : t.red, background: lunasCurrent ? t.tealBg : t.redBg, borderRadius: 6, padding: "3px 8px", display: "flex", alignItems: "center", gap: 3, whiteSpace: "nowrap", flexShrink: 0 }}>
+            {lunasCurrent && <Check size={9} />} {lunasCurrent ? "LUNAS" : `Sisa Rp ${fmtID(totalPiutang)}`}
+          </span>
+        </div>
+      )}
+
+      {showCetak && typeof document !== "undefined" && createPortal(
+        <ArCetakLaporanModal t={t} dseCode={dseCode} dseCode3id={dseCode3id} dseName={dseName} mc={mc} branch={branch} arMonth={arMonth} report={cetakReport} profile={profile} onClose={() => setShowCetak(false)} entityNoun={entityNoun} idLabel={`ID ${entityNoun}`} nameLabel={`Nama ${entityNoun}`} showDualId={codeField === "dse_code"} showMc={codeField !== "mc"} showBranch={codeField !== "branch"} />,
+        document.body
+      )}
+
+      {exportRendering && typeof document !== "undefined" && createPortal(
+        <div style={{ position: "fixed", top: 0, left: -99999, width: 800, background: "#fff" }}>
+          <div ref={exportCaptureRef}>
+            <ArReportDoc t={t} dseCode={dseCode} dseCode3id={dseCode3id} dseName={dseName} mc={mc} branch={branch} arMonth={arMonth} report={cetakReport} generatedByName={profile?.full_name} generatedAt={new Date().toLocaleString("id-ID", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })} pageBreak={false} entityNoun={entityNoun} idLabel={`ID ${entityNoun}`} nameLabel={`Nama ${entityNoun}`} showDualId={codeField === "dse_code"} showMc={codeField !== "mc"} showBranch={codeField !== "branch"} />
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Konfirmasi "Lunasi Sekaligus" - ikut pola popup konfirmasi
+          vacantConfirmModal (createPortal ke document.body + tombol merah
+          sbg aksi 2 utk tindakan beresiko) supaya bahasa visualnya konsisten
+          dgn konfirmasi beresiko lain di file ini, bukan dialog baru. */}
+      {showLunasiConfirm && typeof document !== "undefined" && createPortal(
+        <div style={{ position: "fixed", inset: 0, zIndex: 9900, background: "rgba(15,23,32,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={(ev) => { if (ev.target === ev.currentTarget && !busy) setShowLunasiConfirm(false); }}>
+          <div style={{ width: "100%", maxWidth: 380, background: t.card, borderRadius: 16, boxShadow: "0 24px 60px rgba(0,0,0,0.35)", padding: 20, fontFamily: FONT }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <div style={{ width: 32, height: 32, borderRadius: 999, background: t.redBg, color: t.red, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <Check size={16} />
+              </div>
+              <div style={{ fontSize: 14.5, fontWeight: 800, color: t.hi }}>Lunasi Semua Piutang?</div>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.mid, lineHeight: 1.6, marginBottom: 10 }}>
+              Tindakan ini akan melunasi <strong style={{ color: t.hi }}>{items.filter((it) => !it.lunas).length} transaksi piutang</strong> milik <strong style={{ color: t.hi }}>{dseName || dseCode}</strong> sekaligus, masing-masing dicatat sbg pembayaran penuh hari ini.
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", borderRadius: 8, background: t.redBg, marginBottom: 10 }}>
+              <CircleDollarSign size={13} color={t.red} style={{ flexShrink: 0 }} />
+              <span style={{ fontSize: 13.5, fontWeight: 800, color: t.red }}>Total Rp {fmtID(totalPiutang)}</span>
+            </div>
+            <div style={{ fontSize: 11, color: t.lo, lineHeight: 1.6, marginBottom: 16 }}>
+              Nilai ini langsung memengaruhi Sisa Tunggakan {entityNoun}. Pastikan jumlahnya sudah benar sebelum melanjutkan - tindakan ini tidak bisa dibatalkan begitu tersimpan.
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button type="button" onClick={() => setShowLunasiConfirm(false)} disabled={busy}
+                style={{ flex: 1, height: 36, borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+                Batal
+              </button>
+              <button type="button" onClick={async () => { await lunasiSekaligus(); setShowLunasiConfirm(false); }} disabled={busy}
+                style={{ flex: 1, height: 36, borderRadius: 9, border: "none", background: t.red, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: busy ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, opacity: busy ? 0.7 : 1 }}>
+                {busy ? <Loader2 size={13} className="spin" /> : <Check size={13} />} Ya, Lunasi Semua
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* UPDATE (permintaan user - "ada konfirmasi jika belum simpan tapi
+          klik sembarang untuk tutup"): popup konfirmasi tutup - muncul
+          cuma kalau `requestClose` (dipanggil dari backdrop/tombol X)
+          mendeteksi ada form yg lagi diisi/diedit & belum disimpan (lihat
+          `hasUnsavedChanges`). Pola & bahasa visual sama persis dgn
+          showLunasiConfirm di atas, tapi pakai warna amber (peringatan,
+          bukan aksi destruktif - nutup popup ga menghapus data yg SUDAH
+          tersimpan, cuma buang draft yg lagi diketik). */}
+      {showCloseConfirm && typeof document !== "undefined" && createPortal(
+        <div style={{ position: "fixed", inset: 0, zIndex: 9900, background: "rgba(15,23,32,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={(ev) => { if (ev.target === ev.currentTarget) setShowCloseConfirm(false); }}>
+          <div style={{ width: "100%", maxWidth: 380, background: t.card, borderRadius: 16, boxShadow: "0 24px 60px rgba(0,0,0,0.35)", padding: 20, fontFamily: FONT }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <div style={{ width: 32, height: 32, borderRadius: 999, background: t.amber + "22", color: t.amber, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <AlertTriangle size={16} />
+              </div>
+              <div style={{ fontSize: 14.5, fontWeight: 800, color: t.hi }}>Tutup Tanpa Menyimpan?</div>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.mid, lineHeight: 1.6, marginBottom: 16 }}>
+              Ada isian yang belum disimpan. Kalau ditutup sekarang, isian itu akan hilang.
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button type="button" onClick={() => setShowCloseConfirm(false)}
+                style={{ flex: 1, height: 36, borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+                Batal
+              </button>
+              <button type="button" onClick={discardAndClose}
+                style={{ flex: 1, height: 36, borderRadius: 9, border: "none", background: t.red, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                <X size={13} /> Ya, Tutup
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Konfirmasi hapus (item piutang ATAU 1 pembayaran) - permintaan
+          user: "buat dengan ui yang sangat bagus" + jangan trash-icon
+          polos yg bisa misklik (concern sama yg dia angkat soal Lunasi
+          Sekaligus) - pola & bahasa visual sama persis dgn
+          showLunasiConfirm di atas (t.red utk aksi destruktif), cuma
+          isinya dinamis sesuai deleteTarget.kind. Soft-delete (lihat
+          migration ar_piutang_soft_delete) - jelaskan itu di copy supaya
+          user ga mengira datanya benar2 hilang permanen dari sistem. */}
+      {deleteTarget && typeof document !== "undefined" && createPortal(
+        <div style={{ position: "fixed", inset: 0, zIndex: 9900, background: "rgba(15,23,32,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={(ev) => { if (ev.target === ev.currentTarget && !busy) setDeleteTarget(null); }}>
+          <div style={{ width: "100%", maxWidth: 380, background: t.card, borderRadius: 16, boxShadow: "0 24px 60px rgba(0,0,0,0.35)", padding: 20, fontFamily: FONT }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <div style={{ width: 32, height: 32, borderRadius: 999, background: t.redBg, color: t.red, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <Trash2 size={15} />
+              </div>
+              <div style={{ fontSize: 14.5, fontWeight: 800, color: t.hi }}>{deleteTarget.kind === "item" ? "Hapus Transaksi Piutang?" : "Hapus Pembayaran Ini?"}</div>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.mid, lineHeight: 1.6, marginBottom: 10 }}>
+              {deleteTarget.kind === "item"
+                ? (deleteTarget.item.payments.length > 0
+                  ? <>Piutang ini masih punya <strong style={{ color: t.hi }}>{deleteTarget.item.payments.length} pembayaran tercatat</strong> - hapus dulu semua pembayarannya sebelum bisa menghapus transaksi ini (biar perhitungan tetap konsisten).</>
+                  : <>Transaksi piutang milik <strong style={{ color: t.hi }}>{dseName || dseCode}</strong> ini akan dihapus dari daftar & tidak lagi masuk ke perhitungan Sisa Tunggakan.</>)
+                : <>Pembayaran ini akan dihapus dari riwayat & tidak lagi mengurangi "Belum Dibayar" piutang milik <strong style={{ color: t.hi }}>{dseName || dseCode}</strong>.</>}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", borderRadius: 8, background: t.redBg, marginBottom: 10 }}>
+              <CircleDollarSign size={13} color={t.red} style={{ flexShrink: 0 }} />
+              <span style={{ fontSize: 13.5, fontWeight: 800, color: t.red }}>
+                Rp {fmtID(deleteTarget.kind === "item" ? deleteTarget.item.total : deleteTarget.payment.nominal)}
+              </span>
+              <span style={{ fontSize: 10.5, color: t.lo, marginLeft: "auto" }}>
+                {fmtDayMonth(deleteTarget.kind === "item" ? deleteTarget.item.tanggal_transaksi : deleteTarget.payment.tanggal_pembayaran)}
+              </span>
+            </div>
+            <div style={{ fontSize: 11, color: t.lo, lineHeight: 1.6, marginBottom: 16 }}>
+              Data tetap tersimpan sbg jejak audit (bukan dihapus permanen dari sistem) tapi tidak akan muncul lagi di daftar, laporan maupun total. Pastikan ini memang salah input sebelum melanjutkan.
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button type="button" onClick={() => setDeleteTarget(null)} disabled={busy}
+                style={{ flex: 1, height: 36, borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+                Batal
+              </button>
+              <button type="button"
+                onClick={() => deleteTarget.kind === "item" ? confirmDeleteItem(deleteTarget.item) : confirmDeletePayment(deleteTarget.item, deleteTarget.payment)}
+                disabled={busy || (deleteTarget.kind === "item" && deleteTarget.item.payments.length > 0)}
+                style={{ flex: 1, height: 36, borderRadius: 9, border: "none", background: t.red, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: busy ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, opacity: (busy || (deleteTarget.kind === "item" && deleteTarget.item.payments.length > 0)) ? 0.5 : 1 }}>
+                {busy ? <Loader2 size={13} className="spin" /> : <Trash2 size={13} />} Ya, Hapus
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChange, identityEdit, onSave, saving, dirty, prevOutstanding, audit, onShowHistory, readOnly, mode, rank, isToday, entryDate, onPickDate, onSwitchPeriodMode, periodMode, periodSubtitle, profile, arMonth, runGuarded, statusEvents, hiddenCols = {}, loadingDse }) {
   // UPDATE (permintaan user - "pisahkan data ar dse dan penjualan dse ke
   // menu terpisah"): 1 komponen yg sama dipakai utk 2 menu terpisah -
   // mode="sales" (tab "Penjualan DSE": SP/Voucher/Saldo/Total) & mode="ar"
   // (tab "AR DSE": AR/Piutang + Catatan) - identitas (Nama/Status/Join
-  // Date/MC) tetap sama & muncul di keduanya krn itu bukan data transaksi.
+  // Date/District) tetap sama & muncul di keduanya krn itu bukan data transaksi.
   const isAr = mode === "ar";
   const [cardOpen, setCardOpen] = useState(false);
-  const [sheetTab, setSheetTab] = useState("info");
+  // UPDATE (permintaan user - "ui ux profesional agar tau bahwa kolom
+  // ini bisa diklik"): baris desktop (1 baris <table> per DSE) ga punya
+  // afforadance visual apapun selain cursor:pointer (ga kelihatan sebelum
+  // mouse beneran nempel) - ditambah 2 sinyal standar: (1) background
+  // baris nge-highlight pas di-hover (state rowHover, lihat <tr>), (2)
+  // ikon chevron kecil nempel di kolom Nama DSE (kolom teks utama yg
+  // selalu kebuka duluan sebelum scroll ke kolom lain) - makin jelas pas
+  // di-hover (abu -> teal), konsisten sama chevron yg sudah dipakai di
+  // versi kartu mobile (collapsedCard).
+  const [rowHover, setRowHover] = useState(false);
+  // UPDATE (permintaan user - "hilangkan saja fitur ini di sub menu AR"):
+  // mode AR (isAr) ga ada lagi tab "Informasi DSE" (lihat sheetTabs di
+  // bawah) - defaultnya langsung "ar" biar ga nyoba landing di tab yg
+  // tombolnya udah dihapus.
+  const [sheetTab, setSheetTab] = useState(isAr ? "ar" : "info");
+  // Guard: kalau sheetTab kebawa state lama "info" (misal row ini sempat
+  // dibuka pas mode="sales" lalu user pindah tab utama ke "AR" TANPA popup
+  // ini unmount - komponennya dipakein key yg sama jadi state lama nempel),
+  // paksa balik ke "ar" selama mode AR, karena tombol "info" udah ga ada.
+  useEffect(() => { if (isAr && sheetTab === "info") setSheetTab("ar"); }, [isAr, sheetTab]);
   // UPDATE (permintaan user - "buat toggle untuk menyembunyikan atau
-  // tampilkan detail ... default disembunyikan dulu"): blok MC/Branch/
+  // tampilkan detail ... default disembunyikan dulu"): blok District/Area/
   // Region/Partner (struktural, read-only) di tab Informasi DSE skrg bisa
   // dilipat - default TERTUTUP biar tab-nya lebih ringkas, admin tinggal
   // klik "Lihat Detail Struktural" kalau perlu liat.
   const [showStructuralDetail, setShowStructuralDetail] = useState(false);
-  // UPDATE (bug fix - "pill tanggal popup edit DSE kepotong mid-word"):
-  // pengukuran lebar box BENERAN (sama pola dgn dailyDateLabel di header
-  // utama) - popupDateLabelBtnRef nempel di pill, popupDateMeasureRef
-  // ke span tersembunyi buat ngukur tiap tier sebelum dipilih yg muat.
-  const popupDateLabelBtnRef = useRef(null);
-  const popupDateMeasureRef = useRef(null);
-  const [popupDateLabel, setPopupDateLabel] = useState("");
-  useEffect(() => {
-    const btn = popupDateLabelBtnRef.current;
-    const measure = popupDateMeasureRef.current;
-    if (!btn || !measure || typeof ResizeObserver === "undefined") return undefined;
-    const tiers = popupDateLabelTiers(entryDate);
-    const update = () => {
-      // 24px padding horizontal pill ("0 12px" kiri+kanan) + ~20px utk
-      // ChevronDown + gap - dikira2 via subtraksi lebar ChevronDown yg
-      // udah ikut termuat di btn.clientWidth.
-      const avail = btn.clientWidth - 24 - 20;
-      let chosen = tiers[tiers.length - 1];
-      if (avail > 0) {
-        for (const txt of tiers) {
-          measure.textContent = txt;
-          if (measure.offsetWidth <= avail) { chosen = txt; break; }
-        }
-      }
-      setPopupDateLabel(chosen);
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(btn);
-    return () => ro.disconnect();
-  }, [entryDate]);
+  // UPDATE (permintaan user - "buat menjadi 02 november 2026"): pill nav
+  // tanggal popup ini DULU pakai sistem tier yg menyusut otomatis
+  // ("pill tanggal popup edit DSE kepotong mid-word" fix lama), tapi
+  // ternyata hasilnya ga reliable (bug report "kenapa penulisan
+  // tanggalnya berubah-ubah" - rawan race condition pengukuran DOM pas
+  // popup baru mount) & beda format sama subtitle "Penjualan SP ..." di
+  // bawahnya yg selalu format penuh. Disederhanakan total: SELALU format
+  // tetap "02 November 2026" (fmtDayMonthFull, murni dari tanggalnya -
+  // ga pernah bergantung ukuran box lagi), font-size tetap pakai clamp()
+  // responsif biar ga overflow di layar sempit.
   // UPDATE (permintaan user - "ada tombol ganti nama, isi nama... buat
   // dengan sangat bagus agar log nya tercatat dengan sangat baik dan
   // admin yang mengisi dapat mengerti konsepnya"): field "Nama DSE" yg
@@ -1229,6 +3429,13 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
   // admin konfirmasi "Ya".
   const [vacantConfirmOpen, setVacantConfirmOpen] = useState(false);
   const [vacantSaving, setVacantSaving] = useState(false);
+  // UPDATE (permintaan user - "untuk ojt ini juga ada konfirmasinya"):
+  // sama persis alasan & pola dgn konfirmasi Vacant di atas - transisi ke
+  // OJT jg efeknya besar (DSE keluar dari hitungan Active, masuk hitungan
+  // OJT di Ringkasan) & gampang kepencet ga sengaja lewat dropdown, jadi
+  // dicegat popup konfirmasi juga sebelum beneran disimpan.
+  const [ojtConfirmOpen, setOjtConfirmOpen] = useState(false);
+  const [ojtSaving, setOjtSaving] = useState(false);
   // UPDATE (permintaan user - "harusnya saat Join Date di klik maka dia
   // akan menampilkan informasi, Isi nama terlebih dahulu"): field Join
   // Date dikunci (disabled) selama Nama DSE kosong - tapi elemen disabled
@@ -1251,6 +3458,7 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
   const joinDate = identityEdit?.join_date ?? dse.join_date ?? "";
   const namaVal = identityEdit?.ds_name ?? dse.ds_name ?? "";
   const sm = statusMetaOf(status);
+  const ageInfo = statusAgeInfo(dse.dse_code, status, statusEvents, joinDate);
 
   const e = entry || emptyEntry();
   const totalPenjualan = fRaw(e.nilai_sp) + fRaw(e.nilai_voucher) + fRaw(e.nilai_saldo);
@@ -1258,19 +3466,19 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
   const setE = (patch) => onEntryChange(dse.dse_code, { ...e, ...patch });
   const handleBayarChange = (v) => onEntryChange(dse.dse_code, { ...e, ar_bayar: v, ar_piutang: Math.max(0, outstanding - fRaw(v)) });
   const handleApplyLedger = (patch) => onEntryChange(dse.dse_code, { ...e, ...patch });
-  const AuditLine = audit ? (
-    <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10.5, color: t.lo }}>
-      <Clock size={10} style={{ flexShrink: 0 }} />
-      <span>Diperbarui {fmtTime(audit.updated_at || audit.uploaded_at)}{audit.by ? ` oleh ${audit.by}` : ""}</span>
-    </div>
-  ) : null;
+  // UPDATE (permintaan user - "tidak perlu ditampilkan informasi terakhir
+  // diperbaharui"): baris "Diperbarui HH:mm oleh Nama" (dulu AuditLine,
+  // dipakai di footer tab Informasi DSE & kolom Total desktop) dihapus -
+  // prop `audit` sendiri dibiarkan ada (dipanggil dari induk) tapi sudah
+  // tidak dirender di mana pun.
 
-  const textInputStyle = { width: "100%", height: 34, padding: "0 10px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12.5, fontFamily: FONT, outline: "none", boxSizing: "border-box" };
-  const selectStyle = { ...textInputStyle, cursor: "pointer", color: sm.color, fontWeight: 700, background: sm.bg, border: `1px solid ${sm.color}33`, appearance: "none", WebkitAppearance: "none", paddingRight: 28 };
+  const textInputStyle = { width: "100%", height: 34, padding: "0 10px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13, fontWeight: 600, fontFamily: FONT, outline: "none", boxSizing: "border-box" };
+  const selectStyle = { ...textInputStyle, cursor: "pointer", color: sm.color, fontWeight: 700, background: sm.bg, border: `1px solid ${sm.color}61`, appearance: "none", WebkitAppearance: "none", paddingRight: 28 };
   const labelStyle = { fontSize: 10, color: t.lo, marginBottom: 3, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.2 };
   const handleStatusChange = (val) => {
     if (readOnly) return;
     if (val === "Vacant" && status !== "Vacant") { setVacantConfirmOpen(true); return; }
+    if (val === "Interview" && status !== "Interview") { setOjtConfirmOpen(true); return; }
     onIdentityChange(dse.dse_code, "dse_status", val);
   };
   const confirmVacant = async () => {
@@ -1280,6 +3488,15 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
       if (ok) { onIdentityChange(dse.dse_code, "dse_status", "Vacant"); setVacantConfirmOpen(false); }
     } finally {
       setVacantSaving(false);
+    }
+  };
+  const confirmOjt = async () => {
+    setOjtSaving(true);
+    try {
+      const ok = await onSave(dse.dse_code, { dse_status: "Interview" });
+      if (ok) { onIdentityChange(dse.dse_code, "dse_status", "Interview"); setOjtConfirmOpen(false); }
+    } finally {
+      setOjtSaving(false);
     }
   };
   // Popup konfirmasi "tandai Vacant" - dipakai BARENG oleh StatusSelect
@@ -1319,6 +3536,43 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
     </div>,
     document.body
   );
+  // Popup konfirmasi "tandai OJT" - sama persis struktur/pola dgn
+  // vacantConfirmModal di atas, cuma beda warna (amber, match STATUS_OPTIONS
+  // "Interview"/OJT) & kalimat penjelasannya.
+  const ojtConfirmModal = ojtConfirmOpen && typeof document !== "undefined" && createPortal(
+    <div style={{ position: "fixed", inset: 0, zIndex: 9800, background: "rgba(15,23,32,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+      onClick={(ev) => { if (ev.target === ev.currentTarget && !ojtSaving) setOjtConfirmOpen(false); }}>
+      <div style={{ width: "100%", maxWidth: 380, background: t.card, borderRadius: 16, boxShadow: "0 24px 60px rgba(0,0,0,0.35)", padding: 20, fontFamily: FONT }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 999, background: t.amberBg, color: t.amber, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <UserCheck size={16} />
+          </div>
+          <div style={{ fontSize: 14.5, fontWeight: 800, color: t.hi }}>Tandai Sebagai OJT?</div>
+        </div>
+        <div style={{ fontSize: 12.5, color: t.mid, lineHeight: 1.6, marginBottom: 6 }}>
+          <strong style={{ color: t.hi }}>{namaVal || dse.dse_code}</strong> akan ditandai <strong style={{ color: t.amber }}>OJT</strong> per tanggal yang sedang dibuka di popup ini:
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", borderRadius: 8, background: t.amberBg, marginBottom: 10 }}>
+          <Calendar size={13} color={t.amber} style={{ flexShrink: 0 }} />
+          <span style={{ fontSize: 12.5, fontWeight: 800, color: t.amber }}>{fmtDayMonth(entryDate)}</span>
+        </div>
+        <div style={{ fontSize: 11, color: t.lo, lineHeight: 1.6, marginBottom: 16 }}>
+          Status OJT berarti DSE ini masih dalam masa pelatihan (belum dihitung sebagai Active) mulai tanggal tersebut - mempengaruhi perhitungan jumlah DSE Active/OJT di Ringkasan. Perubahan ini otomatis tercatat di Riwayat Informasi.
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setOjtConfirmOpen(false)} disabled={ojtSaving}
+            style={{ flex: 1, height: 36, borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+            Batal
+          </button>
+          <button onClick={confirmOjt} disabled={ojtSaving}
+            style={{ flex: 1, height: 36, borderRadius: 9, border: "none", background: t.amber, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, opacity: ojtSaving ? 0.7 : 1 }}>
+            {ojtSaving ? <Loader2 size={13} className="spin" /> : <UserCheck size={13} />} Ya, Tandai OJT
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
   const StatusSelect = (
     <div style={{ position: "relative" }}>
       <select value={status} onChange={(ev) => handleStatusChange(ev.target.value)} style={selectStyle}>
@@ -1347,12 +3601,19 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
     if (!draft) return;
     setNmSaving(true);
     try {
+      // UPDATE (permintaan user - "jika nama kosong dia perlu mengisi join
+      // datenya juga"): dulu Join Date cuma diwajibkan/dikirim pas mode
+      // "Ubah Nama" + ditandai "Orang Baru" - pas "Isi Nama" PERTAMA KALI
+      // (namaVal msh kosong, DSE ini belum pernah punya nama sama sekali)
+      // Join Date JUGA wajib diisi barengan (DSE baru pasti butuh tanggal
+      // mulai), bukan cuma nama doang.
+      const isFirstFill = !namaVal;
       const overridePatch = { ds_name: draft };
-      if (namaVal && nmIsNewPerson === true) overridePatch.join_date = nmJoinDate;
+      if (isFirstFill || (namaVal && nmIsNewPerson === true)) overridePatch.join_date = nmJoinDate;
       const ok = await onSave(dse.dse_code, overridePatch);
       if (ok) {
         onIdentityChange(dse.dse_code, "ds_name", draft);
-        if (namaVal && nmIsNewPerson === true) onIdentityChange(dse.dse_code, "join_date", nmJoinDate);
+        if (isFirstFill || (namaVal && nmIsNewPerson === true)) onIdentityChange(dse.dse_code, "join_date", nmJoinDate);
         setNameModalOpen(false);
       }
     } finally {
@@ -1361,12 +3622,27 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
   };
   const nmDraftTrim = nmDraft.trim();
   const nmValid = !namaVal
-    ? nmDraftTrim.length > 0
+    ? (nmDraftTrim.length > 0 && !!nmJoinDate)
     : (nmDraftTrim.length > 0 && nmIsNewPerson !== null && (nmIsNewPerson === false || (nmIsNewPerson === true && !!nmJoinDate)));
+  // UPDATE (permintaan user - "perbaiki ui nya jangan buat bingung"):
+  // dulu 2 kartu pilihan "Ya, Orang Baru" / "Tidak, Orang Sama" keliatan
+  // SAMA PERSIS di kondisi belum dipilih (nmIsNewPerson masih null) -
+  // border/bg abu polos sama kayak kartu yg beneran udah "aktif" dipilih
+  // tapi warnanya kebetulan netral, jadi user ga bisa bedain "belum
+  // milih apa-apa" vs "ini kepilih tapi warnanya pas abu". Tombol Simpan
+  // di bawahnya jadi KELIATAN disabled tanpa alasan yg jelas kenapa.
+  // Ditambah bulatan radio kecil (kosong=belum dipilih, terisi+centang=
+  // dipilih) di tiap kartu - pola universal yg langsung ngasih tau status
+  // pilihan tanpa perlu baca teks, + transition halus pas state berubah.
   const toggleBtnStyle = (active, color, bg) => ({
     flex: 1, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2, padding: "9px 11px", borderRadius: 9,
-    border: `1.5px solid ${active ? color : t.inputBd}`, background: active ? bg : t.inputBg, cursor: "pointer", textAlign: "left",
+    border: `1.5px solid ${active ? color : t.inputBd}`, background: active ? bg : t.inputBg, cursor: "pointer", textAlign: "left", transition: "border-color 0.12s, background 0.12s",
   });
+  const toggleRadioDot = (active, color) => (
+    <span style={{ width: 15, height: 15, borderRadius: 999, border: `1.5px solid ${active ? color : t.inputBd}`, background: active ? color : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginBottom: 3, transition: "border-color 0.12s, background 0.12s" }}>
+      {active && <Check size={10} color="#fff" strokeWidth={3} />}
+    </span>
+  );
   const nameChangeModal = nameModalOpen && typeof document !== "undefined" && createPortal(
     <div style={{ position: "fixed", inset: 0, zIndex: 9800, background: "rgba(15,23,32,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
       onClick={(ev) => { if (ev.target === ev.currentTarget && !nmSaving) setNameModalOpen(false); }}>
@@ -1394,24 +3670,54 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
 
         {namaVal && (
           <div style={{ marginBottom: nmIsNewPerson === true ? 14 : 18 }}>
-            <div style={labelStyle}>Tandai Sebagai Orang Baru?</div>
+            <div style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 5 }}>
+              Tandai Sebagai Orang Baru?
+              <span style={{ fontSize: 9, fontWeight: 800, color: t.red, background: t.redBg, borderRadius: 999, padding: "1.5px 6px", textTransform: "none", letterSpacing: 0 }}>Wajib dipilih</span>
+            </div>
             <div style={{ display: "flex", gap: 8 }}>
               <button type="button" onClick={() => setNmIsNewPerson(true)} style={toggleBtnStyle(nmIsNewPerson === true, t.amber, t.amberBg)}>
+                {toggleRadioDot(nmIsNewPerson === true, t.amber)}
                 <span style={{ fontSize: 12, fontWeight: 800, color: nmIsNewPerson === true ? t.amber : t.hi }}>Ya, Orang Baru</span>
                 <span style={{ fontSize: 10, color: t.lo, lineHeight: 1.4 }}>Orang lama berhenti, ini pengganti - mulai dari Join Date baru</span>
               </button>
               <button type="button" onClick={() => setNmIsNewPerson(false)} style={toggleBtnStyle(nmIsNewPerson === false, t.teal, t.tealBg)}>
+                {toggleRadioDot(nmIsNewPerson === false, t.teal)}
                 <span style={{ fontSize: 12, fontWeight: 800, color: nmIsNewPerson === false ? t.teal : t.hi }}>Tidak, Orang Sama</span>
                 <span style={{ fontSize: 10, color: t.lo, lineHeight: 1.4 }}>Cuma perbaikan ejaan/penulisan nama, Join Date tetap</span>
               </button>
             </div>
+            {/* UPDATE (permintaan user - "jangan buat bingung"): dulu
+                tombol Simpan cuma kelihatan disabled/abu TANPA penjelasan
+                apa pun begitu field nama udah keisi tapi pertanyaan ini
+                blm dijawab - user ga ngerti kenapa ga bisa Simpan. Kasih
+                hint eksplisit di sini, cuma nongol pas beneran jadi
+                penghalang (nama udah diisi, pertanyaan blm dijawab). */}
+            {nmDraftTrim.length > 0 && nmIsNewPerson === null && (
+              <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 5, fontSize: 10.5, color: t.amber, fontWeight: 600 }}>
+                <Info size={11} style={{ flexShrink: 0 }} /> Pilih salah satu dulu supaya bisa disimpan.
+              </div>
+            )}
           </div>
         )}
 
-        {namaVal && nmIsNewPerson === true && (
+        {/* UPDATE (permintaan user - "jika nama kosong dia perlu mengisi
+            join datenya juga"): blok Join Date ini dulu CUMA muncul pas
+            "Ubah Nama" + ditandai "Orang Baru" - sekarang JUGA muncul pas
+            "Isi Nama" pertama kali (namaVal msh kosong), labelnya
+            nyesuaiin konteks ("Join Date" polos drpd "Join Date Baru" krn
+            emang blm ada yg lama). */}
+        {(!namaVal || (namaVal && nmIsNewPerson === true)) && (
           <div style={{ marginBottom: 18 }}>
-            <div style={labelStyle}>Join Date Baru</div>
-            <input type="date" value={nmJoinDate} max={todayISO()} onChange={(ev) => setNmJoinDate(ev.target.value)} style={textInputStyle} />
+            <div style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 5 }}>
+              {namaVal ? "Join Date Baru" : "Join Date"}
+              <span style={{ fontSize: 9, fontWeight: 800, color: t.red, background: t.redBg, borderRadius: 999, padding: "1.5px 6px", textTransform: "none", letterSpacing: 0 }}>Wajib</span>
+            </div>
+            <input type="date" onClick={(ev) => { if (!ev.currentTarget.disabled) ev.currentTarget.showPicker?.(); }} value={nmJoinDate} max={todayISO()} onChange={(ev) => setNmJoinDate(ev.target.value)} style={textInputStyle} />
+            {!nmJoinDate && (
+              <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 5, fontSize: 10.5, color: t.amber, fontWeight: 600 }}>
+                <Info size={11} style={{ flexShrink: 0 }} /> {namaVal ? "Isi tanggal mulai orang baru ini dulu." : "Isi tanggal mulai bergabung DSE ini dulu."}
+              </div>
+            )}
           </div>
         )}
 
@@ -1426,6 +3732,7 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
             Batal
           </button>
           <button onClick={handleSaveName} disabled={nmSaving || !nmValid}
+            title={!nmValid ? (!nmDraftTrim ? "Isi nama dulu" : (!namaVal && !nmJoinDate) ? "Isi Join Date dulu" : namaVal && nmIsNewPerson === null ? "Pilih dulu apakah ini orang baru atau sama" : "Isi Join Date baru dulu") : undefined}
             style={{ flex: 1, height: 36, borderRadius: 9, border: "none", background: nmValid ? t.teal : t.inputBg, color: nmValid ? "#fff" : t.lo, fontSize: 12.5, fontWeight: 700, cursor: nmValid && !nmSaving ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, opacity: nmSaving ? 0.7 : 1 }}>
             {nmSaving ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Simpan
           </button>
@@ -1451,12 +3758,12 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
   // kepaksa wrap, dia ikut turun rapi sbg baris baru (bukan ngambang).
   // UPDATE (permintaan user - "buat card yang sangat rapi memuat id
   // dengan rapi lalu tombol log tidak perlu muncul, nanti dia dimunculkan
-  // saat salah satu di klik saja, dan juga MC Branch Region Partner ada
-  // di detailnya namun di card pertama dia akan menampilkan id dan MC
+  // saat salah satu di klik saja, dan juga District Area Region Partner ada
+  // di detailnya namun di card pertama dia akan menampilkan id dan District
   // saja"): renderDualIdChips skrg nerima opsi { showHistory, showMc } -
   // kartu list (collapsed) pakai showHistory:false (ikon log dipindah ke
   // header popup, cuma muncul begitu kartu di-tap/detail-nya dibuka) +
-  // showMc:true (chip MC nampil tambahan di kartu list, tapi Branch/
+  // showMc:true (chip District nampil tambahan di kartu list, tapi Area/
   // Region/Partner TIDAK - itu cuma ada di dalam popup detail/form).
   const renderDualIdChips = (compact, trailing, opts) => {
     const { showHistory = true, showMc = false } = opts || {};
@@ -1474,17 +3781,17 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
           "IM3 "/"3ID " dihapus - warna dot+chip (kuning vs pink) udah
           cukup jadi penanda, tooltip (title) tetap nyimpen keterangan
           lengkapnya. Teks lebih pendek jadi otomatis lebih gampang muat
-          1 baris yg sama bareng chip lain (MC, dst). */}
-      <span title="ID IM3" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: compact ? 10 : 10.5, fontWeight: 800, color: "#8A6A00", background: "rgba(245,183,0,0.14)", borderRadius: 999, padding: "2px 7px", flexShrink: 0 }}>
-        <span style={{ width: 5, height: 5, borderRadius: 999, background: "#F5B700", flexShrink: 0 }} /> {dse.dse_code}
+          1 baris yg sama bareng chip lain (District, dst). */}
+      <span title="ID IM3" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: compact ? 10 : 10.5, fontWeight: 800, color: "#92400E", background: "rgba(217,119,6,0.17)", border: "1px solid rgba(217,119,6,0.34)", borderRadius: 999, padding: "2px 7px", flexShrink: 0 }}>
+        <span style={{ width: 5, height: 5, borderRadius: 999, background: "#D97706", flexShrink: 0 }} /> {dse.dse_code}
       </span>
       {dse.dse_code_3id && (
-        <span title="ID 3ID" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: compact ? 10 : 10.5, fontWeight: 800, color: "#C2187C", background: "rgba(194,24,124,0.1)", borderRadius: 999, padding: "2px 7px", flexShrink: 0 }}>
-          <span style={{ width: 5, height: 5, borderRadius: 999, background: "#C2187C", flexShrink: 0 }} /> {dse.dse_code_3id}
+        <span title="ID 3ID" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: compact ? 10 : 10.5, fontWeight: 800, color: "#9D174D", background: "rgba(190,24,93,0.15)", border: "1px solid rgba(190,24,93,0.32)", borderRadius: 999, padding: "2px 7px", flexShrink: 0 }}>
+          <span style={{ width: 5, height: 5, borderRadius: 999, background: "#BE185D", flexShrink: 0 }} /> {dse.dse_code_3id}
         </span>
       )}
       {showMc && dse.mc && (
-        <span title="Micro Cluster" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: compact ? 10 : 10.5, fontWeight: 800, color: t.mid, background: t.sub, borderRadius: 999, padding: "2px 7px", flexShrink: 0 }}>
+        <span title="District" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: compact ? 10 : 10.5, fontWeight: 800, color: t.mid, background: t.sub, borderRadius: 999, padding: "2px 7px", flexShrink: 0 }}>
 <MapPin size={9} style={{ flexShrink: 0 }} /> {dse.mc}
         </span>
       )}
@@ -1501,9 +3808,14 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
   // OTOMATIS NUTUP begitu simpan sukses (UX umum bottom-sheet form).
   // Dipanggil tanpa argumen ke-2 di tabel desktop -> perilakunya PERSIS
   // sama spt sebelumnya (ga ada yg nutup krn emang ga ada popup di sana).
+  // UPDATE (permintaan user - screenshot footer popup "perbaiki tombol
+  // batal dan simpan"): tinggi/font tombol Simpan ini dulu 30px/12px -
+  // beda 4px & setengah ukuran font dari tombol "Batal" di sebelahnya
+  // (34px/12.5px, lihat footer editPopupPortal) jadi 2 tombol ga sejajar
+  // persis. Disamain ke 34px/12.5px biar footer-nya rapi & konsisten.
   const renderSaveButton = (full, onAfterSaved) => !readOnly && (
     <button onClick={async () => { const ok = await onSave(dse.dse_code); if (ok && onAfterSaved) onAfterSaved(); }} disabled={saving || !dirty}
-      style={{ display: "flex", alignItems: "center", gap: 6, height: 30, padding: "0 12px", borderRadius: 8, border: "none", background: dirty ? t.teal : t.inputBg, color: dirty ? "#fff" : t.lo, fontSize: 12, fontWeight: 700, cursor: dirty && !saving ? "pointer" : "default", opacity: saving ? 0.6 : 1, flexShrink: 0, width: full ? "100%" : undefined, justifyContent: full ? "center" : undefined }}>
+      style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 12px", borderRadius: 8, border: "none", background: dirty ? t.teal : t.inputBg, color: dirty ? "#fff" : t.lo, fontSize: 12.5, fontWeight: 700, cursor: dirty && !saving ? "pointer" : "default", opacity: saving ? 0.6 : 1, flexShrink: 0, width: full ? "100%" : undefined, justifyContent: full ? "center" : undefined }}>
       {saving ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Simpan
     </button>
   );
@@ -1520,19 +3832,24 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
     // UPDATE (permintaan user - "pisahkan menjadi 4 sub tab, 1. Informasi
     // DSE, 2. Penjualan SP, 3. Penjualan Voucher, dan juga Penjualan
     // Saldo, buat dengan UI yang sangat baik"): popup form yg tadinya 1
-    // scroll panjang (Nama+Partner/Region/Branch+Status/JoinDate+SP+
-    // Voucher+Saldo+Total+MC/Catatan numpuk ke bawah) dipecah jadi
+    // scroll panjang (Nama+Partner/Region/Area+Status/JoinDate+SP+
+    // Voucher+Saldo+Total+District/Catatan numpuk ke bawah) dipecah jadi
     // sub-tab terpisah di dalam popup yg sama - "Informasi DSE" (identitas
-    // + MC + Catatan + riwayat update), lalu 1 tab KHUSUS per jenis
+    // + District + Catatan + riwayat update), lalu 1 tab KHUSUS per jenis
     // transaksi (SP/Voucher/Saldo) biar fokus ngisi 1 angka tanpa
     // kescroll lewatin field lain. Mode AR (isAr) dapet pola yg sama tapi
     // cuma 2 tab (Informasi DSE / AR & Piutang) krn emang cuma itu jenis
     // transaksinya. Ringkasan "Total Penjualan" ditaruh TETAP/persisten
     // di luar area scroll (nempel di bawah tab bar) biar konteks totalnya
     // selalu keliatan walau lagi fokus di salah satu tab SP/Voucher/Saldo.
+    // UPDATE (permintaan user - "hilangkan saja fitur ini di sub menu AR"):
+    // tab "Informasi DSE" DIHAPUS SELURUHNYA dari mode AR (dulu cuma
+    // dikasih banner read-only + tombol "Catat Hari Ini" krn mode AR
+    // skrg permanen Full Month) - sekarang mode AR cuma punya 1 tab
+    // yaitu "AR / Piutang" itu sendiri, jadi tab bar-nya ga perlu
+    // nampilin pilihan tab lagi (lihat sheetTabBar.length <= 1 di bawah).
     const sheetTabs = isAr
       ? [
-          { k: "info", label: "Informasi DSE", icon: Users },
           { k: "ar", label: "AR / Piutang", icon: AlertTriangle },
         ]
       : [
@@ -1549,16 +3866,25 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
     // DSE/SP/Voucher/Saldo), masing2 langsung buka DseHistoryModal
     // dgn tab yg SESUAI (initialTab) - lebih jelas konteksnya drpd 1
     // tombol generik di header yg bukanya selalu balik ke tab "info".
+    // UPDATE (permintaan user - "perbaiki tombol riwayat ini"): dulu
+    // tombol "Riwayat" cuma teks+ikon polos ngambang tanpa latar/batas
+    // sama sekali (gampang keluput, touch target kecil banget krn
+    // padding:0) - sekarang jadi pill button beneran: ada latar teal
+    // tipis + border tipis + padding yg layak diklik, dengan hover
+    // state (latar jadi lebih pekat) biar kerasa interaktif.
     const renderHistoryLink = (tabKey, label) => (
-      <button key={`hist-${tabKey}`} onClick={() => onShowHistory?.(dse, tabKey)}
-        style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", color: t.teal, fontSize: 11, fontWeight: 700, cursor: "pointer", padding: 0, marginLeft: "auto", flexShrink: 0 }}>
-        <History size={12} /> {label}
+      <button key={`hist-${tabKey}`} onClick={() => { setCardOpen(false); onShowHistory?.(dse, tabKey, () => setCardOpen(true)); }}
+        onMouseEnter={(ev) => { ev.currentTarget.style.background = t.tealBd; }}
+        onMouseLeave={(ev) => { ev.currentTarget.style.background = t.tealBg; }}
+        style={{ display: "flex", alignItems: "center", gap: 6, background: t.tealBg, border: `1px solid ${t.tealBd}`, borderRadius: 999, color: t.teal, fontSize: 11.5, fontWeight: 800, cursor: "pointer", padding: "6px 12px", marginLeft: "auto", flexShrink: 0, transition: "background 0.12s", fontFamily: FONT }}>
+        <History size={13} /> {label}
       </button>
     );
 
     const infoBody = (
       <>
         <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
+          <span style={{ fontSize: 14.5, fontWeight: 800, color: t.hi }}>Informasi DSE</span>
           {renderHistoryLink("info", "Riwayat Informasi")}
         </div>
         {/* UPDATE (permintaan user - "disini juga untuk merubah data
@@ -1574,48 +3900,23 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
             langsung kelihatan sebelum nyoba isi field manapun. */}
         {periodMode === "bulan" && (
           <div style={{ marginBottom: 14, padding: 12, borderRadius: 12, border: `1px dashed ${t.inputBd}`, background: t.sub }}>
-            <div style={{ fontSize: 11.5, color: t.mid, marginBottom: 8, lineHeight: 1.45 }}>Untuk mengubah data DSE (Nama, Status, Join Date), gunakan menu <b>Daily</b> - pilih tanggalnya, lalu ubah di sana.</div>
+            <div style={{ fontSize: 11.5, color: t.mid, marginBottom: 8, lineHeight: 1.45 }}>Untuk mengubah data DSE (Nama, Status, atau Join Date), silakan beralih ke menu <b>Daily</b> dan pilih tanggal yang sesuai untuk melakukan perubahan.</div>
             <button onClick={() => onPickDate?.(todayISO())}
               style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, height: 34, borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
-              <Calendar size={14} /> Catat Hari Ini
+              <Calendar size={14} /> Catat Informasi DSE
             </button>
           </div>
         )}
-        {/* UPDATE (permintaan user - "diatas nama dse ada ID DSE IM3 dan ID
-            DSE 3ID"): 2 kode ini sebelumnya cuma nongol di chip header
-            kartu list (collapsed) - skrg ditambah juga di DALAM popup
-            detail, sbg 2 kotak read-only (bukan chip kecil lagi, biar
-            selaras sama field2 lain di tab ini) persis di atas Nama DSE -
-            titik warnanya SAMA PERSIS pola chip ID yg udah ada (amber=
-            IM3, pink=3ID) biar konsisten. 3ID cuma dirender kalau DSE itu
-            emang punya kodenya (ga semua DSE dual-ID). */}
-        <div style={{ display: "grid", gridTemplateColumns: dse.dse_code_3id ? "1fr 1fr" : "1fr", gap: 10, marginBottom: 14 }}>
-          <div>
-            <div style={labelStyle}>ID DSE (IM3)</div>
-            <div style={{ height: 34, padding: "0 10px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: t.sub, display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
-              <span style={{ width: 6, height: 6, borderRadius: 999, background: "#F5B700", flexShrink: 0 }} />
-              <span style={{ fontSize: 12.5, fontWeight: 700, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dse.dse_code}</span>
-            </div>
-          </div>
-          {dse.dse_code_3id && (
-            <div>
-              <div style={labelStyle}>ID DSE (3ID)</div>
-              <div style={{ height: 34, padding: "0 10px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: t.sub, display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
-                <span style={{ width: 6, height: 6, borderRadius: 999, background: "#C2187C", flexShrink: 0 }} />
-                <span style={{ fontSize: 12.5, fontWeight: 700, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dse.dse_code_3id}</span>
-              </div>
-            </div>
-          )}
-        </div>
         <div style={{ marginBottom: 14 }}>
           <div style={labelStyle}>Nama DSE</div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <div style={{ flex: 1, minWidth: 0, height: 34, padding: "0 10px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: t.sub, display: "flex", alignItems: "center", overflow: "hidden" }}>
-              <span style={{ fontSize: 12.5, fontWeight: namaVal ? 700 : 400, fontStyle: namaVal ? "normal" : "italic", color: namaVal ? t.hi : t.lo, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{namaVal || "Belum diisi"}</span>
+              <span style={{ fontSize: 13, fontWeight: namaVal ? 700 : 400, fontStyle: namaVal ? "normal" : "italic", color: namaVal ? t.hi : t.lo, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{namaVal || "Belum diisi"}</span>
             </div>
             {!readOnly && (
               <button type="button" onClick={() => { setNmDraft(namaVal); setNmIsNewPerson(null); setNmJoinDate(joinDate || ""); setNameModalOpen(true); }}
-                style={{ flexShrink: 0, height: 34, padding: "0 12px", borderRadius: 7, border: "none", background: t.teal, color: "#fff", fontSize: 11.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 12px", borderRadius: 7, border: "none", background: t.teal, color: "#fff", fontSize: 11.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                <Pencil size={12} />
                 {namaVal ? "Ubah Nama" : "Isi Nama"}
               </button>
             )}
@@ -1630,7 +3931,7 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
           <div>
             <div style={labelStyle}>Join Date</div>
             <div style={{ position: "relative" }}>
-              <input type="date" disabled={readOnly || !namaVal} value={joinDate || ""} onChange={(ev) => onIdentityChange(dse.dse_code, "join_date", ev.target.value)} style={{ ...textInputStyle, ...(!namaVal ? { opacity: 0.5, cursor: "not-allowed" } : null) }} />
+              <input type="date" onClick={(ev) => { if (!ev.currentTarget.disabled) ev.currentTarget.showPicker?.(); }} disabled={readOnly || !namaVal} value={joinDate || ""} onChange={(ev) => onIdentityChange(dse.dse_code, "join_date", ev.target.value)} style={{ ...textInputStyle, ...(!namaVal ? { opacity: 0.5, cursor: "not-allowed" } : null) }} />
               {!namaVal && !readOnly && (
                 <div onClick={showJoinDateHint} style={{ position: "absolute", inset: 0, cursor: "not-allowed" }} />
               )}
@@ -1643,38 +3944,40 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
           </div>
         </div>
 
-        {/* UPDATE (permintaan user - "nama MC, nama branch, region and
-            partner itu tidak bisa diubah dari sini"): MC dulu text-input
-            yg bisa diketik bebas di popup ini - padahal MC/Branch/Region/
+        {/* UPDATE (permintaan user - "nama District, nama branch, region and
+            partner itu tidak bisa diubah dari sini"): District dulu text-input
+            yg bisa diketik bebas di popup ini - padahal District/Area/Region/
             Partner itu identitas STRUKTURAL (diatur dari sumber data
             induk, bukan per-DSE di popup transaksi ini), jadi sekarang
-            ditampilkan READ-ONLY sama persis kayak Branch/Region/Partner
+            ditampilkan READ-ONLY sama persis kayak Area/Region/Partner
             di bawahnya (1 blok konsisten, bukan 1 input + 3 display). */}
         {/* UPDATE (permintaan user - "mc dan branch dibuat dalam row
-            yang sama"): MC & Branch digabung jadi 1 baris grid 2 kolom
+            yang sama"): District & Area digabung jadi 1 baris grid 2 kolom
             (match pola Status/Join Date di atasnya), Region & Partner
             tetap 1 baris penuh di bawahnya masing2. */}
         {/* UPDATE (permintaan user - "buat toggle untuk menyembunyikan
-            atau tampilkan detail"): seluruh blok MC/Branch/Region/Partner
+            atau tampilkan detail"): seluruh blok District/Area/Region/Partner
             dibungkus 1 tombol toggle - default collapsed (showStructuralDetail
             = false), chevron muter 180deg pas kebuka, teks tombol ikut
             berubah ("Lihat"/"Sembunyikan Detail Struktural") biar jelas
             aksinya apa. */}
         {/* BUGFIX (screenshot user - teks sliver "ural..." keliatan
             kepotong di pojok bawah popup): label tombol ini sebelumnya 1
-            baris panjang ("Lihat Detail Struktural (MC, Branch, Region,
+            baris panjang ("Lihat Detail Struktural (District, Area, Region,
             Partner)") tanpa lineHeight/wrap control - di lebar popup yg
-            lebih sempit, teksnya wrap ke baris ke-2 ("...ural (MC,
-            Branch, ...)") dan baris ke-2 itu kepotong/numpuk sama
+            lebih sempit, teksnya wrap ke baris ke-2 ("...ural (District,
+            Area, ...)") dan baris ke-2 itu kepotong/numpuk sama
             konten di bawahnya karena button ga ngasih ruang vertikal
             ekstra buat baris tambahan. Sekarang label dipecah jadi 2
             bagian - judul pendek yg ga pernah wrap, + keterangan
-            "(MC, Branch, Region, Partner)" di baris terpisah di
+            "(District, Area, Region, Partner)" di baris terpisah di
             bawahnya (lebih kecil, redup) - jadi walau wrap, selalu
             dapet ruangnya sendiri, ga numpuk ke elemen lain. Styling
             tombol juga dirapihin (padding kiri-kanan match row lain,
             radius + hover bg tipis) biar konsisten sama tombol disclosure
             lain di popup ini (filter, import excel). */}
+        {SHOW_STRUCTURAL_DETAIL_TOGGLE && (
+        <>
         <button type="button" onClick={() => setShowStructuralDetail((v) => !v)}
           onMouseEnter={(ev) => { ev.currentTarget.style.background = t.sub; }}
           onMouseLeave={(ev) => { ev.currentTarget.style.background = "none"; }}
@@ -1682,7 +3985,7 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
           <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1, minWidth: 0 }}>
             <span style={{ fontSize: 11.5, fontWeight: 700, color: t.mid, lineHeight: 1.3 }}>{showStructuralDetail ? "Sembunyikan Detail Struktural" : "Lihat Detail Struktural"}</span>
             {!showStructuralDetail && (
-              <span style={{ fontSize: 10, fontWeight: 600, color: t.lo, lineHeight: 1.3 }}>(MC, Branch, Region, Partner)</span>
+              <span style={{ fontSize: 10, fontWeight: 600, color: t.lo, lineHeight: 1.3 }}>(District, Area, Region, Partner)</span>
             )}
           </span>
           <ChevronDown size={14} color={t.lo} style={{ flexShrink: 0, transition: "transform 0.2s", transform: showStructuralDetail ? "rotate(180deg)" : "none" }} />
@@ -1691,13 +3994,13 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
         <>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
           <div>
-            <div style={labelStyle}>MC</div>
+            <div style={labelStyle}>District</div>
             <div style={{ height: 34, padding: "0 10px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: t.sub, display: "flex", alignItems: "center", boxSizing: "border-box" }}>
               <span style={{ fontSize: 12.5, fontWeight: 700, color: t.mid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dse.mc || "—"}</span>
             </div>
           </div>
           <div>
-            <div style={labelStyle}>Branch</div>
+            <div style={labelStyle}>Area</div>
             <div style={{ height: 34, padding: "0 10px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: t.sub, display: "flex", alignItems: "center", boxSizing: "border-box" }}>
               <span style={{ fontSize: 12.5, fontWeight: 700, color: t.mid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dse.branch || "—"}</span>
             </div>
@@ -1707,12 +4010,12 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
         {/* UPDATE (permintaan user - "coba region, partner dibuat dalam
             satu row yang sama jika masih muat sama seperti mc dan
             branch, namun jika tidak muat baru pisahkan rownya"): beda
-            dari MC/Branch (biasanya pendek, SELALU muat 1 baris), Region
+            dari District/Area (biasanya pendek, SELALU muat 1 baris), Region
             & terutama Partner (nama perusahaan) sering panjang - gabung
             paksa 2 kolom bikin teksnya kepotong ellipsis. Jadi dicek dulu
             total panjang teksnya (heuristik char count, kasar tapi
             cukup) - kalau pendek keduanya digabung 1 baris 2 kolom (match
-            pola MC/Branch), kalau salah satu/keduanya panjang baru
+            pola District/Area), kalau salah satu/keduanya panjang baru
             dipisah jadi 2 baris penuh (ga ada resiko kepotong). */}
         {(() => {
           const regionTxt = dse.region || "—";
@@ -1735,6 +4038,8 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
         })()}
         </>
         )}
+        </>
+        )}
 
         {isAr && (
           <div style={{ marginBottom: 0 }}>
@@ -1743,7 +4048,6 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
           </div>
         )}
 
-        {AuditLine && <div style={{ marginTop: 14, paddingTop: 10, borderTop: `1px dashed ${t.line}` }}>{AuditLine}</div>}
       </>
     );
 
@@ -1772,35 +4076,20 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
     // DI SANA baru edit per-hari yg sesungguhnya aman/akurat.
     const isBulanMode = periodMode === "bulan";
     const renderMoneyTab = (tabKey, label, color, bg, value, onChange, Icon) => {
-      const pct = totalPenjualan > 0 ? Math.round((fRaw(value) / totalPenjualan) * 100) : 0;
+      // UPDATE (permintaan user - "tidak perlu ditampilkan persentasenya,
+      // membingungkan"): badge "X% dari Total" yg sempat ditambah (lihat
+      // histori UPDATE di bawah) dihapus total sesuai permintaan user -
+      // `pct` sendiri udah ga dipakai di mana2 lagi stlh ini.
       return (
         <>
           <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
-            {renderHistoryLink(tabKey, "Riwayat")}
-          </div>
-          {/* UPDATE (permintaan user - "buat desain input penjualan
-              menjadi lebih bagus"): header icon+judul+subtitle dulu
-              ngambang di atas background polos putih, skrg dibungkus
-              panel bertinta warna tab (pakai `bg` yg sama dgn warna icon
-              box) - biar setiap tab SP/Voucher/Saldo punya identitas
-              visual yg jelas begitu dibuka, bukan cuma beda di 1 icon
-              kecil doang. */}
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, padding: "14px 14px", borderRadius: 14, background: bg }}>
-            <div style={{ width: 44, height: 44, borderRadius: 13, background: t.card, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: t.shadowSm }}>
-              <Icon size={19} color={color} />
-            </div>
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ fontSize: 15.5, fontWeight: 800, color: t.hi }}>Penjualan {label}</div>
-              <div style={{ fontSize: 11, color: t.mid, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Penjualan {label}{periodSubtitle ? ` ${periodSubtitle}` : ""}</div>
-            </div>
-            {fRaw(value) > 0 && (
-              <span style={{ fontSize: 10, fontWeight: 800, color, background: t.card, borderRadius: 999, padding: "3px 8px", flexShrink: 0, whiteSpace: "nowrap", boxShadow: t.shadowSm }}>{pct}%</span>
-            )}
+            <span style={{ fontSize: 14.5, fontWeight: 800, color: t.hi }}>Penjualan {label}</span>
+            {renderHistoryLink(tabKey, "Riwayat Penjualan")}
           </div>
           {isBulanMode ? (
             <>
               <div>
-                <div style={labelStyle}>Total Penjualan {label} (Rp)</div>
+                <div style={labelStyle}>Total Penjualan {label} {periodSubtitle || fmtDayMonthFull(entryDate)}</div>
                 {/* UPDATE (sama konteks - polish mode Full Month read-only
                     biar sejajar sama mode Daily yg editable): angka
                     dibuat lebih besar/tebal + prefix "Rp" dipisah warna
@@ -1823,17 +4112,32 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
                   ga perlu digerbang readOnly - selalu tampil kapanpun
                   mode Full Month aktif. */}
               <div style={{ marginTop: 12, padding: 12, borderRadius: 12, border: `1px dashed ${t.inputBd}`, background: t.sub }}>
-                <div style={{ fontSize: 11.5, color: t.mid, marginBottom: 8, lineHeight: 1.45 }}>Untuk mengedit penjualan <b>{label}</b>, gunakan menu <b>Daily</b> - pilih tanggalnya, lalu catat di sana.</div>
+                <div style={{ fontSize: 11.5, color: t.mid, marginBottom: 8, lineHeight: 1.45 }}>Untuk mencatat atau mengubah data penjualan <b>{label}</b>, silakan beralih ke menu <b>Daily</b> dan pilih tanggal yang sesuai untuk mencatat data tersebut.</div>
                 <button onClick={() => onPickDate?.(todayISO())}
                   style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, height: 34, borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
-                  <Calendar size={14} /> Catat Hari Ini
+                  <Calendar size={14} /> Catat Penjualan {label}
                 </button>
               </div>
             </>
           ) : (
             <div>
-              <div style={labelStyle}>Total Penjualan {label} (Rp)</div>
-              <MoneyInput t={t} disabled={readOnly} value={value} onChange={onChange} accent={color} big prefix="Rp" />
+              {/* UPDATE (permintaan user - screenshot input "Total
+                  Penjualan Voucher (Rp)", "perbaiki agar ada keterangan
+                  ... tanggalnya sebutkan"): label field edit ini dulu
+                  statis, ga nyebut ITU BUAT TANGGAL BERAPA - padahal
+                  field ini "per tanggal snapshot" (beda tanggal di nav
+                  atas = beda angka yg diedit). Ditambah tanggal aktif
+                  (entryDate, format sama kyk header popup) biar jelas
+                  angka yg lagi diinput/dilihat itu punya tanggal berapa,
+                  ga ketuker sama tanggal lain pas klik2 nav tanggal. */}
+              <div style={labelStyle}>Total Penjualan {label} {fmtDayMonthFull(entryDate)}</div>
+              {loadingDse ? (
+                <div style={{ width: "100%", height: 48, borderRadius: 11, border: `1px solid ${t.inputBd}`, background: t.sub, display: "flex", alignItems: "center", padding: "0 14px", boxSizing: "border-box" }}>
+                  <NumSkeleton t={t} width="55%" height={17} />
+                </div>
+              ) : (
+                <MoneyInput t={t} disabled={readOnly} value={value} onChange={onChange} accent={color} big prefix="Rp" />
+              )}
             </div>
           )}
         </>
@@ -1846,8 +4150,11 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
 
     const arBody = (
       <div>
-        <div style={labelStyle}>AR / Piutang</div>
-        <ArPiutangInput t={t} readOnly={readOnly} dseCode={dse.dse_code} entryDate={entryDate} profile={profile} outstanding={outstanding} onApplyLedger={handleApplyLedger} onConfirmSave={() => onSave(dse.dse_code)} saving={saving} />
+        {/* UPDATE (bugfix - "mengapa seperti ini, seharusnya seperti ini"):
+            tab detail "AR / Piutang" ini skrg render form "Catat Transaksi
+            AR" LENGKAP langsung (inline) drpd versi ringkas (saldo+LUNAS+
+            1 tombol bulat) yg dulu ngaco di tab khusus ini. */}
+        <ArPiutangInput t={t} readOnly={readOnly} inline dseCode={dse.dse_code} dseCode3id={dse.dse_code_3id} dseName={dse.ds_name} mc={dse.mc} branch={dse.branch} entryDate={entryDate} arMonth={arMonth} profile={profile} outstanding={outstanding} onApplyLedger={handleApplyLedger} onConfirmSave={() => onSave(dse.dse_code)} saving={saving} />
       </div>
     );
 
@@ -1890,7 +4197,7 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
           <ChevronLeft size={17} />
         </button>
         <div style={{ position: "relative", flex: 1, minWidth: 0, height: 38 }}>
-          <div ref={popupDateLabelBtnRef} style={{ height: 38, borderRadius: 11, border: `1px solid ${t.inputBd}`, background: t.inputBg, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "0 12px", pointerEvents: "none" }}>
+          <div style={{ height: 38, borderRadius: 11, border: `1px solid ${t.inputBd}`, background: t.inputBg, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "0 12px", pointerEvents: "none" }}>
             {/* UPDATE (permintaan user - "jika pada full month maka dia
                 akan menampilkan bulan bukan tanggal"): di mode Full Month,
                 entryDate itu cuma tanggal 1 (hari pertama rentang bulan) -
@@ -1909,10 +4216,9 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
                 overflow/textOverflow tetap dipertahankan sbg jaring
                 pengaman ekstrem (mis. lebar box 0 sesaat sblm ResizeObserver
                 sempat ngukur), bukan mekanisme utama lagi. */}
-            <span style={{ fontSize: "clamp(12px, 3.6vw, 16px)", fontWeight: 700, color: t.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{periodMode === "bulan" ? (periodSubtitle || fmtDayMonth(entryDate)) : (popupDateLabel || fmtDayMonth(entryDate))}</span>
+            <span style={{ fontSize: "clamp(11px, 3.2vw, 14px)", fontWeight: 700, color: t.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{periodMode === "bulan" ? (periodSubtitle || fmtDayMonthFull(entryDate)) : fmtDayMonthFull(entryDate)}</span>
             <ChevronDown size={15} color={t.lo} style={{ flexShrink: 0 }} />
           </div>
-          <span ref={popupDateMeasureRef} aria-hidden="true" style={{ position: "absolute", visibility: "hidden", whiteSpace: "nowrap", fontSize: "clamp(12px, 3.6vw, 16px)", fontWeight: 700, pointerEvents: "none" }} />
           {/* UPDATE (permintaan user - "ketika tanggalnya di klik maka
               akan menampilkan kalender"): input date asli ditumpuk
               transparan persis di atas pill biar klik di mana aja kena -
@@ -1980,6 +4286,16 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
     // dgn jelas, bukan cuma beda warna background tipis.
     const sheetTabBar = (
       <div style={{ flexShrink: 0, padding: "10px 18px 0" }}>
+        {/* UPDATE (permintaan user - "orang pertama kali lihat akan
+            bingung"): 4 tombol kategori ini sebelumnya ga ada judul/
+            konteks sama sekali di atasnya - org baru buka popup ga tau
+            ini tombol navigasi ("klik salah satu buat lihat/isi data-nya")
+            vs sekadar 4 info box. Ditambah label kecil "PILIH KATEGORI"
+            (pola sama kayak labelStyle field lain di popup ini) + tombol
+            yg lagi aktif skrg dikasih shadow + checkmark bulat kecil biar
+            "terpilih"-nya KELIHATAN, ga cuma beda warna border tipis yg
+            gampang keluput buat first-time user. */}
+        <div style={{ fontSize: 9.5, color: t.lo, marginBottom: 6, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.2 }}>Pilih Kategori</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
           {sheetTabs.map((st) => {
             const active = sheetTab === st.k;
@@ -1989,9 +4305,11 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
             return (
               <button key={st.k} onClick={() => setSheetTab(st.k)}
                 style={{
+                  position: "relative",
                   display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 12,
                   border: `1.5px solid ${active ? tabColor : t.line}`,
                   background: active ? t.card : t.sub,
+                  boxShadow: active ? `0 3px 10px -2px ${tabColor}55` : "none",
                   color: active ? t.hi : t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
                   textAlign: "left", transition: "border-color 0.15s, box-shadow 0.15s, background 0.15s",
                 }}>
@@ -1999,6 +4317,11 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
                   <Icon size={13} color={tabColor} />
                 </div>
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{st.label}</span>
+                {active && (
+                  <div style={{ position: "absolute", top: -5, right: -5, width: 15, height: 15, borderRadius: 999, background: tabColor, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 0 0 2px ${t.card}` }}>
+                    <Check size={9} color="#fff" strokeWidth={3.5} />
+                  </div>
+                )}
               </button>
             );
           })}
@@ -2012,24 +4335,37 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
     // dari pemanggil DseInputRow = periodMode==="tanggal" && entryDate===
     // todayISO()); di tanggal lain / mode Full Month tetap label polos.
     const totalLabel = isAr ? "AR / Piutang" : (periodMode === "bulan" ? `Total Penjualan ${(periodSubtitle || "").split(" ")[0]}` : (isToday ? "Total Penjualan Hari Ini" : "Total Penjualan"));
+    // FIX (bug report - "mengapa masih bisa diklik dan menghasilkan ini"):
+    // di mode AR + readOnly (Full Month/range - TAMPILAN DEFAULT di
+    // grouped list District/Area/dst), kartu mobile ini dulu TETAP bisa diklik
+    // & membuka editPopupPortal, tapi isinya (arBody -> ArPiutangInput
+    // inline readOnly) cuma tampilan ambient read-only (saldo+pill LUNAS,
+    // TANPA list/create/detail) - jadi popup kebuka tapi ga ada fungsinya
+    // sama sekali selain tombol "Batal", dead-end klik. Beda dgn desktop
+    // yg sudah punya tombol "Edit AR" terpisah sbg satu-satunya trigger
+    // CRUD piutang (lihat komentar di kolom Aksi <ArPiutangInput>), jadi
+    // tampilan ambient AR di kartu ini SEHARUSNYA juga ga perlu jadi
+    // trigger klik terpisah - cukup ditampilkan sbg teks/ringkasan biasa.
+    const arLocked = isAr && readOnly;
     const collapsedCard = (
       <>
       {/* UPDATE (permintaan user - "coba redesign total, dan juga untuk
           1 2 3 gunakan icon yang ada pada level level sebelumnya"): kartu
           list mobile dipoles ulang - rank badge skrg pakai KOMPONEN YG
           SAMA PERSIS (RankBadge) dgn yg dipakai di tabel ringkasan drill-
-          down Partner/Region/Branch/MC/DSE (Crown #1, Medal #2/#3,
+          down Partner/Region/Area/District/DSE (Crown #1, Medal #2/#3,
           lingkaran angka #4+), bukan lagi kotak teal polos bertuliskan
           angka - biar konsisten 1 bahasa visual Rank di SELURUH tampilan.
-          Tata letak tetap 3 baris jelas (nama+rank / chip ID / chip MC)
+          Tata letak tetap 3 baris jelas (nama+rank / chip ID / chip District)
           spt permintaan sebelumnya, tapi footer Total Penjualan dipoles
           jadi lebih "hero" - ikon TrendingUp kecil nempel label, gradient
           lembut teal (bukan abu polos) biar jadi penutup yg nonjol tanpa
           norak, radius card dirapikan jadi 16 biar lebih modern. */}
       <div style={{ borderRadius: 16, border: `1px solid ${dirty ? t.tealBd : t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden", transition: "border-color 0.15s" }}>
-        <div role="button" tabIndex={0} onClick={() => { setCardOpen(true); setSheetTab("info"); }}
-          onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); setCardOpen(true); setSheetTab("info"); } }}
-          style={{ width: "100%", display: "flex", flexDirection: "column", gap: 10, padding: "14px 14px 0", background: "none", border: "none", cursor: "pointer", textAlign: "left", fontFamily: FONT }}>
+        <div role={arLocked ? undefined : "button"} tabIndex={arLocked ? undefined : 0}
+          onClick={arLocked ? undefined : () => { setCardOpen(true); setSheetTab("info"); }}
+          onKeyDown={arLocked ? undefined : (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); setCardOpen(true); setSheetTab("info"); } }}
+          style={{ width: "100%", display: "flex", flexDirection: "column", gap: 10, padding: "14px 14px 0", background: "none", border: "none", cursor: arLocked ? "default" : "pointer", textAlign: "left", fontFamily: FONT }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0, overflow: "hidden" }}>
               {!!rank && (
@@ -2042,13 +4378,21 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
               {dirty && <span title="Ada perubahan belum disimpan" style={{ width: 7, height: 7, borderRadius: 999, background: t.teal, flexShrink: 0 }} />}
               <span style={{ fontSize: 10, fontWeight: 800, color: sm.color, background: sm.bg, borderRadius: 999, padding: "3px 9px", whiteSpace: "nowrap", flexShrink: 0 }}>{sm.label}</span>
+              {ageInfo && (
+                <span title={`${sm.label} sejak ${fmtDayMonthFull(ageInfo.sinceDate)} — ${ageInfo.days} hari`} style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9.5, fontWeight: 700, color: t.mid, background: t.sub, borderRadius: 999, padding: "2.5px 7px 2.5px 6px", whiteSpace: "nowrap", flexShrink: 0 }}>
+                  <Clock size={9} strokeWidth={2.5} />
+                  {humanizeAge(ageInfo.days)}
+                </span>
+              )}
+              {!arLocked && (
               <span style={{ width: 24, height: 24, borderRadius: 999, background: t.sub, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 <ChevronRight size={14} color={t.mid} />
               </span>
+              )}
             </div>
           </div>
           {/* UPDATE (permintaan user - "buat id dan mc itu dalam satu
-              line yang sama"): chip MC digabung balik jadi SATU baris yg
+              line yang sama"): chip District digabung balik jadi SATU baris yg
               sama dgn chip ID IM3/3ID (lewat opsi showMc:true di
               renderDualIdChips, 1 flex-wrap container) - bukan lagi baris
               terpisah sendiri di bawahnya. */}
@@ -2101,53 +4445,132 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
           (collapsedCard + popup) MAUPUN return desktop (<tr> + popup yg
           SAMA, bukan bikin ulang) - cardOpen (state yg sama) yg nentuin
           kebuka/ga, bisa di-trigger dari klik row manapun. */
+    const requestClosePopup = () => { if (runGuarded) runGuarded(() => setCardOpen(false)); else setCardOpen(false); };
     const editPopupPortal = cardOpen && typeof document !== "undefined" && createPortal(
         <div style={{ position: "fixed", inset: 0, zIndex: 9500, background: "rgba(15,23,32,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
-          onClick={(ev) => { if (ev.target === ev.currentTarget) setCardOpen(false); }}>
-          <div style={{ width: "92vw", maxWidth: 520, maxHeight: "88vh", background: t.card, borderRadius: 20, boxShadow: "0 24px 70px rgba(0,0,0,0.38)", display: "flex", flexDirection: "column", animation: "modalPopIn 0.22s cubic-bezier(0.2, 0.8, 0.2, 1)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", borderBottom: `1px solid ${t.line}`, flexShrink: 0 }}>
-              {!isAr ? (
-                <>
-                  {/* UPDATE (permintaan user - "saya ingin dalam satu row
-                      yang sama judul dan pickernya"): badge label balik
-                      SEJAJAR 1 baris sama nav tanggal (bukan ditumpuk di
-                      atasnya lagi) - tapi tetap pakai bentuk badge
-                      berwarna (bukan teks polos spt percobaan pertama yg
-                      keliatan cram), `alignItems:center` di container
-                      bikin badge-nya kesejajar vertikal pas sama tinggi
-                      pill nav di sebelahnya, `flexShrink:0` jaga badge ga
-                      ikut kegencet pas nav tanggalnya nyusut. */}
-                  {(() => {
-                    const periodLabelColor = sheetTab === "info" ? t.teal : sheetTab === "sp" ? t.red : sheetTab === "voucher" ? t.blue : t.amber;
-                    const periodLabelBg = sheetTab === "info" ? t.tealBg : sheetTab === "sp" ? t.redBg : sheetTab === "voucher" ? t.blueBg : t.amberBg;
+          onClick={(ev) => { if (ev.target === ev.currentTarget) requestClosePopup(); }}>
+          {/* UPDATE (permintaan user - "sepertinya desainya lebih bagus jika
+              kategori itu menjadi sidebar"): layout popup diubah dari kolom
+              tunggal (tab kategori grid 2x2 di ATAS body) jadi 2-KOLOM gaya
+              sidebar - kategori (Informasi DSE/SP/Voucher/Saldo) sekarang
+              jadi daftar vertikal MENEMPEL DI KIRI (pola sidebar umum), badan
+              popup (badge Periode + tanggal + caption + field2) di kolom
+              kanannya. Lebar popup dilebarkan dikit (520->600) biar sidebar
+              ga bikin sempit kolom kanan. Kalau cuma 1 kategori (mode AR),
+              sidebar ga dirender sama sekali (sama kayak sebelumnya
+              sheetTabBar disembunyikan), kolom kanan auto full width. ID DSE
+              & footer Batal/Simpan tetap FULL WIDTH ngelewatin sidebar
+              (bukan ikut masuk ke kolom kanan), biar identitas & tombol aksi
+              jelas berlaku utk SEMUA kategori, bukan cuma yg lagi aktif. */}
+          <div style={{ width: "92vw", maxWidth: 700, maxHeight: "88vh", background: t.card, borderRadius: 20, boxShadow: "0 24px 70px rgba(0,0,0,0.38)", display: "flex", flexDirection: "column", overflow: "hidden", animation: "modalPopIn 0.22s cubic-bezier(0.2, 0.8, 0.2, 1)" }}>
+            {/* UPDATE (permintaan user - "di atas tambahkan Form Informasi
+                & Penjualan DSE baru dikanannya ada tombol close"): title
+                bar paling atas popup - nama form + tombol close (X) biar
+                user eksplisit tau ini form apa & ada cara jelas nutup
+                popup tanpa harus scroll ke tombol Batal di bawah. */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "14px 18px", borderBottom: `1px solid ${t.line}`, flexShrink: 0 }}>
+              <span style={{ fontSize: 16, fontWeight: 800, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>Form Informasi &amp; Penjualan DSE</span>
+              {!isAr && (
+                <div style={{ display: "flex", alignItems: "center", gap: 2, padding: 2, borderRadius: 9, background: t.sub, flexShrink: 0 }}>
+                  {[{ k: "tanggal", label: "Daily" }, { k: "bulan", label: "Full Month" }].map(({ k, label }) => (
+                    <button key={k} onClick={() => onSwitchPeriodMode?.(k)}
+                      style={{ height: 26, padding: "0 10px", borderRadius: 7, border: "none", background: periodMode === k ? t.card : "transparent", color: periodMode === k ? t.hi : t.mid, fontSize: 10.5, fontWeight: periodMode === k ? 700 : 600, cursor: "pointer", fontFamily: FONT, boxShadow: periodMode === k ? t.shadowSm : "none", whiteSpace: "nowrap", transition: "background 0.15s, box-shadow 0.15s" }}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <button onClick={requestClosePopup} title="Tutup" style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                <X size={15} color={t.mid} />
+              </button>
+            </div>
+            <div style={{ padding: "16px 18px", borderBottom: `1px solid ${t.line}`, flexShrink: 0 }}>
+              <div style={{ display: "grid", gridTemplateColumns: dse.dse_code_3id ? "1fr 1fr" : "1fr", gap: 10 }}>
+                <div>
+                  <div style={labelStyle}>ID DSE (IM3)</div>
+                  <div style={{ height: 34, padding: "0 10px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: t.sub, display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
+                    <span style={{ width: 6, height: 6, borderRadius: 999, background: "#D97706", flexShrink: 0 }} />
+                    <span style={{ fontSize: 13, fontWeight: 700, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dse.dse_code}</span>
+                  </div>
+                </div>
+                {dse.dse_code_3id && (
+                  <div>
+                    <div style={labelStyle}>ID DSE (3ID)</div>
+                    <div style={{ height: 34, padding: "0 10px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: t.sub, display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
+                      <span style={{ width: 6, height: 6, borderRadius: 999, background: "#BE185D", flexShrink: 0 }} />
+                      <span style={{ fontSize: 13, fontWeight: 700, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dse.dse_code_3id}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+              {sheetTabs.length > 1 && (
+                <div style={{ width: 228, flexShrink: 0, borderRight: `1px solid ${t.line}`, background: t.sub, padding: "14px 10px", display: "flex", flexDirection: "column", gap: 7, overflowY: "auto" }}>
+                  <div style={{ fontSize: 10, color: t.lo, marginBottom: 2, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, padding: "0 7px" }}>Kategori</div>
+                  {sheetTabs.map((st) => {
+                    const active = sheetTab === st.k;
+                    const Icon = st.icon;
+                    const tabColor = st.color || t.teal;
+                    const tabBg = st.bg || t.tealBg;
                     return (
-                      <div style={{ display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0, padding: "6px 10px", borderRadius: 10, background: periodLabelBg }}>
-                        <span style={{ width: 5, height: 5, borderRadius: 999, background: periodLabelColor, flexShrink: 0 }} />
-                        <span style={{ fontSize: 10, fontWeight: 800, color: periodLabelColor, textTransform: "uppercase", letterSpacing: 0.3, whiteSpace: "nowrap" }}>
-                          {sheetTab === "info" ? "Periode Status" : "Periode Penjualan"}
-                        </span>
-                      </div>
+                      <button key={st.k} onClick={() => setSheetTab(st.k)}
+                        style={{
+                          position: "relative", overflow: "hidden",
+                          display: "flex", alignItems: "center", gap: 9, padding: "10px 10px", borderRadius: 12,
+                          border: `1px solid ${active ? `${tabColor}40` : "transparent"}`,
+                          background: active ? tabBg : "transparent",
+                          boxShadow: active ? `inset 3px 0 0 0 ${tabColor}, 0 3px 10px -4px ${tabColor}70` : "none",
+                          color: active ? t.hi : t.mid, fontSize: 13, fontWeight: active ? 700 : 600, cursor: "pointer", fontFamily: FONT,
+                          textAlign: "left", width: "100%", transition: "background 0.15s, box-shadow 0.15s, border-color 0.15s",
+                        }}>
+                        <div style={{ width: 26, height: 26, borderRadius: 8, background: active ? t.card : tabBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: active ? t.shadowSm : "none" }}>
+                          <Icon size={13} color={tabColor} />
+                        </div>
+                        <span style={{ whiteSpace: "nowrap" }}>{st.label}</span>
+                      </button>
                     );
-                  })()}
-                  <div style={{ flex: 1, minWidth: 0 }}>{periodDateNavInline}</div>
-                </>
-              ) : <div style={{ flex: 1 }} />}
+                  })}
+                </div>
+              )}
+              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", borderBottom: `1px solid ${t.line}`, flexShrink: 0 }}>
+                  {!isAr ? (
+                    <>
+                      {(() => {
+                        const periodLabelColor = sheetTab === "info" ? t.teal : sheetTab === "sp" ? t.red : sheetTab === "voucher" ? t.blue : t.amber;
+                        const periodLabelBg = sheetTab === "info" ? t.tealBg : sheetTab === "sp" ? t.redBg : sheetTab === "voucher" ? t.blueBg : t.amberBg;
+                        return (
+                          <div style={{ display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0, padding: "6px 10px", borderRadius: 10, background: periodLabelBg }}>
+                            <span style={{ width: 5, height: 5, borderRadius: 999, background: periodLabelColor, flexShrink: 0 }} />
+                            <span style={{ fontSize: 10, fontWeight: 800, color: periodLabelColor, textTransform: "uppercase", letterSpacing: 0.3, whiteSpace: "nowrap" }}>
+                              {sheetTab === "info" ? "Periode Status" : "Periode Penjualan"}
+                            </span>
+                          </div>
+                        );
+                      })()}
+                      <div style={{ flex: 1, minWidth: 0 }}>{periodDateNavInline}</div>
+                    </>
+                  ) : <div style={{ flex: 1 }} />}
+                </div>
+                {!isAr && periodMode !== "bulan" && (
+                  <div style={{ margin: "12px 18px 0", padding: "10px 12px", borderRadius: 10, background: t.amberBg, border: `1px solid ${t.amber}33`, display: "flex", alignItems: "flex-start", gap: 7 }}>
+                    <Info size={14} color={t.amber} style={{ flexShrink: 0, marginTop: 1.5 }} />
+                    <span style={{ fontSize: 11.5, color: t.hi, lineHeight: 1.45 }}>
+                      {sheetTab === "info"
+                        ? "Data di bawah berlaku untuk tanggal terpilih. Ubah tanggal untuk melihat/mengubah data hari lain."
+                        : "Angka penjualan berlaku untuk tanggal terpilih. Ubah tanggal untuk mengisi/melihat data hari lain."}
+                    </span>
+                  </div>
+                )}
+                {periodSummaryBar}
+                <div style={{ overflowY: "auto", padding: "12px 18px 14px", flex: 1 }}>
+                  {sheetBody}
+                </div>
+              </div>
             </div>
-            {/* UPDATE (permintaan user - "terlalu banyak informasi
-                ringkaskan"): hero Total Penjualan (skrg UDAH termasuk nav
-                tanggal inline di pojok kanannya, lihat periodDateNavInline)
-                paling atas, baru tab bar. Milih tanggal di situ otomatis
-                mindahin seluruh tampilan (bukan cuma popup ini) ke mode
-                Daily tanggal tsb (lewat onPickDate -> runGuarded +
-                setPeriodMode("tanggal") + jumpToDay di induk), jadi data
-                yg kebuka beneran utk tanggal itu, bukan sekadar preview. */}
-            {periodSummaryBar}
-            {sheetTabBar}
-            <div style={{ overflowY: "auto", padding: "14px 18px", flex: 1 }}>
-              {sheetBody}
-            </div>
-            <div style={{ padding: "12px 18px", borderTop: `1px solid ${t.line}`, background: t.card, flexShrink: 0, borderBottomLeftRadius: 20, borderBottomRightRadius: 20, display: "flex", gap: 8 }}>
-              <button onClick={() => setCardOpen(false)} style={{ flex: readOnly ? undefined : 1, width: readOnly ? "100%" : undefined, height: 34, borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+            <div style={{ padding: "12px 18px", borderTop: `1px solid ${t.line}`, background: t.card, flexShrink: 0, display: "flex", gap: 8 }}>
+              <button onClick={requestClosePopup} style={{ flex: readOnly ? undefined : 1, width: readOnly ? "100%" : undefined, height: 34, borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                 Batal
               </button>
               {!readOnly && <div style={{ flex: 1 }}>{renderSaveButton(true, () => setCardOpen(false))}</div>}
@@ -2164,6 +4587,7 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
       {editPopupPortal}
       {nameChangeModal}
       {vacantConfirmModal}
+      {ojtConfirmModal}
       </>
     );
   }
@@ -2182,49 +4606,94 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
   // lain (Nama/Status/Join Date/dst) buka ke tab "Informasi DSE".
   const openPopupToTab = (tabKey) => (ev) => { ev.stopPropagation(); setCardOpen(true); setSheetTab(tabKey); };
   const rowClickable = { cursor: "pointer" };
+  // UPDATE (permintaan user - "pastikan semua bisa terlihat bisa di klik,
+  // dan saat hover juga dia bagus"): kolom Penjualan SP/Voucher/Saldo/Total
+  // punya background warna sendiri (redBg/blueBg/amberBg) yg NUTUPIN efek
+  // hover baris (`rowHover`, lihat <tr>) - mouse yg lagi di atas kolom2 ini
+  // ga kelihatan ada feedback apa2 selain cursor:pointer (gampang kelewat).
+  // Ditambah hover feedback SENDIRI per-sel (gelapin dikit lewat filter +
+  // inset ring tipis warna teal) - manipulasi langsung currentTarget.style
+  // (bukan React state) biar ringan, ga trigger re-render tiap mouse
+  // masuk/keluar sel, konsisten sama pola hover tombol lain di file ini.
+  const cellHoverHandlers = {
+    onMouseEnter: (ev) => { ev.currentTarget.style.filter = "brightness(0.95)"; ev.currentTarget.style.boxShadow = `inset 0 0 0 1.5px ${t.teal}55`; },
+    onMouseLeave: (ev) => { ev.currentTarget.style.filter = "none"; ev.currentTarget.style.boxShadow = "none"; },
+  };
   return (
     <>
-    <tr onClick={() => { setCardOpen(true); setSheetTab("info"); }}
-      style={{ borderBottom: `1px solid ${t.line}`, background: dirty ? t.tealBg : "transparent", cursor: "pointer" }}>
+    <tr onClick={isAr && readOnly ? undefined : () => { setCardOpen(true); setSheetTab("info"); }}
+      onMouseEnter={() => { if (!(isAr && readOnly)) setRowHover(true); }}
+      onMouseLeave={() => setRowHover(false)}
+      style={{ borderBottom: `1px solid ${t.line}`, background: dirty ? t.tealBg : rowHover ? t.sub : "transparent", cursor: (isAr && readOnly) ? "default" : "pointer", transition: "background 0.1s" }}>
       <td style={{ padding: "10px 12px", textAlign: "center" }}>
         {rank ? <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}><RankBadge i={rank - 1} t={t} /></div> : <span style={{ color: t.lo, fontSize: 11.5 }}>—</span>}
       </td>
-      <td style={{ padding: "10px 12px", minWidth: 130, color: t.mid, fontWeight: 600 }}>{dse.mdi || "—"}</td>
-      <td style={{ padding: "10px 12px", minWidth: 120, color: t.mid, fontWeight: 600 }}>{dse.region || "—"}</td>
-      <td style={{ padding: "10px 12px", minWidth: 130, color: t.mid, fontWeight: 600 }}>{dse.branch || "—"}</td>
+      {/* UPDATE (permintaan user - "untuk kolom partner region branch dan
+          mc ada opsi untuk hide column"): tiap <td> di sini skrg
+          dibungkus kondisi hiddenCols, SAMA PERSIS kolom mana yg
+          disaring dari header (th) di atasnya - kolom District ditambah
+          sbg <td> baru persis setelah Area, konsisten sama urutan
+          header (lihat array kolom tabel). */}
+      {!hiddenCols.partner && <td style={{ padding: "10px 12px", minWidth: 130, color: t.mid, fontWeight: 600 }}>{dse.mdi || "—"}</td>}
+      {!hiddenCols.region && <td style={{ padding: "10px 12px", minWidth: 120, color: t.mid, fontWeight: 600 }}>{dse.region || "—"}</td>}
+      {!hiddenCols.branch && <td style={{ padding: "10px 12px", minWidth: 130, color: t.mid, fontWeight: 600 }}>{dse.branch || "—"}</td>}
+      {!hiddenCols.mc && <td style={{ padding: "10px 12px", minWidth: 120, color: t.mid, fontWeight: 600 }}>{dse.mc || "—"}</td>}
       <td style={{ padding: "10px 12px", whiteSpace: "nowrap" }}>
         {renderDualIdChips(true, null, { showHistory: false })}
       </td>
-      <td style={{ padding: "10px 12px", minWidth: 160, fontWeight: 700, color: namaVal ? t.hi : t.lo, fontStyle: namaVal ? "normal" : "italic" }}>{namaVal || "Belum diisi"}</td>
-      <td style={{ padding: "10px 12px", minWidth: 128 }}>
-        <span style={{ fontSize: 10, fontWeight: 800, color: sm.color, background: sm.bg, borderRadius: 999, padding: "3px 9px", whiteSpace: "nowrap" }}>{sm.label}</span>
+      <td style={{ padding: "10px 12px", minWidth: 160, fontWeight: 700, color: namaVal ? t.hi : t.lo, fontStyle: namaVal ? "normal" : "italic" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+          {namaVal || "Belum diisi"}
+          {!(isAr && readOnly) && <ChevronRight size={13} color={rowHover ? t.teal : t.lo} style={{ flexShrink: 0, opacity: rowHover ? 1 : 0.55, transition: "color 0.1s, opacity 0.1s" }} />}
+        </span>
       </td>
-      <td style={{ padding: "10px 12px", minWidth: 150, color: joinDate ? t.mid : t.lo, fontWeight: 600 }}>{joinDate ? fmtDayMonth(joinDate) : "—"}</td>
+      <td style={{ padding: "10px 12px", minWidth: 128 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
+          <span style={{ fontSize: 10, fontWeight: 800, color: sm.color, background: sm.bg, borderRadius: 999, padding: "3px 9px", whiteSpace: "nowrap" }}>{sm.label}</span>
+          {ageInfo && (
+            <span title={`${sm.label} sejak ${fmtDayMonthFull(ageInfo.sinceDate)} — ${ageInfo.days} hari`} style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9.5, fontWeight: 700, color: t.mid, background: t.sub, borderRadius: 999, padding: "2.5px 7px 2.5px 6px", whiteSpace: "nowrap" }}>
+              <Clock size={9} strokeWidth={2.5} />
+              {humanizeAge(ageInfo.days)}
+            </span>
+          )}
+        </div>
+      </td>
+      <td style={{ padding: "10px 12px", minWidth: 150, color: joinDate ? t.mid : t.lo, fontWeight: 600, fontStyle: joinDate ? "normal" : "italic" }}>{joinDate ? fmtDayMonth(joinDate) : "Belum diisi"}</td>
       {!isAr ? (
         <>
-          <td onClick={openPopupToTab("sp")} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", borderLeft: `2px solid ${t.line}`, background: t.redBg, fontWeight: 700 }}>Rp {fmtID(e.nilai_sp)}</td>
-          <td onClick={openPopupToTab("voucher")} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", background: t.blueBg, fontWeight: 700 }}>Rp {fmtID(e.nilai_voucher)}</td>
-          <td onClick={openPopupToTab("saldo")} style={{ ...rowClickable, padding: "10px 12px", minWidth: 140, textAlign: "right", background: t.amberBg, fontWeight: 700 }}>Rp {fmtID(e.nilai_saldo)}</td>
-          <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 800, color: t.teal, whiteSpace: "nowrap" }}>
-            Rp {fmtID(totalPenjualan)}
-            {AuditLine && <div style={{ marginTop: 4, textAlign: "right" }}>{AuditLine}</div>}
+          <td onClick={openPopupToTab("sp")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", borderLeft: `2px solid ${t.line}`, background: t.redBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(e.nilai_sp)}</td>
+          <td onClick={openPopupToTab("voucher")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", background: t.blueBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(e.nilai_voucher)}</td>
+          <td onClick={openPopupToTab("saldo")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 140, textAlign: "right", background: t.amberBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(e.nilai_saldo)}</td>
+          <td onClick={openPopupToTab("info")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 800, color: t.teal, whiteSpace: "nowrap", transition: "filter 0.1s, box-shadow 0.1s" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              Rp {fmtID(totalPenjualan)}
+              <ChevronRight size={12} color={t.teal} style={{ flexShrink: 0, opacity: 0.6 }} />
+            </span>
           </td>
         </>
       ) : (
         <>
-          <td onClick={(ev) => ev.stopPropagation()} style={{ padding: "10px 12px", minWidth: 330, borderLeft: `2px solid ${t.line}`, cursor: "default" }}>
-            <ArPiutangInput t={t} readOnly={readOnly} dseCode={dse.dse_code} entryDate={entryDate} profile={profile} outstanding={outstanding} onApplyLedger={handleApplyLedger} onConfirmSave={() => onSave(dse.dse_code)} saving={saving} />
-          </td>
-          <td onClick={(ev) => ev.stopPropagation()} style={{ padding: "10px 12px", minWidth: 150, cursor: "default" }}>
-            <input type="text" disabled={readOnly} value={e.catatan || ""} onChange={(ev) => setE({ catatan: ev.target.value })} placeholder="opsional" style={textInputStyle} />
-            {AuditLine && <div style={{ marginTop: 4 }}>{AuditLine}</div>}
-          </td>
+          {/* UPDATE (permintaan user - "pisahkan menjadi 3 kolom yang
+              berbeda"): ArPiutangInput (non-inline) sekarang LANGSUNG
+              ngembaliin 3 <td> (Utang/Bayar/Sisa) - lihat komponennya -
+              jadi TANPA dibungkus <td> lagi di sini. */}
+          {/* UPDATE (permintaan user - "pada ar, kolom catatan hilangkan
+              saja, ganti dengan kolom AKSI, isinya button EDIT AR"): <td>
+              Catatan (input teks umum, ga ada hubungannya sama AR) di
+              desktop table DIHAPUS di sini - ArPiutangInput sekarang
+              langsung ngembaliin kolom "Aksi" (tombol "Edit AR") sbg
+              <td> terakhirnya, jadi TIDAK ditambah <td> lagi di sini.
+              Field e.catatan sendiri TETAP ada di data model & masih bisa
+              diisi dari tampilan mobile (isCardView, lihat input yg sama
+              di atas) - cuma inputnya yg dihapus dari tabel desktop AR. */}
+          <ArPiutangInput t={t} readOnly={readOnly} dseCode={dse.dse_code} dseCode3id={dse.dse_code_3id} dseName={dse.ds_name} mc={dse.mc} branch={dse.branch} entryDate={entryDate} arMonth={arMonth} profile={profile} outstanding={outstanding} onApplyLedger={handleApplyLedger} onConfirmSave={() => onSave(dse.dse_code)} saving={saving} />
         </>
       )}
     </tr>
     {editPopupPortal}
     {nameChangeModal}
     {vacantConfirmModal}
+    {ojtConfirmModal}
     </>
   );
 }
@@ -2232,8 +4701,8 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
 // UPDATE (permintaan user - gambar kolom Rank dgn badge Crown/Medal utk
 // top-3 + lingkaran angka utk sisanya, "dan setiap tambahkan kolom rank
 // yang sudah diupdate ini keseluruh tampilan, termasuk tampilan partner,
-// region, branch, MC, dan bahkan DSE"): badge ini dipakai BARENG oleh
-// tabel ringkasan drill-down (Partner/Region/Branch/MC/DSE - regionSummary)
+// region, branch, District, dan bahkan DSE"): badge ini dipakai BARENG oleh
+// tabel ringkasan drill-down (Partner/Region/Area/District/DSE - regionSummary)
 // & tabel Input DSE (kolom "#" paling kiri) - 1 komponen, dipakai di
 // banyak tempat biar visualnya konsisten persis.
 const RANK_BADGE_COLORS = ["#D4A017", "#9CA3AF", "#B5651D"];
@@ -2260,6 +4729,8 @@ const RANK_METRIC_OPTIONS = [
   { v: "voucher", label: "Penjualan Voucher" },
   { v: "saldo", label: "Penjualan Saldo" },
 ];
+const FILTER_POPUP_OPEN_EVENT = "mfts-filter-popup-open";
+let _filterPopupIdSeq = 0;
 function RankMetricMenu({ t, value, onChange }) {
   // UPDATE (permintaan user - "masih terhalang elemen lain, perbaiki"):
   // dropdown absolute-positioned di dalam <div> header tabel kena
@@ -2271,15 +4742,27 @@ function RankMetricMenu({ t, value, onChange }) {
   const [pos, setPos] = useState({ x: 0, y: 0 });
   const btnRef = useRef(null);
   const menuRef = useRef(null);
+  const instanceIdRef = useRef(null);
+  if (instanceIdRef.current === null) instanceIdRef.current = `rm-${++_filterPopupIdSeq}`;
+  useEffect(() => {
+    const onOtherOpen = (ev) => { if (ev.detail !== instanceIdRef.current) setOpen(false); };
+    window.addEventListener(FILTER_POPUP_OPEN_EVENT, onOtherOpen);
+    return () => window.removeEventListener(FILTER_POPUP_OPEN_EVENT, onOtherOpen);
+  }, []);
   const toggleOpen = () => {
     if (!open && btnRef.current) {
       const rect = btnRef.current.getBoundingClientRect();
-      const menuW = 190;
+      const menuW = 190, menuH = 190;
       let x = rect.left;
       let y = rect.bottom + 6;
       if (x + menuW > window.innerWidth) x = window.innerWidth - menuW - 12;
-      if (y + 190 > window.innerHeight) y = rect.top - 190 - 6;
+      if (y + menuH > window.innerHeight) y = rect.top - menuH - 6;
+      // UPDATE (permintaan user - "tidak boleh lewat batas layar
+      // browser"): clamp akhir, sama persis alasannya dgn ExcelFilter.jsx.
+      x = Math.max(8, Math.min(x, window.innerWidth - menuW - 8));
+      y = Math.max(8, Math.min(y, window.innerHeight - menuH - 8));
       setPos({ x, y });
+      window.dispatchEvent(new CustomEvent(FILTER_POPUP_OPEN_EVENT, { detail: instanceIdRef.current }));
     }
     setOpen((v) => !v);
   };
@@ -2323,6 +4806,169 @@ const rankMetricValueOf = (obj, metric) => (
   : obj.nilaiSp + obj.nilaiVoucher + obj.nilaiSaldo
 );
 
+// UPDATE (permintaan user - lihat screenshot filter kolom Status: "disini
+// akan ada dropdown lagi per statusnya jadi kita bisa tracking berapa
+// saja angka angkanya"): filter khusus kolom Status, pakai ulang GAYA
+// visual ExcelFilter (translucent card, Pilih Semua, Reset/Apply) tapi
+// bukan komponen ExcelFilter itu sendiri (itu dipakai bareng di
+// PNL Control Center/MartaHub juga - jangan disentuh) karena butuh baris
+// yg BISA DIEXPAND: tiap status (selain "Belum diisi") punya panah buat
+// buka sub-checklist umur (hari) yg BENERAN ada di data skrg, plus jumlah
+// DSE-nya. Centang status = filter biasa (semua umur). Centang salah satu
+// umur di bawah status tsb = sub-filter TAMBAHAN cuma utk status itu -
+// status lain ga kepengaruh.
+function StatusAgeFilterMenu({ t, d, statusOptions, ageOptionsByStatus, selectedStatus, selectedAge, onApply }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const [tempStatus, setTempStatus] = useState(selectedStatus);
+  const [tempAge, setTempAge] = useState(selectedAge);
+  const [expanded, setExpanded] = useState({});
+  const btnRef = useRef(null);
+  const menuRef = useRef(null);
+  const instanceIdRef = useRef(null);
+  if (instanceIdRef.current === null) instanceIdRef.current = `sa-${++_filterPopupIdSeq}`;
+  // UPDATE (permintaan user - "jangan biarkan ada lebih dari 1 popup
+  // filter sekaligus yg terbuka"): sama persis mekanisme ExcelFilter.jsx -
+  // dengerin & broadcast event global, auto nutup kalau popup LAIN baru
+  // dibuka (ExcelFilter kolom lain, RankMetricMenu, atau instance
+  // StatusAgeFilterMenu lainnya).
+  useEffect(() => {
+    const onOtherOpen = (ev) => { if (ev.detail !== instanceIdRef.current) setOpen(false); };
+    window.addEventListener(FILTER_POPUP_OPEN_EVENT, onOtherOpen);
+    return () => window.removeEventListener(FILTER_POPUP_OPEN_EVENT, onOtherOpen);
+  }, []);
+
+  const toggleOpen = () => {
+    if (!open && btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect();
+      const menuW = 270, menuH = 400;
+      let x = rect.left;
+      let y = rect.bottom + 6;
+      if (x + menuW > window.innerWidth) x = window.innerWidth - menuW - 12;
+      if (y + menuH > window.innerHeight) y = rect.top - menuH - 6;
+      // UPDATE (permintaan user - "tidak boleh lewat batas layar
+      // browser"): clamp akhir, sama persis alasannya dgn ExcelFilter.jsx.
+      x = Math.max(8, Math.min(x, window.innerWidth - menuW - 8));
+      y = Math.max(8, Math.min(y, window.innerHeight - menuH - 8));
+      setPos({ x, y });
+      setTempStatus(selectedStatus);
+      setTempAge(selectedAge);
+      window.dispatchEvent(new CustomEvent(FILTER_POPUP_OPEN_EVENT, { detail: instanceIdRef.current }));
+    }
+    setOpen((v) => !v);
+  };
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (ev) => {
+      if (btnRef.current?.contains(ev.target)) return;
+      if (menuRef.current?.contains(ev.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  const activeCount = selectedStatus.length + selectedAge.length;
+  const toggleStatus = (v) => setTempStatus((prev) => (prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v]));
+  const toggleAge = (statusVal, days) => {
+    const tok = `${statusVal}|${days}`;
+    setTempAge((prev) => (prev.includes(tok) ? prev.filter((x) => x !== tok) : [...prev, tok]));
+  };
+  const ageSelectedCount = (statusVal) => selectedAge.filter((tok) => tok.startsWith(`${statusVal}|`)).length;
+
+  return (
+    <>
+      <button ref={btnRef} onClick={(ev) => { ev.stopPropagation(); toggleOpen(); }} title="Filter Status + umur status"
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "center", position: "relative",
+          width: 24, height: 24, borderRadius: 5,
+          border: `1px solid ${activeCount > 0 ? t.blue : d ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.1)"}`,
+          background: activeCount > 0 ? t.blueBg : "transparent",
+          color: activeCount > 0 ? t.blue : t.lo, cursor: "pointer", transition: "all 0.1s",
+        }}>
+        <SlidersHorizontal size={12} strokeWidth={2.5} />
+        {activeCount > 0 && (
+          <div style={{ position: "absolute", top: -4, right: -4, minWidth: 12, height: 12, padding: "0 2px", background: t.blue, color: "#fff", borderRadius: 10, fontSize: 8, fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {activeCount}
+          </div>
+        )}
+      </button>
+      {open && typeof document !== "undefined" && createPortal(
+        <div ref={menuRef} style={{
+          position: "fixed", left: pos.x, top: pos.y, width: 270, maxHeight: 400, zIndex: 2147483647,
+          background: d ? "rgba(35,35,35,0.92)" : "rgba(255,255,255,0.96)",
+          backdropFilter: "blur(30px) saturate(190%)", WebkitBackdropFilter: "blur(30px) saturate(190%)",
+          border: `1px solid ${d ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.16)"}`,
+          borderRadius: 10, boxShadow: "0 25px 50px -12px rgba(0,0,0,0.4)",
+          display: "flex", flexDirection: "column", overflow: "hidden", fontFamily: FONT,
+        }}>
+          <div style={{ padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, background: d ? "rgba(255,255,255,0.045)" : "rgba(0,0,0,0.035)", borderBottom: `1px solid ${d ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.07)"}` }}>
+            <span style={{ fontSize: 12, fontWeight: 800, color: t.hi }}>Filter Status</span>
+            <button onClick={() => setOpen(false)} style={{ width: 18, height: 18, borderRadius: 5, border: "none", background: "transparent", color: t.lo, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><X size={12} /></button>
+          </div>
+          <div style={{ flex: 1, overflowY: "auto", padding: 6 }}>
+            {statusOptions.map((opt) => {
+              const isChecked = tempStatus.includes(opt.value);
+              const ages = ageOptionsByStatus[opt.value] || [];
+              const canExpand = !!opt.value && ages.length > 0;
+              const isExpanded = !!expanded[opt.value];
+              const ageCount = ageSelectedCount(opt.value);
+              return (
+                <div key={opt.value || "__empty"} style={{ marginBottom: 2 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 6px", borderRadius: 6 }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, cursor: "pointer", minWidth: 0 }}>
+                      <input type="checkbox" checked={isChecked} onChange={() => toggleStatus(opt.value)} style={{ display: "none" }} />
+                      <div style={{ width: 15, height: 15, borderRadius: 4, flexShrink: 0, border: `1.5px solid ${isChecked ? t.blue : d ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.32)"}`, background: isChecked ? t.blue : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        {isChecked && <Check size={10} color="#fff" strokeWidth={4} />}
+                      </div>
+                      <span style={{ fontSize: 12.5, color: t.hi, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{opt.label}</span>
+                      {ageCount > 0 && (
+                        <span style={{ fontSize: 9, fontWeight: 800, color: t.blue, background: t.blueBg, borderRadius: 999, padding: "1px 6px", flexShrink: 0 }}>{ageCount}</span>
+                      )}
+                    </label>
+                    {canExpand && (
+                      <button onClick={() => setExpanded((prev) => ({ ...prev, [opt.value]: !prev[opt.value] }))}
+                        title="Filter berdasarkan umur status"
+                        style={{ width: 20, height: 20, borderRadius: 5, border: "none", background: "transparent", color: t.lo, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 0.12s" }}>
+                        <ChevronRight size={13} />
+                      </button>
+                    )}
+                  </div>
+                  {canExpand && isExpanded && (
+                    <div style={{ margin: "2px 0 4px 29px", padding: "4px 0 4px 8px", borderLeft: `1.5px solid ${d ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)"}`, display: "flex", flexDirection: "column", gap: 1 }}>
+                      {ages.map(({ days, count }) => {
+                        const tok = `${opt.value}|${days}`;
+                        const sel = tempAge.includes(tok);
+                        return (
+                          <label key={days} style={{ display: "flex", alignItems: "center", gap: 7, padding: "4px 6px", borderRadius: 5, cursor: "pointer" }}>
+                            <input type="checkbox" checked={sel} onChange={() => toggleAge(opt.value, days)} style={{ display: "none" }} />
+                            <div style={{ width: 13, height: 13, borderRadius: 4, flexShrink: 0, border: `1.5px solid ${sel ? t.blue : d ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.32)"}`, background: sel ? t.blue : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                              {sel && <Check size={9} color="#fff" strokeWidth={4} />}
+                            </div>
+                            <span style={{ fontSize: 11.5, color: t.hi, fontWeight: 500, flex: 1 }}>{humanizeAge(days)}</span>
+                            <span style={{ fontSize: 10, color: t.lo, fontWeight: 700 }}>{count}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ display: "flex", gap: 8, padding: "10px 12px", borderTop: `1px solid ${d ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.07)"}` }}>
+            <button onClick={() => { setTempStatus([]); setTempAge([]); onApply([], []); setOpen(false); }}
+              style={{ flex: 1, padding: "8px", borderRadius: 7, border: `1px solid ${d ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.12)"}`, background: d ? "rgba(255,255,255,0.07)" : "#EFEFF1", color: t.hi, fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>Reset</button>
+            <button onClick={() => { onApply(tempStatus, tempAge); setOpen(false); }}
+              style={{ flex: 1.8, padding: "8px", borderRadius: 7, border: "none", background: t.blue, color: "#fff", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>Apply</button>
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
 // UPDATE (permintaan user - "untuk menu besarnya akan muncul di header
 // atas saja dan bisa dropdown dengan arrow penanda dan ui yang sangat
 // bagus, disamping kiri dari button show sidebar"): CATEGORY_OPTIONS
@@ -2337,9 +4983,310 @@ export const CATEGORY_OPTIONS = [
   // UPDATE (permintaan user - "iconnya buat sama semua saja"): dulu beda2
   // per modul (Wallet/Store/Landmark) - disamakan semua ke Wallet.
   { k: "dse", label: "DSE Prod. & AR", shortLabel: "DSE", icon: Wallet, desc: "Produksi harian & piutang per Kode DSE" },
-  { k: "dso", label: "DSO/DSP AR", shortLabel: "DSO", icon: Wallet, desc: "Piutang level MC (Distributor/DSO)" },
+  { k: "dso", label: "DSO/DSP AR", shortLabel: "DSO", icon: Wallet, desc: "Piutang level District (Distributor/DSO)" },
   { k: "hoa", label: "HoA AR", shortLabel: "HoA", icon: Wallet, desc: "Piutang level HoA" },
 ];
+
+
+// UPDATE (permintaan user - "selanjutnya sama dengan AR nya DSE gunakan
+// konsep yang sama persis untuk DSO/DSP AR dan juga HoA AR, dimana jika
+// sebelumnya di level DSE... sedangkan untuk DSO/DSP itu dia adalah team
+// lead di District-nya... begitu juga dengan HoA, itu di level Area"):
+// panel baru utk category "dso" (piutang per District/DSO-DSP, 1 orang per
+// District) & "hoa" (piutang per Area/HoA, 1 orang per Area) - BUKAN
+// roster per-DSE seperti category "dse", tapi 1 baris per District/Area.
+// Reuse TOTAL logic piutang dari <ArPiutangInput> (modal create/bayar/
+// edit/hapus/lunasi/export/close-confirm, SAMA PERSIS AR DSE) lewat props
+// generik itemsTable/paymentsTable/codeField/idPrefix/entityNoun yg sudah
+// ditambahkan di komponen itu - jadi logic CRUD piutangnya SATU SUMBER,
+// ga ada duplikat/divergensi antara AR DSE, AR DSO/DSP, & AR HoA.
+// ArPiutangInput dipanggil persis sama pola row desktop DSE (inline=false,
+// default) - komponen itu SENDIRI yg merender <td> kolom AR (Total
+// Piutang/Dibayar/Sisa/Status/Jatuh Tempo, lengkap hover tooltip & ring
+// highlight) + tombol "Edit AR" + modal-nya, tinggal ditaruh di dalam <tr>
+// ini sebagai sibling dari <td> identitas District/Area.
+// UPDATE (permintaan user - "selanjutnya sama dengan AR nya DSE gunakan
+// konsep yang sama persis untuk DSO/DSP AR dan juga HoA AR..."): panel
+// baru utk category "dso" (piutang per District/DSO-DSP) & "hoa" (piutang
+// per Area/HoA) - BUKAN roster per-DSE spt category "dse", tapi 1 baris
+// per District/Area. Reuse TOTAL logic piutang dari <ArPiutangInput>
+// (modal create/bayar/edit/hapus/lunasi/export/close-confirm, SAMA PERSIS
+// AR DSE) lewat props generik itemsTable/paymentsTable/codeField/
+// idPrefix/entityNoun - 1 sumber logic, ga ada duplikat/divergensi.
+// UPDATE (permintaan user - "buat ranknya juga sama seperti DSE dan
+// filter cukup dibuat langsung di kolomnya, dan juga buat hero card yang
+// sama dengan yang ada di dse ar"): v2 - filter dropdown terpisah
+// (Partner/Region/Area/District) DIGANTI filter per-kolom (ikon
+// <ExcelFilter>, SAMA PERSIS pola yg dipakai tabel roster DSE), kolom
+// Partner/Region/Area(/District) ditambah ke tabel sendiri supaya ada
+// tempat utk ikon filternya. Rank (#) ditambah di kolom plg kiri, warna
+// mahkota/medali #1-3 SAMA PERSIS pola leaderboard Ringkasan drill-down
+// DSE (Crown/Medal), diurutkan dari Sisa Piutang terbesar. Hero card 3
+// StatTile (Total Piutang/Dibayar/Sisa Piutang, komponen YG SAMA dipakai
+// hero DSE AR) ditambah di atas tabel, dihitung dari bulk-fetch terpisah
+// (arTotals, pola sama persis `arItemsAgg` di komponen induk) - independen
+// dari fetch per-baris masing2 <ArPiutangInput> (yg tetap perlu fetch
+// sendiri utk isi modal/td-nya), krn panel ini butuh TOTAL lintas baris
+// utk sorting & hero yg ga bisa diambil dari instance lain.
+function ArDsoHoaPanel({ t, d, profile, entryDate, arMonth, dseMeta, kind }) {
+  const isDso = kind === "dso";
+  const itemsTable = isDso ? "dso_piutang_items" : "hoa_piutang_items";
+  const paymentsTable = isDso ? "dso_piutang_payments" : "hoa_piutang_payments";
+  const codeField = isDso ? "mc" : "branch";
+  const idPrefix = isDso ? "DSO" : "HOA";
+  const entityNoun = isDso ? "DSO/DSP" : "HoA";
+  const levelLabel = isDso ? "District" : "Area";
+
+  const uniqOpt = (vals) => Array.from(new Set(vals.filter(Boolean))).sort().map((v) => ({ value: v, label: v }));
+  const colOptions = useMemo(() => ({
+    partner: uniqOpt((dseMeta || []).map((r) => r.mdi)),
+    region: uniqOpt((dseMeta || []).map((r) => r.region)),
+    branch: uniqOpt((dseMeta || []).map((r) => r.branch)),
+    mc: uniqOpt((dseMeta || []).map((r) => r.mc)),
+  }), [dseMeta]);
+  const [colFilters, setColFilters] = useState({ partner: [], region: [], branch: [], mc: [] });
+  const setColFilter = (key, vals) => setColFilters((prev) => ({ ...prev, [key]: vals }));
+  // UPDATE (permintaan user - "saya ingin style nya sama sehingga ketika
+  // berpindah dia seamless"): toolbar Cari + Refresh ditambahkan supaya
+  // panel DSO/DSP & HoA ini visually konsisten dengan toolbar AR DSE
+  // (search box + tombol Refresh, pola/style SAMA PERSIS dgn
+  // .dseprod-filterrow di komponen induk).
+  const [search, setSearch] = useState("");
+
+  const scoped = useMemo(() => (dseMeta || []).filter((r) =>
+    (colFilters.partner.length === 0 || colFilters.partner.includes(r.mdi)) &&
+    (colFilters.region.length === 0 || colFilters.region.includes(r.region)) &&
+    (colFilters.branch.length === 0 || colFilters.branch.includes(r.branch)) &&
+    (!isDso || colFilters.mc.length === 0 || colFilters.mc.includes(r.mc))
+  ), [dseMeta, colFilters, isDso]);
+
+  const groups = useMemo(() => {
+    const map = {};
+    scoped.forEach((r) => {
+      const key = isDso ? r.mc : r.branch;
+      if (!key) return;
+      if (!map[key]) map[key] = { code: key, branch: r.branch, mc: r.mc, partner: r.mdi, region: r.region, hoaName: r.hoa_name || "" };
+      if (!isDso && !map[key].hoaName && r.hoa_name) map[key].hoaName = r.hoa_name;
+    });
+    return Object.values(map);
+  }, [scoped, isDso]);
+  const groupCodesKey = useMemo(() => groups.map((g) => g.code).join(","), [groups]);
+
+  // Identitas DSO/DSP (tabel dso_dsp_identity, manual input per District -
+  // HoA TIDAK butuh ini krn hoa_name sudah ada per baris mf_dse_database).
+  const [identityMap, setIdentityMap] = useState({});
+  const [identityLoading, setIdentityLoading] = useState(false);
+  const loadIdentity = useCallback(async () => {
+    if (!isDso || groups.length === 0) { setIdentityMap({}); return; }
+    setIdentityLoading(true);
+    try {
+      const { data } = await supabase.from("dso_dsp_identity").select("*").in("mc", groups.map((g) => g.code));
+      const map = {};
+      (data || []).forEach((r) => { map[r.mc] = r; });
+      setIdentityMap(map);
+    } finally {
+      setIdentityLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDso, groupCodesKey]);
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { loadIdentity(); }, [loadIdentity]);
+
+  // Bulk-fetch total Piutang/Dibayar per District/Area - TERPISAH dari
+  // fetch masing2 <ArPiutangInput> per baris (itu cuma utk isi modal/td-
+  // nya sendiri) - dipakai utk rank (urut Sisa Piutang terbesar) & hero
+  // StatTile (jumlah lintas semua baris yg lagi tampil).
+  const [arTotals, setArTotals] = useState({});
+  const [arTotalsLoading, setArTotalsLoading] = useState(false);
+  const loadArTotals = useCallback(async () => {
+    if (groups.length === 0) { setArTotals({}); return; }
+    setArTotalsLoading(true);
+    try {
+      const codes = groups.map((g) => g.code);
+      const { data } = await supabase.from(itemsTable).select(`${codeField}, total, jatuh_tempo, ${paymentsTable}(nominal, deleted_at)`).in(codeField, codes).is("deleted_at", null);
+      const map = {};
+      (data || []).forEach((it) => {
+        const key = it[codeField];
+        if (!map[key]) map[key] = { totalPiutang: 0, totalDibayar: 0, nearestJatuhTempo: null };
+        const paid = (it[paymentsTable] || []).filter((p) => !p.deleted_at).reduce((s, p) => s + fRaw(p.nominal), 0);
+        map[key].totalPiutang += fRaw(it.total);
+        map[key].totalDibayar += paid;
+        const belum = fRaw(it.total) - paid;
+        if (belum > 0 && it.jatuh_tempo && (!map[key].nearestJatuhTempo || it.jatuh_tempo < map[key].nearestJatuhTempo)) map[key].nearestJatuhTempo = it.jatuh_tempo;
+      });
+      setArTotals(map);
+    } finally {
+      setArTotalsLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemsTable, paymentsTable, codeField, groupCodesKey]);
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { loadArTotals(); }, [loadArTotals]);
+
+  const sortedGroups = useMemo(() => {
+    const base = groups.slice().sort((a, b) => {
+      const sa = arTotals[a.code] || { totalPiutang: 0, totalDibayar: 0 };
+      const sb = arTotals[b.code] || { totalPiutang: 0, totalDibayar: 0 };
+      return (sb.totalPiutang - sb.totalDibayar) - (sa.totalPiutang - sa.totalDibayar) || a.code.localeCompare(b.code);
+    });
+    const q = search.trim().toLowerCase();
+    if (!q) return base;
+    return base.filter((g) => {
+      const nameVal = isDso ? (identityMap[g.code]?.dso_name || "") : g.hoaName;
+      return [g.code, g.partner, g.region, g.branch, g.mc, nameVal].some((v) => (v || "").toLowerCase().includes(q));
+    });
+  }, [groups, arTotals, search, isDso, identityMap]);
+
+  const heroTotals = useMemo(() => groups.reduce((acc, g) => {
+    const at = arTotals[g.code] || { totalPiutang: 0, totalDibayar: 0 };
+    acc.totalPiutang += at.totalPiutang; acc.totalDibayar += at.totalDibayar;
+    return acc;
+  }, { totalPiutang: 0, totalDibayar: 0 }), [groups, arTotals]);
+
+  const [editingCode, setEditingCode] = useState(null);
+  const [editingVal, setEditingVal] = useState("");
+  const [savingName, setSavingName] = useState(false);
+  const startEditName = (code) => { setEditingCode(code); setEditingVal(identityMap[code]?.dso_name || ""); };
+  const cancelEditName = () => { setEditingCode(null); setEditingVal(""); };
+  const saveEditName = async (code) => {
+    setSavingName(true);
+    try {
+      const patch = { mc: code, dso_name: editingVal.trim() || null, updated_by: profile?.id || null, updated_by_name: profile?.full_name || null, updated_at: new Date().toISOString() };
+      const { data, error } = await supabase.from("dso_dsp_identity").upsert(patch, { onConflict: "mc" }).select("*").single();
+      if (error) throw error;
+      setIdentityMap((prev) => ({ ...prev, [code]: data }));
+      setEditingCode(null);
+    } catch {
+      // diam2 gagal - field nama DSO/DSP bukan data kritikal piutang, ga perlu blokir UI
+    } finally {
+      setSavingName(false);
+    }
+  };
+
+  const th = { padding: "11px 12px", background: t.sub, fontSize: 10.5, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, textAlign: "left", borderBottom: `1px solid ${t.line}`, whiteSpace: "nowrap" };
+  const rankColors = ["#D4A017", "#9CA3AF", "#B5651D"];
+  const anyFilterActive = colFilters.partner.length || colFilters.region.length || colFilters.branch.length || (isDso && colFilters.mc.length) || search.trim().length > 0;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {/* UPDATE (permintaan user - "saya ingin style nya sama sehingga
+          ketika berpindah dia seamless"): toolbar Cari + Refresh, style
+          SAMA PERSIS dgn .dseprod-filterrow di AR DSE (kartu border+shadow,
+          search box ber-ikon di kiri, tombol Refresh dgn ikon spin saat
+          loading) - supaya transisi DSE Prod & AR -> DSO/DSP AR -> HoA AR
+          kerasa satu sistem yg sama, bukan 2 gaya yg beda. */}
+      <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: "10px 16px", display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 180 }}>
+          <Search size={14} style={{ position: "absolute", left: 12, top: 12, color: t.lo }} />
+          <input value={search} onChange={(ev) => setSearch(ev.target.value)} placeholder={`Cari ${levelLabel} / Nama…`}
+            style={{ height: 38, width: "100%", boxSizing: "border-box", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13, padding: "0 12px 0 34px", fontFamily: FONT, outline: "none" }} />
+        </div>
+        <button onClick={() => { loadIdentity(); loadArTotals(); }} title="Refresh"
+          style={{ height: 38, padding: "0 14px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", gap: 7, fontSize: 13, fontWeight: 700, fontFamily: FONT, whiteSpace: "nowrap" }}>
+          <RefreshCw size={14} className={(identityLoading || arTotalsLoading) ? "spin" : ""} /> Refresh
+        </button>
+      </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+        <StatTile t={t} icon={<CircleDollarSign size={14} color={t.hi} />} label="Total Piutang" value={(arTotalsLoading && groups.length > 0) ? "…" : `Rp ${fmtID(heroTotals.totalPiutang)}`} />
+        <StatTile t={t} icon={<CircleDollarSign size={14} color={t.teal} />} label="Total Dibayar" value={(arTotalsLoading && groups.length > 0) ? "…" : `Rp ${fmtID(heroTotals.totalDibayar)}`} />
+        <StatTile t={t} icon={<AlertTriangle size={14} color={t.red} />} label="Sisa Piutang" value={(arTotalsLoading && groups.length > 0) ? "…" : `Rp ${fmtID(heroTotals.totalPiutang - heroTotals.totalDibayar)}`} sub={`${groups.length} ${levelLabel}`} />
+      </div>
+
+      <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: FONT }}>
+            <thead>
+              <tr>
+                <th style={{ ...th, textAlign: "center", width: 40 }}>#</th>
+                <th style={th}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>Partner
+                    <ExcelFilter t={t} d={d} label="Partner" options={colOptions.partner} selected={colFilters.partner} onApply={(v) => setColFilter("partner", v)} onClear={() => setColFilter("partner", [])} />
+                  </div>
+                </th>
+                <th style={th}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>Region
+                    <ExcelFilter t={t} d={d} label="Region" options={colOptions.region} selected={colFilters.region} onApply={(v) => setColFilter("region", v)} onClear={() => setColFilter("region", [])} />
+                  </div>
+                </th>
+                <th style={th}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>Area
+                    <ExcelFilter t={t} d={d} label="Area" options={colOptions.branch} selected={colFilters.branch} onApply={(v) => setColFilter("branch", v)} onClear={() => setColFilter("branch", [])} />
+                  </div>
+                </th>
+                {isDso && (
+                  <th style={th}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>District
+                      <ExcelFilter t={t} d={d} label="District" options={colOptions.mc} selected={colFilters.mc} onApply={(v) => setColFilter("mc", v)} onClear={() => setColFilter("mc", [])} />
+                    </div>
+                  </th>
+                )}
+                <th style={th}>{isDso ? "Nama DSO/DSP" : "Nama HoA"}</th>
+                <th style={{ ...th, textAlign: "right" }}>Total Piutang</th>
+                <th style={{ ...th, textAlign: "right" }}>Total Dibayar</th>
+                <th style={{ ...th, textAlign: "right" }}>Sisa Piutang</th>
+                <th style={th}>Status</th>
+                <th style={th}>Jatuh Tempo</th>
+                <th style={th}>Keterangan</th>
+                <th style={th}>Aksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedGroups.length === 0 ? (
+                <tr><td colSpan={isDso ? 12 : 11} style={{ padding: 28, textAlign: "center", color: t.mid, fontSize: 12.5 }}>
+                  {anyFilterActive ? `Tidak ada ${levelLabel} yang cocok dgn filter di atas.` : `Belum ada ${levelLabel} terdaftar.`}
+                </td></tr>
+              ) : sortedGroups.map((g, i) => (
+                <tr key={g.code} style={{ borderBottom: `1px solid ${t.line}` }}>
+                  <td style={{ padding: "10px 12px", textAlign: "center" }}>
+                    {i < 3 ? (
+                      i === 0 ? <Crown size={16} color={rankColors[0]} fill={rankColors[0]} fillOpacity={0.15} style={{ display: "block", margin: "0 auto" }} /> : <Medal size={16} color={rankColors[i]} style={{ display: "block", margin: "0 auto" }} />
+                    ) : (
+                      <span style={{ fontSize: 11.5, fontWeight: 700, color: t.mid }}>{i + 1}</span>
+                    )}
+                  </td>
+                  <td style={{ padding: "10px 12px", color: t.mid, fontSize: 11.5, fontWeight: 600, whiteSpace: "nowrap" }}>{g.partner || "—"}</td>
+                  <td style={{ padding: "10px 12px", color: t.mid, fontSize: 11.5, fontWeight: 600, whiteSpace: "nowrap" }}>{g.region || "—"}</td>
+                  <td style={{ padding: "10px 12px", color: t.mid, fontSize: 11.5, fontWeight: 600, whiteSpace: "nowrap" }}>{g.branch || "—"}</td>
+                  {isDso && <td style={{ padding: "10px 12px", fontWeight: 700, color: t.hi, whiteSpace: "nowrap" }}>{g.mc}</td>}
+                  <td style={{ padding: "10px 12px", minWidth: 180 }}>
+                    {isDso ? (
+                      editingCode === g.code ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <input autoFocus value={editingVal} onChange={(ev) => setEditingVal(ev.target.value)} onKeyDown={(ev) => { if (ev.key === "Enter") saveEditName(g.code); if (ev.key === "Escape") cancelEditName(); }}
+                            placeholder="Nama DSO/DSP" style={{ height: 30, borderRadius: 7, border: `1px solid ${t.teal}`, background: t.inputBg, color: t.hi, fontSize: 12, padding: "0 8px", width: 150, fontFamily: FONT }} />
+                          <button type="button" onClick={() => saveEditName(g.code)} disabled={savingName} title="Simpan" style={{ width: 26, height: 26, borderRadius: 6, border: "none", background: t.teal, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: savingName ? "default" : "pointer", flexShrink: 0 }}>
+                            {savingName ? <Loader2 size={12} className="spin" /> : <Save size={12} />}
+                          </button>
+                          <button type="button" onClick={cancelEditName} title="Batal" style={{ width: 26, height: 26, borderRadius: 6, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ) : (
+                        <button type="button" onClick={() => startEditName(g.code)} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: FONT, color: identityMap[g.code]?.dso_name ? t.hi : t.lo, fontStyle: identityMap[g.code]?.dso_name ? "normal" : "italic", fontSize: 12.5, fontWeight: 600 }}>
+                          {identityLoading ? <NumSkeleton t={t} width={90} height={12} /> : (identityMap[g.code]?.dso_name || "Belum diisi")}
+                          <Pencil size={11} color={t.lo} />
+                        </button>
+                      )
+                    ) : (
+                      <span style={{ fontSize: 12.5, fontWeight: 600, color: g.hoaName ? t.hi : t.lo, fontStyle: g.hoaName ? "normal" : "italic" }}>{g.hoaName || "Belum diisi"}</span>
+                    )}
+                  </td>
+                  <ArPiutangInput t={t} readOnly={false} dseCode={g.code} dseCode3id={null} dseName={isDso ? (identityMap[g.code]?.dso_name || "") : g.hoaName} mc={isDso ? g.code : (g.mc || "")} branch={isDso ? (g.branch || "") : g.code}
+                    entryDate={entryDate} arMonth={arMonth} profile={profile} outstanding={0}
+                    onApplyLedger={() => {}} onConfirmSave={() => {}} saving={false}
+                    itemsTable={itemsTable} paymentsTable={paymentsTable} codeField={codeField} idPrefix={idPrefix} entityNoun={entityNoun} />
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 
 export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", setCategory = () => {} }) {
   const d = theme === "dark";
@@ -2365,12 +5312,12 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   const isSPM = profile?.role === "spm_sumatera";
   const isMPX = profile?.role === "finance_mpx";
 
-  // UPDATE (permintaan user - satu email Admin MC sekarang bisa dipasang ke
-  // lebih dari 1 MC lewat mf_dse_admin_mc_mapping): dulu lockedMc cuma 1
-  // string dari profile.partner_name (satu MC). Sekarang kita ambil daftar
-  // LENGKAP MC milik Admin MC yang login lewat RPC mf_dse_admin_mc_my_mcs()
+  // UPDATE (permintaan user - satu email Admin District sekarang bisa dipasang ke
+  // lebih dari 1 District lewat mf_dse_admin_mc_mapping): dulu lockedMc cuma 1
+  // string dari profile.partner_name (satu District). Sekarang kita ambil daftar
+  // LENGKAP District milik Admin District yang login lewat RPC mf_dse_admin_mc_my_mcs()
   // (akses datanya sendiri sudah dijamin RLS di level tabel, ini cuma utk
-  // keperluan tampilan & target MC saat import Excel).
+  // keperluan tampilan & target District saat import Excel).
   const [myMcs, setMyMcs] = useState([]); // [{ mc, region, branch, full_name }]
   useEffect(() => {
     if (!isMPX) return;
@@ -2381,7 +5328,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   }, [isMPX]);
   const myMcNames = useMemo(() => myMcs.map((r) => r.mc).filter(Boolean), [myMcs]);
   const lockedMc = isMPX ? (myMcNames[0] || profile?.partner_name || "") : "";
-  const [mpxMcFilter, setMpxMcFilter] = useState(""); // Admin MC dgn >1 MC: pilih target import
+  const [mpxMcFilter, setMpxMcFilter] = useState(""); // Admin District dgn >1 District: pilih target import
 
   const [width, setWidth] = useState(() => (typeof window !== "undefined" ? window.innerWidth : 1200));
   useEffect(() => {
@@ -2401,13 +5348,64 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // 2 baris) supaya nav periode cuma pindah ke bawah Tabs pas layar BENAR2
   // sempit (HP), bukan di semua layar <860px.
   const isNarrowHeader = width < 640;
+  // UPDATE (permintaan user - "pindahin dropdown kategori dari app bar atas
+  // ke dalam title card ini, ganti teks statis 'Prod. & AR' jadi dropdown
+  // yg sama"): dropdown pemilih category (DSE Prod & AR / DSO/DSP AR / HoA
+  // AR) dipindah dari app/dashboard/page.jsx ke sini, nempel langsung di
+  // title card (.dseprod-title) - baik versi mobile maupun desktop - pakai
+  // `category`/`setCategory` props yg sudah dikirim turun dari page.jsx.
+  // Pola portal/posisi persis sama dgn RankMetricMenu di atas (createPortal
+  // ke document.body + posisi "fixed" dari getBoundingClientRect tombolnya).
+  const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
+  const [categoryMenuPos, setCategoryMenuPos] = useState(null);
+  const categoryBtnRef = useRef(null);
+  const categoryMenuRef = useRef(null);
+  useEffect(() => {
+    if (!categoryMenuOpen) return undefined;
+    const btn = categoryBtnRef.current;
+    if (btn) {
+      const r = btn.getBoundingClientRect();
+      setCategoryMenuPos({ left: r.left, top: r.bottom + 8 });
+    }
+    const onDoc = (ev) => {
+      if (categoryBtnRef.current?.contains(ev.target)) return;
+      if (categoryMenuRef.current?.contains(ev.target)) return;
+      setCategoryMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [categoryMenuOpen]);
+  const currentCategoryOpt = CATEGORY_OPTIONS.find((o) => o.k === category) || CATEGORY_OPTIONS[0];
+  const mobileTitleLabel = currentCategoryOpt.label;
+  const desktopTitleLabel = currentCategoryOpt.label;
+  const categoryMenuPortal = categoryMenuOpen && categoryMenuPos && typeof document !== "undefined" && createPortal(
+    <div ref={categoryMenuRef} style={{ position: "fixed", left: categoryMenuPos.left, top: categoryMenuPos.top, width: 272, background: t.card, border: `1px solid ${t.line}`, borderRadius: 12, boxShadow: "0 8px 24px rgba(0,0,0,0.16)", zIndex: 9999, overflow: "hidden", padding: 6 }}>
+      {CATEGORY_OPTIONS.map((opt) => {
+        const Icon = opt.icon;
+        const active = category === opt.k;
+        return (
+          <button key={opt.k} onClick={() => { setCategory(opt.k); setCategoryMenuOpen(false); }}
+            style={{ display: "flex", alignItems: "flex-start", gap: 10, width: "100%", textAlign: "left", padding: "9px 10px", borderRadius: 9, border: "none", background: active ? t.tealBg : "transparent", cursor: "pointer", fontFamily: FONT }}>
+            <div style={{ width: 30, height: 30, borderRadius: 8, background: active ? t.teal : t.sub, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Icon size={14} color={active ? "#fff" : t.mid} />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: active ? t.teal : t.hi }}>{opt.label}</div>
+              <div style={{ fontSize: 11, color: t.mid, marginTop: 1, lineHeight: 1.35 }}>{opt.desc}</div>
+            </div>
+          </button>
+        );
+      })}
+    </div>,
+    document.body
+  );
   const TAB_DEFS = [
     { k: "input", label: "Penjualan DSE", icon: ListChecks },
     { k: "ar", label: "AR DSE", icon: CircleDollarSign },
   ];
 
   // UPDATE (permintaan user - "nanti akan ada 3 yang kita tracking: 1.
-  // Penjualan dan AR DSE, 2. AR DSO [level MC], 3. AR HoA"): halaman ini
+  // Penjualan dan AR DSE, 2. AR DSO [level District], 3. AR HoA"): halaman ini
   // sekarang jadi hub 3 modul tracking lewat selector "category" di atas
   // header - "dse" (SELURUH fitur yang sudah ada di bawah ini, tidak
   // berubah sama sekali), "dso" & "hoa" (placeholder dulu - strukturnya
@@ -2472,6 +5470,18 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       setCalViewMonth(todayISO().slice(0, 7));
       setSelectedDates([todayISO()]);
     }
+  };
+  // UPDATE (permintaan user - "untuk ar ini cukup full month saja, namun
+  // audit trailnya jelas nanti"): tab AR gak punya konsep "tanggal
+  // spesifik" (AR itu saldo piutang berjalan, bukan snapshot harian) -
+  // jadi pindah ke tab AR SELALU dipaksa ke periodMode "bulan" (toggle
+  // Daily/Full Month & date-nav pill jadi gak relevan & disembunyikan,
+  // lihat pemakaian `tab !== "ar"` di render toggle/nav/headerMeasureRef
+  // di bawah). Balik ke tab "input" TIDAK memaksa apa2 - periodMode
+  // tetap apa adanya (Daily/Full Month keduanya valid di Prod.).
+  const switchTab = (k) => {
+    setTab(k);
+    if (k === "ar" && periodMode !== "bulan") switchPeriodMode("bulan");
   };
   const [periodOpen, setPeriodOpen] = useState(false);
   // UPDATE (permintaan user - "arrownya dibuat kontras dan jika sudah
@@ -2554,7 +5564,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
 
   // UPDATE (permintaan user - "buat kolom pencarian dan pemfilteran akan
   // section dikumpulkan ke satu button, jadi nanti ada popup filter"):
-  // Partner/Region/Branch/MC yang dulu 4 dropdown selalu kebuka di satu
+  // Partner/Region/Area/District yang dulu 4 dropdown selalu kebuka di satu
   // baris, sekarang digabung ke 1 tombol "Filter" (+ badge jumlah filter
   // aktif) yg buka popup berisi ke-4 dropdown itu - "Cari DSE" tetap kotak
   // pencarian terpisah di sebelahnya (paling sering dipakai, jadi tetap
@@ -2587,13 +5597,13 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // yg BERLAKU pada tanggal itu (pakai riwayat kalau tanggalnya di masa
   // lalu) — single mode: entryDate; multi mode: tanggal paling akhir dipilih.
   // UPDATE (permintaan user - "selain mc bisa pilih branch region juga di
-  // input manual"): selain MC, Region & Branch sekarang juga bisa dipilih
-  // sbg filter sendiri (cascading: pilih Region -> opsi Branch menyempit ->
-  // opsi MC menyempit). Ketiganya opsional & bisa dikombinasikan bebas.
+  // input manual"): selain District, Region & Area sekarang juga bisa dipilih
+  // sbg filter sendiri (cascading: pilih Region -> opsi Area menyempit ->
+  // opsi District menyempit). Ketiganya opsional & bisa dikombinasikan bebas.
   const [regionFilter, setRegionFilter] = useState("");
   const [branchFilter, setBranchFilter] = useState("");
   const [partnerFilter, setPartnerFilter] = useState(""); // SPM saja: filter per Partner (mdi)
-  const [mcFilter, setMcFilter] = useState(""); // SPM saja: pilih MC yang mau diisi
+  const [mcFilter, setMcFilter] = useState(""); // SPM saja: pilih District yang mau diisi
   const activeFilterCount = [partnerFilter, regionFilter, branchFilter, mcFilter].filter(Boolean).length;
   const [dseMeta, setDseMeta] = useState([]); // [{region,branch,mc}] dari Database DSE - sumber opsi cascading di atas
   const [dseList, setDseList] = useState([]);
@@ -2609,18 +5619,41 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // ulang komponen ExcelFilter yg sama persis dgn punya user. Brand -> tetap
   // linked ke toggle Brand di atas (lihat "brand" case khusus di bawah).
   const [colFilters, setColFilters] = useState({
-    id: [], partner: [], region: [], branch: [], nama: [], status: [], join: [],
+    id: [], partner: [], region: [], branch: [], mc: [], nama: [], status: [], join: [],
     totalSp: [], totalVoucher: [],
     saldo: [], totalPenjualan: [], ar: [], catatan: [],
+    totalPiutang: [], totalDibayar: [], arStatus: [], jatuhTempo: [], arKeterangan: [],
+    // UPDATE (permintaan user - sub-filter "umur" per Status, lihat
+    // StatusAgeFilterMenu): array token "`${status}|${hari}`", BUKAN
+    // bagian dari `status` di atas supaya tetap bisa pilih status tanpa
+    // mempersempit umur, dan sebaliknya.
+    statusAge: [],
   });
   const setColFilter = (k, v) => setColFilters((prev) => ({ ...prev, [k]: v }));
   const resetOneFilter = (k) => setColFilter(k, []);
   const resetColFilters = () => setColFilters({
-    id: [], partner: [], region: [], branch: [], nama: [], status: [], join: [],
+    id: [], partner: [], region: [], branch: [], mc: [], nama: [], status: [], join: [],
     totalSp: [], totalVoucher: [],
     saldo: [], totalPenjualan: [], ar: [], catatan: [],
+    totalPiutang: [], totalDibayar: [], arStatus: [], jatuhTempo: [], arKeterangan: [],
+    statusAge: [],
   });
+  // UPDATE (permintaan user - "untuk kolom partner region branch dan mc
+  // ada opsi untuk hide column"): kolom2 struktural ini cenderung paling
+  // jarang dibutuhkan per-baris (datanya udah kefilter lewat District/Area/
+  // dst di toolbar atas) tapi makan lebar tabel terus - skrg bisa
+  // disembunyikan per kolom lewat tombol mata kecil di header masing2.
+  const [hiddenCols, setHiddenCols] = useState({ partner: false, region: false, branch: false, mc: false });
+  const toggleColHidden = (k) => setHiddenCols((prev) => ({ ...prev, [k]: !prev[k] }));
+  const anyColHidden = Object.values(hiddenCols).some(Boolean);
   const anyColFilterActive = Object.values(colFilters).some((v) => (Array.isArray(v) ? v.length > 0 : v !== ""));
+  // UPDATE (permintaan user - "mana tombol clear all filter"): tombol
+  // reset filter yg udah ada (lihat resetColFilters) dulu CUMA nongol
+  // kecil di kolom "#" paling kiri tabel desktop - ga kelihatan sama
+  // sekali di tampilan kartu mobile & gampang keluput krn ukurannya mini.
+  // Dihitung jumlah KOLOM yg lagi difilter (bukan jumlah nilai) buat badge
+  // angka di tombol baru yg lebih jelas (lihat toolbar search di bawah).
+  const activeColFilterCount = Object.values(colFilters).filter((v) => (Array.isArray(v) ? v.length > 0 : v !== "")).length;
   const [sortConfig, setSortConfig] = useState({ key: null, dir: null }); // { key, dir: "asc"|"desc" }
   const [loadingDse, setLoadingDse] = useState(false);
   const [entries, setEntries] = useState({});     // { [dse_code]: {...} } — satu entry per DSE (tidak lagi per brand)
@@ -2629,6 +5662,14 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   const [savingCode, setSavingCode] = useState(null);
   const [showImport, setShowImport] = useState(false);
   const [prevAr, setPrevAr] = useState({});       // { dse_code: lastOutstandingAmount }
+  // UPDATE (permintaan user - "semua kolom dibuat filternya"): agregat per
+  // DSE dari ar_piutang_items (Total Piutang/Dibayar, Status Lunas, Jatuh
+  // Tempo & Keterangan transaksi belum lunas terdekat) - sama persis logic
+  // yg dipakai ArPiutangInput (totalUtang/totalBayar/nearestUnpaid) tapi
+  // dihitung SEKALI di sini utk SEMUA DSE, khusus utk opsi/filter checklist
+  // ExcelFilter kolom2 itu di header tabel (tidak mengubah logic modal/
+  // list/edit piutang itu sendiri, cuma dibaca read-only di sini).
+  const [arItemsAgg, setArItemsAgg] = useState({}); // { dse_code: { totalPiutang, totalDibayar, lunas, jatuhTempo, keterangan } }
   const [profilesMap, setProfilesMap] = useState({}); // { [uuid]: full_name }
   const [historyFor, setHistoryFor] = useState(null); // dse_code lagi dibuka popup riwayatnya, atau null
   const [historyInitialTab, setHistoryInitialTab] = useState("info"); // sub-tab riwayat yg mau langsung dibuka
@@ -2639,6 +5680,12 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // dari historyFor (yg cuma dse_code) - dipakai DseHistoryModal buat
   // nyusun subtitle header "Nama - IM3 ####### + 3ID #######".
   const [historyDse, setHistoryDse] = useState(null);
+  // UPDATE (permintaan user - "jadi nanti dia bukan berlapis namun
+  // setelah di riwayat dia bisa back untuk ke menu form penjualan"):
+  // callback utk nutup popup Riwayat & buka LAGI popup Form Informasi
+  // & Penjualan di row yg sama (cardOpen -> true di DseInputRow row
+  // itu) - dikirim dari renderHistoryLink pas tombol Riwayat diklik.
+  const [historyOnBack, setHistoryOnBack] = useState(null);
   // UPDATE (status Active/Vacant per tanggal - lihat resolveStatusAsOf di
   // atas): index riwayat perubahan dse_status, { [dse_code]: [{date,
   // old_value, new_value}, ...] terurut ASC }. Dimuat sekali saat mount
@@ -2677,24 +5724,24 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { loadStatusEvents(); }, [loadStatusEvents]);
 
-  // SPM perlu pilih Region/Branch/MC dulu (tidak otomatis dibatasi RLS);
-  // Admin MC langsung terbatas lewat RLS jadi tidak perlu pilih. dseMeta
-  // dipakai utk membangun opsi cascading Region -> Branch -> MC di bawah.
+  // SPM perlu pilih Region/Area/District dulu (tidak otomatis dibatasi RLS);
+  // Admin District langsung terbatas lewat RLS jadi tidak perlu pilih. dseMeta
+  // dipakai utk membangun opsi cascading Region -> Area -> District di bawah.
   useEffect(() => {
     if (!isSPM) return;
     (async () => {
-      const { data } = await supabase.from("mf_dse_database").select("region, branch, mdi, mc").eq("is_revoked", false).not("mc", "is", null);
+      const { data } = await supabase.from("mf_dse_database").select("region, branch, mdi, mc, hoa_name").eq("is_revoked", false).not("mc", "is", null);
       setDseMeta(data || []);
     })();
   }, [isSPM]);
 
-  // Urutan hierarki cascading: Partner -> Region -> Branch -> MC. Partner
+  // Urutan hierarki cascading: Partner -> Region -> Area -> District. Partner
   // DI ATAS Region (bukan di bawah) karena 1 Partner (mdi) bisa beroperasi
   // di beberapa Region sekaligus (cek data: "PT MARI KERJA BERSAMA" & "PT
   // SARANA PUTRA CEMERLANG" ada di NORTH + SOUTH SUMATERA, "PT TRIMINDO JAYA
   // MANDIRI" ada di CENTRAL + NORTH SUMATERA) — jadi opsi Partner TIDAK
-  // boleh difilter oleh Region/Branch yang sedang dipilih, sementara opsi
-  // Region/Branch/MC di bawahnya ikut menyempit kalau Partner dipilih.
+  // boleh difilter oleh Region/Area yang sedang dipilih, sementara opsi
+  // Region/Area/District di bawahnya ikut menyempit kalau Partner dipilih.
   const partnerOptions = useMemo(() => Array.from(new Set(dseMeta.map((r) => r.mdi).filter(Boolean))).sort(), [dseMeta]);
   const regionOptions = useMemo(() => Array.from(new Set(
     dseMeta.filter((r) => !partnerFilter || r.mdi === partnerFilter).map((r) => r.region).filter(Boolean)
@@ -2707,22 +5754,41 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   )).sort(), [dseMeta, partnerFilter, regionFilter, branchFilter]);
 
   // ── Ringkasan per Region ("ALL Sumatera", tampilan default saat belum
-  // pilih Region/Branch/MC sama sekali) — permintaan user: "secara default
+  // pilih Region/Area/District sama sekali) — permintaan user: "secara default
   // pada region ALL sumatera, sehingga menampilkan angka per masing masing
-  // region". Beda dgn tabel input (yg butuh Region/Branch/MC dipilih dulu
+  // region". Beda dgn tabel input (yg butuh Region/Area/District dipilih dulu
   // spy tidak menarik SELURUH roster DSE sekaligus utk diedit), ringkasan
   // ini cuma menjumlahkan angka — aman dimuat tanpa filter apa pun, lalu
   // klik salah satu Region utk drill-down ke tabel input region itu. ──
   const [regionSummary, setRegionSummary] = useState([]);
   const [loadingRegionSummary, setLoadingRegionSummary] = useState(false);
+  // UPDATE (permintaan user - "kadang saat saya berpindah cepat untuk
+  // level ini informasinya sempat muncul yang lama, baru dia memuat yang
+  // lama harusnya jika masih loading dia tunjukkan animasi yang sama
+  // seperti biasanya, memastikan data yang tampil tidak ambigu"): bug
+  // klasik race condition - tiap kali summaryGroupBy/filter ganti,
+  // loadRegionSummary() dipanggil lagi TAPI fetch yg lama (masih
+  // in-flight) ga pernah dibatalkan. Kalau fetch yg lama baru resolve
+  // SETELAH fetch yg baru mulai, hasil lama itu bisa numpuk/timpa state
+  // (setRegionSummary + setLoadingRegionSummary(false)) belakangan,
+  // ngasih efek sekilas data level sebelumnya nongol dulu (atau loading
+  // sempat kelar palsu) sebelum akhirnya data yg bener muncul - persis yg
+  // dikeluhkan. Fix: request-id guard (ref, bukan state - ga perlu
+  // trigger render) - tiap pemanggilan loadRegionSummary dapet id unik
+  // nambah, HANYA request dengan id PALING BARU yg boleh nulis ke state
+  // (setRegionSummary / setLoadingRegionSummary(false)); request lama yg
+  // telat resolve otomatis di-skip/diabaikan hasilnya, jadi LoadingBlock
+  // terus nyala tanpa putus sampai request yg BENERAN terbaru selesai -
+  // ga ada lagi celah data lama kelihatan sekilas.
+  const regionSummaryReqRef = useRef(0);
   // UPDATE (permintaan user - "perbaiki setiap card ini jadi setiap view
   // yang dipilih dia akan menyesuaikan ke penjualan terbanyak sesuai
   // filter yang dipilih, bisa daily / full month"): sebelumnya Ringkasan
   // per Region/Partner/dst cuma tampil di mode Daily (!isRangeMode) -
   // sekarang jalan juga di mode Full Month (isRangeMode true), data
   // diakumulasi persis spt tabel input (lihat loadRegionSummary).
-  // UPDATE (permintaan user - navigasi hirarkis Partner/Region/Branch/
-  // MC/DSE "smooth transisinya"): dulu Ringkasan (leaderboard) CUMA
+  // UPDATE (permintaan user - navigasi hirarkis Partner/Region/Area/
+  // District/DSE "smooth transisinya"): dulu Ringkasan (leaderboard) CUMA
   // tampil kalau belum ada filter apa pun aktif - begitu 1 filter
   // kepencet, langsung lompat ke roster penuh, skip semua level
   // menengah. Sekarang Ringkasan tetap tampil SELAMA level yang sedang
@@ -2736,7 +5802,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // Saldo"): 1 state dipakai bareng oleh kolom Rank tabel ringkasan
   // drill-down & tabel Input DSE sekaligus (lihat RankMetricMenu).
   const [rankMetric, setRankMetric] = useState("total"); // "total" | "sp" | "voucher" | "saldo"
-  const summaryGroupLabel = { partner: "Partner", region: "Region", branch: "Branch", mc: "MC", dse: "DSE" }[summaryGroupBy] || "Partner";
+  const summaryGroupLabel = { partner: "Partner", region: "Region", branch: "Area", mc: "District", dse: "DSE" }[summaryGroupBy] || "Partner";
   // UPDATE (permintaan user - subtitle tanggal/bulan di tiap kolom
   // Penjualan tabel Ringkasan desktop): tanggal aktif (Daily) atau
   // "<Bulan> <Tahun>" (Full Month) - sama persis format yg dipakai label
@@ -2759,7 +5825,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // UPDATE (permintaan user - screenshot level "DSE"/roster di layar
   // lebar: "bukannya seharusnya sudah tidak ada lagi urutan baris opsi
   // Penjualan DSE / AR DSE di urutan kedua... dia dikiri button opsi
-  // Partner/Region/Branch/MC/DSE"): dulu digabung CUMA pas showAllRegions
+  // Partner/Region/Area/District/DSE"): dulu digabung CUMA pas showAllRegions
   // (leaderboard) - begitu drill sampai level terakhir "dse" (roster),
   // showAllRegions jadi false dan baris gabungan ini ikut hilang, balik
   // ke Tabs underline terpisah di atas. Sekarang breadcrumb+toggle
@@ -2775,7 +5841,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // hirarki partner maka akan menampilkan partner, lalu jika salah satu
   // partner diklik, dia akan menuju ke tampilan region... begitu
   // selanjutnya... dan ini semua mengaktifkan filter sesuai yang dipilih,
-  // sehingga smooth transisinya di Partner/Region/Branch/MC/DSE"): dulu
+  // sehingga smooth transisinya di Partner/Region/Area/District/DSE"): dulu
   // toggle Region/Partner/dst cuma ganti pengelompokan Ringkasan tanpa
   // nge-drill filter apa pun - sekarang jadi NAVIGASI HIRARKIS penuh:
   // default mulai di "partner", klik kartu/baris Ringkasan di level mana
@@ -2839,14 +5905,14 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   };
   // UPDATE (permintaan user - "dibuat tetap satu line saja untuk summary
   // di awal, dan untuk tampilkan detail dia menjadi popup saja"): di
-  // layar sempit (isCardView), Ringkasan MC SELALU cuma 2 kartu ringkas
+  // layar sempit (isCardView), Ringkasan District SELALU cuma 2 kartu ringkas
   // 1 baris (Active/Vacant gabungan + Total Penjualan/Tunggakan, angka
   // format compact Jt/M) - detail lengkap (SP/Voucher/Saldo/Interview,
   // angka penuh) dibuka lewat POPUP (bottom-sheet) dari tombol "i", bukan
   // expand inline lagi. Di desktop semua kartu selalu tampil penuh (ga
   // kepengaruh state ini, popup juga ga dipakai).
   const [mcDetailOpen, setMcDetailOpen] = useState(false);
-  const [heroCollapsed, setHeroCollapsed] = useState(false);
+  const [heroCollapsed, setHeroCollapsed] = useState(() => (typeof window !== "undefined" ? window.innerWidth < 640 : false));
   // UPDATE (permintaan user - koreksi dari percobaan wrap-otomatis
   // sebelumnya: "maksud saya daily month dan picker datenya di row 2,
   // hanya tutup buka detail yang harus line 1"): BUKAN wrap kondisional
@@ -2856,10 +5922,11 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // (dseprod-controls-row), dipisah garis tipis permanen. Jauh lebih
   // simpel & pasti, ga ada lagi logic ukur lebar sama sekali.
   const loadRegionSummary = useCallback(async () => {
+    const reqId = ++regionSummaryReqRef.current;
     setLoadingRegionSummary(true);
     try {
       // UPDATE (permintaan user - navigasi hirarkis Partner -> Region ->
-      // Branch -> MC -> DSE): query dasar sekarang ikut disempitkan oleh
+      // Area -> District -> DSE): query dasar sekarang ikut disempitkan oleh
       // filter yang SUDAH aktif (persis pola cascading di loadDseAndEntries)
       // supaya mis. sesudah klik 1 Partner, Ringkasan Region yang tampil
       // CUMA region2 milik Partner itu, bukan seluruh Sumatera lagi.
@@ -2871,11 +5938,11 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       const { data: dses, error: e1 } = await dseQuery;
       if (e1) throw e1;
       // UPDATE (permintaan user - "ubah pilihan tampilannya menjadi
-      // Partner, Region, Branch, MC, DSE"): opsi "dse" beda sifatnya dari 4
+      // Partner, Region, Area, District, DSE"): opsi "dse" beda sifatnya dari 4
       // lainnya - bukan rollup/grouping, tapi daftar PER-DSE individual
       // (1 "grup" = 1 DSE), kolom sama spt grouping lain, klik 1 baris
       // isi kotak search "Cari Kode DSE" (bukan set filter region/dst).
-      const emptyLabelMap = { partner: "Belum Ada Partner", region: "Belum Ada Region", branch: "Belum Ada Branch", mc: "Belum Ada MC" };
+      const emptyLabelMap = { partner: "Belum Ada Partner", region: "Belum Ada Region", branch: "Belum Ada Area", mc: "Belum Ada District" };
       const emptyLabel = emptyLabelMap[summaryGroupBy] || "Belum Ada Region";
       const groupOf = {};
       const byGroup = {};
@@ -2891,13 +5958,41 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
         // Vacant (vacant warna merah jika ada jika 0 tetap hitam)"):
         // totalVacant ditambah persis spt pola mcSummary (lihat
         // r.dse_status === "Vacant" di useMemo mcSummary di bawah).
-        if (!byGroup[key]) byGroup[key] = { key, label, totalAlokasi: 0, totalActive: 0, totalVacant: 0, qtySp: 0, nilaiSp: 0, qtyVoucher: 0, nilaiVoucher: 0, nilaiSaldo: 0, tunggakan: 0 };
+        if (!byGroup[key]) byGroup[key] = { key, label, totalAlokasi: 0, totalActive: 0, totalVacant: 0, qtySp: 0, nilaiSp: 0, qtyVoucher: 0, nilaiVoucher: 0, nilaiSaldo: 0, tunggakan: 0, totalPiutang: 0, totalDibayar: 0 };
         byGroup[key].totalAlokasi += 1;
         const effStatus = periodMode === "tanggal" ? resolveStatusAsOf(r.dse_code, entryDate, statusEvents, r.dse_status) : r.dse_status;
         if (effStatus === "Active") byGroup[key].totalActive += 1;
         else if (effStatus === "Vacant") byGroup[key].totalVacant += 1;
       });
       const codes = (dses || []).map((r) => r.dse_code);
+      if (codes.length && tab === "ar") {
+        // UPDATE (permintaan user - "perbaiki untuk semua level,
+        // seharusnya ada kolom total piutang, total dibayar, sisa
+        // tunggakan"): grid Ringkasan di level Partner/Region/Area/District
+        // cuma nampilin 1 angka "Tunggakan" (dari cache lama mf_dse_prod_ar.
+        // ar_piutang, jarang akurat), ga ada breakdown Total Piutang &
+        // Total Dibayar spt yg SUDAH ada di tabel per-DSE (roster, level
+        // "DSE"). Bulk-fetch ar_piutang_items di sini (pola sama persis
+        // `arItemsAgg` - CHUNK 500, nested payments), diagregasi per GROUP
+        // (groupOf[dse_code]) bukan per dse_code - dipakai utk kolom baru
+        // "Total Piutang"/"Total Dibayar"/"Sisa Tunggakan" di SEMUA level.
+        const AR_CHUNK = 500;
+        for (let i = 0; i < codes.length; i += AR_CHUNK) {
+          const chunk = codes.slice(i, i + AR_CHUNK);
+          const { data: arItems, error: eAr } = await supabase.from("ar_piutang_items")
+            .select("dse_code, total, ar_piutang_payments(nominal, deleted_at)")
+            .in("dse_code", chunk)
+            .is("deleted_at", null);
+          if (eAr) throw eAr;
+          (arItems || []).forEach((it) => {
+            const g = byGroup[groupOf[it.dse_code]];
+            if (!g) return;
+            const paid = (it.ar_piutang_payments || []).filter((p) => !p.deleted_at).reduce((s, p) => s + fRaw(p.nominal), 0);
+            g.totalPiutang += fRaw(it.total);
+            g.totalDibayar += paid;
+          });
+        }
+      }
       if (codes.length) {
         // UPDATE (permintaan user - "bisa daily / full month"): mode Full
         // Month (isRangeMode) sekarang diakumulasi dari SEMUA tanggal
@@ -2931,14 +6026,30 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       // Saldo"): tab AR tetap diurutkan dari tunggakan terbesar (ga ada
       // pilihan metric di situ), tab Penjualan sekarang ikut rankMetric
       // yg dipilih lewat RankMetricMenu di header kolom Rank.
-      const rankSortValue = (g) => (tab === "ar" ? g.tunggakan : rankMetricValueOf(g, rankMetric));
+      // FIX (permintaan user - "harusnya urutkan berdasarkan sisa
+      // tunggakan", screenshot nunjukkin Area dgn Sisa Tunggakan sama
+      // (Rp 1.000.000) tapi ga bersebelahan di tabel): urutan tab AR
+      // dulu pakai `g.tunggakan` (cache LAMA dari mf_dse_prod_ar.
+      // ar_piutang, komentar di atas sendiri udah bilang "jarang
+      // akurat") - PADAHAL kolom "Sisa Tunggakan" yg beneran ditampilkan
+      // di tabel ini pakai sumber BARU & akurat: totalPiutang -
+      // totalDibayar (dari ar_piutang_items, lihat blok fetch di atas).
+      // 2 sumber angka beda ini bikin urutan tabel ga nyambung sama
+      // angka yg kelihatan di kolom Sisa Tunggakan-nya sendiri. Sekarang
+      // disamakan: sort tab AR pakai sumber yg SAMA dgn yg ditampilkan.
+      const rankSortValue = (g) => (tab === "ar" ? (g.totalPiutang - g.totalDibayar) : rankMetricValueOf(g, rankMetric));
+      // Request lama (sudah ditimpa request lebih baru) - abaikan
+      // hasilnya, jangan sentuh state sama sekali (lihat komentar
+      // `regionSummaryReqRef` di atas).
+      if (reqId !== regionSummaryReqRef.current) return;
       setRegionSummary(Object.values(byGroup).sort((a, b) => rankSortValue(b) - rankSortValue(a) || a.label.localeCompare(b.label)));
       // (groupOf key dipakai di atas utk match produksi per dse_code;
       // key bisa = dse_code sendiri saat summaryGroupBy === "dse")
     } catch (e) {
+      if (reqId !== regionSummaryReqRef.current) return;
       showToast(e.message || "Gagal memuat ringkasan.", "error");
     } finally {
-      setLoadingRegionSummary(false);
+      if (reqId === regionSummaryReqRef.current) setLoadingRegionSummary(false);
     }
   }, [entryDate, summaryGroupBy, isRangeMode, sortedSelectedDates, tab, partnerFilter, regionFilter, branchFilter, mcFilter, periodMode, statusEvents, rankMetric]);
 
@@ -2951,7 +6062,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       let q = supabase.from("mf_dse_database").select("dse_code, dse_code_3id, ds_name, mc, branch, region, mdi, is_revoked, dse_status, join_date").eq("is_revoked", false).order("dse_code", { ascending: true });
       if (isSPM) {
         // Tanpa filter apa pun -> tampilkan akumulasi dari level tertinggi
-        // (semua Partner/Region/Branch/MC), bukan kosong.
+        // (semua Partner/Region/Area/District), bukan kosong.
         if (regionFilter) q = q.eq("region", regionFilter);
         if (branchFilter) q = q.eq("branch", branchFilter);
         if (partnerFilter) q = q.eq("mdi", partnerFilter);
@@ -3084,6 +6195,58 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
 
   useEffect(() => { loadDseAndEntries(); }, [loadDseAndEntries]);
 
+  // Bulk-load ar_piutang_items utk SEMUA dse_code yg lagi tampil, khusus
+  // tab AR - dipakai cuma utk opsi/filter checklist kolom Total Piutang/
+  // Total Dibayar/Status/Jatuh Tempo/Keterangan (lihat `arItemsAgg` di
+  // atas). Query & agregasinya terpisah dari ArPiutangInput (yg tetap
+  // fetch sendiri per-baris utk nilai yg ditampilkan di tabel) supaya
+  // logic modal/list/edit piutang itu ga disentuh.
+  useEffect(() => {
+    if (tab !== "ar" || !dseList.length) { setArItemsAgg({}); return; }
+    let cancelled = false;
+    (async () => {
+      const codes = dseList.map((r) => r.dse_code);
+      const agg = {};
+      const CHUNK = 500;
+      try {
+        for (let i = 0; i < codes.length; i += CHUNK) {
+          const chunk = codes.slice(i, i + CHUNK);
+          const { data, error } = await supabase.from("ar_piutang_items")
+            .select("dse_code, total, jatuh_tempo, tanggal_transaksi, catatan, ar_piutang_payments(nominal, deleted_at)")
+            .in("dse_code", chunk)
+            .is("deleted_at", null);
+          if (error) throw error;
+          (data || []).forEach((it) => {
+            const a = agg[it.dse_code] || { totalPiutang: 0, totalDibayar: 0, unpaid: [] };
+            const total = fRaw(it.total);
+            const paid = (it.ar_piutang_payments || []).filter((p) => !p.deleted_at).reduce((s, p) => s + fRaw(p.nominal), 0);
+            a.totalPiutang += total;
+            a.totalDibayar += paid;
+            if (paid < total) a.unpaid.push({ jatuh_tempo: it.jatuh_tempo, catatan: it.catatan });
+            agg[it.dse_code] = a;
+          });
+        }
+      } catch {
+        // Gagal diam-diam - filter kolom2 ini sekadar bantuan, data utama
+        // tabel (ArPiutangInput per-baris) tetap jalan seperti biasa.
+      }
+      if (cancelled) return;
+      const out = {};
+      Object.keys(agg).forEach((code) => {
+        const a = agg[code];
+        const nearest = a.unpaid.filter((u) => u.jatuh_tempo).sort((x, y) => new Date(x.jatuh_tempo) - new Date(y.jatuh_tempo))[0] || null;
+        out[code] = {
+          totalPiutang: a.totalPiutang, totalDibayar: a.totalDibayar,
+          lunas: a.unpaid.length === 0,
+          jatuhTempo: nearest?.jatuh_tempo || "",
+          keterangan: nearest?.catatan || "",
+        };
+      });
+      setArItemsAgg(out);
+    })();
+    return () => { cancelled = true; };
+  }, [tab, dseList]);
+
   // Warn before closing/reloading the tab while there are unsaved edits.
   useEffect(() => {
     const anyDirty = Object.values(dirty).some(Boolean);
@@ -3150,7 +6313,10 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
         if (error) throw error;
       }
       setDirty((prev) => ({ ...prev, [code]: false }));
-      showToast(`Data ${code} tersimpan.`, "ok");
+      const dseIdLabel = dse?.dse_code_3id
+        ? `${code} / ${dse.dse_code_3id}`
+        : code;
+      showToast(`Data DSE ${dseIdLabel} tersimpan.`, "ok");
       return true;
     } catch (e) {
       showToast(e.message || "Gagal menyimpan.", "error");
@@ -3174,7 +6340,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   };
 
   // --- Unsaved-changes guard: any action that would discard in-progress edits
-  // (switching tab, changing region/branch/partner/MC/brand filters, or
+  // (switching tab, changing region/branch/partner/District/brand filters, or
   // changing the period) must first confirm Save or Discard with the user.
   const [pendingGuardedAction, setPendingGuardedAction] = useState(null); // () => void
   const runGuarded = (action) => {
@@ -3217,6 +6383,12 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
     const partnerVal = r.mdi ?? "";
     const regionVal = r.region ?? "";
     const branchVal = r.branch ?? "";
+    // UPDATE (permintaan user - "untuk kolom partner region branch dan mc
+    // ada opsi untuk hide column"): District dulu CUMA ada di dalam popup detail
+    // (skrg disembunyikan, lihat SHOW_STRUCTURAL_DETAIL_TOGGLE) - ga
+    // pernah jadi kolom tabel sendiri. Ditambah sbg kolom ke-4 yg bisa
+    // di-filter/sort/hide, konsisten sama Partner/Region/Area.
+    const mcVal = r.mc ?? "";
     const e = entries[r.dse_code];
     const nilaiSp = fRaw(e?.nilai_sp);
     const nilaiVoucher = fRaw(e?.nilai_voucher);
@@ -3224,18 +6396,36 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
     const catatanAll = (e?.catatan || "").trim();
     const ar = fRaw(prevAr[r.dse_code]);
     const totalPenjualan = nilaiSp + nilaiVoucher + nilaiSaldo;
-    return { r, namaVal, statusVal, joinVal, partnerVal, regionVal, branchVal, nilaiSp, nilaiVoucher, nilaiSaldo, totalPenjualan, ar, catatanAll };
-  }), [dseList, identity, entries, prevAr]);
+    const agg = arItemsAgg[r.dse_code];
+    const totalPiutangVal = agg ? agg.totalPiutang : 0;
+    const totalDibayarVal = agg ? agg.totalDibayar : 0;
+    const arStatusVal = agg ? (agg.lunas ? "lunas" : "belum_lunas") : "lunas";
+    const jatuhTempoVal = agg?.jatuhTempo || "";
+    const arKeteranganVal = agg?.keterangan || "";
+    // UPDATE (permintaan user - "disini akan ada dropdown lagi per
+    // statusnya jadi kita bisa tracking berapa saja angka angkanya"):
+    // umur status (hari) per baris, sumbernya sama persis dgn badge umur
+    // di pill Status (statusAgeInfo) - dipakai utk opsi sub-filter umur
+    // per status di header kolom Status (lihat ageOptionsByStatus).
+    const ageDaysVal = statusAgeInfo(r.dse_code, statusVal, statusEvents, joinVal)?.days ?? null;
+    return { r, namaVal, statusVal, joinVal, partnerVal, regionVal, branchVal, mcVal, nilaiSp, nilaiVoucher, nilaiSaldo, totalPenjualan, ar, catatanAll, totalPiutangVal, totalDibayarVal, arStatusVal, jatuhTempoVal, arKeteranganVal, ageDaysVal };
+  }), [dseList, identity, entries, prevAr, arItemsAgg, statusEvents]);
 
   // Opsi checklist tiap kolom (distinct values dari enrichedDse saat ini).
   const colOptions = useMemo(() => {
     const uniq = (vals, fmt) => [...new Set(vals)].sort((a, b) => (a > b ? 1 : a < b ? -1 : 0))
       .map((v) => ({ value: v, label: fmt ? fmt(v) : (v === "" ? "— Kosong —" : String(v)) }));
     return {
-      id: uniq(enrichedDse.map((x) => x.r.dse_code)),
+      id: uniq(enrichedDse.map((x) => x.r.dse_code))
+        .map((o) => {
+          const match = enrichedDse.find((x) => x.r.dse_code === o.value);
+          const id3id = match?.r?.dse_code_3id;
+          return id3id ? { ...o, label: `${o.label} / ${id3id}` } : o;
+        }),
       partner: uniq(enrichedDse.map((x) => x.partnerVal)),
       region: uniq(enrichedDse.map((x) => x.regionVal)),
       branch: uniq(enrichedDse.map((x) => x.branchVal)),
+      mc: uniq(enrichedDse.map((x) => x.mcVal)),
       nama: uniq(enrichedDse.map((x) => x.namaVal)),
       status: STATUS_OPTIONS.map((s) => ({ value: s.v, label: s.label })),
       join: uniq(enrichedDse.map((x) => x.joinVal), (v) => (v ? fmtLongDate(v) : "— Kosong —")),
@@ -3245,8 +6435,45 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       totalPenjualan: uniq(enrichedDse.map((x) => x.totalPenjualan), (v) => `Rp ${fmtID(v)}`),
       ar: uniq(enrichedDse.map((x) => x.ar), (v) => `Rp ${fmtID(v)}`),
       catatan: uniq(enrichedDse.map((x) => x.catatanAll)),
+      totalPiutang: uniq(enrichedDse.map((x) => x.totalPiutangVal), (v) => `Rp ${fmtID(v)}`),
+      totalDibayar: uniq(enrichedDse.map((x) => x.totalDibayarVal), (v) => `Rp ${fmtID(v)}`),
+      arStatus: [{ value: "lunas", label: "Lunas" }, { value: "belum_lunas", label: "Belum Lunas" }],
+      jatuhTempo: uniq(enrichedDse.map((x) => x.jatuhTempoVal), (v) => (v ? fmtDayMonth(v) : "— Kosong —")),
+      arKeterangan: uniq(enrichedDse.map((x) => x.arKeteranganVal)),
     };
   }, [enrichedDse]);
+
+  // UPDATE (permintaan user - nested dropdown "umur" per baris status di
+  // StatusAgeFilterMenu): daftar nilai umur (hari) yg BENERAN ada di data
+  // saat ini, per status (Active/Vacant/OJT) - "Belum diisi" ga relevan
+  // (ga ada tanggal acuan). Dikelompokkan + dihitung jumlah DSE per nilai
+  // umur biar user bisa lihat sebarannya sebelum milih.
+  const ageOptionsByStatus = useMemo(() => {
+    const m = {};
+    for (const s of STATUS_OPTIONS) {
+      if (!s.v) continue;
+      const counts = {};
+      for (const x of enrichedDse) {
+        if (x.statusVal !== s.v || x.ageDaysVal == null) continue;
+        counts[x.ageDaysVal] = (counts[x.ageDaysVal] || 0) + 1;
+      }
+      m[s.v] = Object.keys(counts).map(Number).sort((a, b) => a - b).map((days) => ({ days, count: counts[days] }));
+    }
+    return m;
+  }, [enrichedDse]);
+  // Pecah token "status|hari" dari colFilters.statusAge jadi map per
+  // status -> daftar hari yg dipilih, biar gampang dicek di filteredDseList.
+  const statusAgeByStatus = useMemo(() => {
+    const m = {};
+    for (const tok of colFilters.statusAge) {
+      const idx = tok.lastIndexOf("|");
+      if (idx < 0) continue;
+      const st = tok.slice(0, idx);
+      const d = Number(tok.slice(idx + 1));
+      (m[st] || (m[st] = [])).push(d);
+    }
+    return m;
+  }, [colFilters.statusAge]);
 
   const filteredDseList = useMemo(() => {
     let out = enrichedDse.filter((x) => {
@@ -3259,8 +6486,11 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       if (colFilters.partner.length && !colFilters.partner.includes(x.partnerVal)) return false;
       if (colFilters.region.length && !colFilters.region.includes(x.regionVal)) return false;
       if (colFilters.branch.length && !colFilters.branch.includes(x.branchVal)) return false;
+      if (colFilters.mc.length && !colFilters.mc.includes(x.mcVal)) return false;
       if (colFilters.nama.length && !colFilters.nama.includes(x.namaVal)) return false;
       if (colFilters.status.length && !colFilters.status.includes(x.statusVal)) return false;
+      const ageSel = statusAgeByStatus[x.statusVal];
+      if (ageSel && ageSel.length && !ageSel.includes(x.ageDaysVal)) return false;
       if (colFilters.join.length && !colFilters.join.includes(x.joinVal)) return false;
       if (colFilters.totalSp.length && !colFilters.totalSp.includes(x.nilaiSp)) return false;
       if (colFilters.totalVoucher.length && !colFilters.totalVoucher.includes(x.nilaiVoucher)) return false;
@@ -3268,6 +6498,11 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       if (colFilters.totalPenjualan.length && !colFilters.totalPenjualan.includes(x.totalPenjualan)) return false;
       if (colFilters.ar.length && !colFilters.ar.includes(x.ar)) return false;
       if (colFilters.catatan.length && !colFilters.catatan.includes(x.catatanAll)) return false;
+      if (colFilters.totalPiutang.length && !colFilters.totalPiutang.includes(x.totalPiutangVal)) return false;
+      if (colFilters.totalDibayar.length && !colFilters.totalDibayar.includes(x.totalDibayarVal)) return false;
+      if (colFilters.arStatus.length && !colFilters.arStatus.includes(x.arStatusVal)) return false;
+      if (colFilters.jatuhTempo.length && !colFilters.jatuhTempo.includes(x.jatuhTempoVal)) return false;
+      if (colFilters.arKeterangan.length && !colFilters.arKeterangan.includes(x.arKeteranganVal)) return false;
       return true;
     });
 
@@ -3279,6 +6514,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           case "partner": return x.partnerVal || "";
           case "region": return x.regionVal || "";
           case "branch": return x.branchVal || "";
+          case "mc": return x.mcVal || "";
           case "nama": return x.namaVal || "";
           case "status": return x.statusVal || "";
           case "join": return x.joinVal || "";
@@ -3288,6 +6524,11 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           case "totalPenjualan": return x.totalPenjualan;
           case "ar": return x.ar;
           case "catatan": return x.catatanAll || "";
+          case "totalPiutang": return x.totalPiutangVal;
+          case "totalDibayar": return x.totalDibayarVal;
+          case "arStatus": return x.arStatusVal || "";
+          case "jatuhTempo": return x.jatuhTempoVal || "";
+          case "arKeterangan": return x.arKeteranganVal || "";
           default: return "";
         }
       };
@@ -3309,19 +6550,19 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
     }
 
     return out.map((x) => x.r);
-  }, [enrichedDse, dseSearch, colFilters, sortConfig, tab, rankMetric]);
-  // ── Ringkasan (summary cards) — di-scope ke MC yang sedang dipilih (lihat
+  }, [enrichedDse, dseSearch, colFilters, statusAgeByStatus, sortConfig, tab, rankMetric]);
+  // ── Ringkasan (summary cards) — di-scope ke District yang sedang dipilih (lihat
   // `dseList`, bukan filteredDseList, supaya tetap utuh walau sedang mengetik
   // di kotak "Cari DSE") + brand & tanggal yang aktif saat ini. Status DSE
   // dan angka yg BARU DIEDIT (belum disimpan ke server) ikut dihitung di sini
   // juga - pakai `identity`/`entries` override yg sama dgn yg dipakai baris
   // tabel, supaya kartu ini langsung update real-time saat admin mengetik,
   // bukan baru berubah setelah tombol Simpan ditekan.
-  // UPDATE (permintaan user): akumulasi per Branch & per Partner MENYUSUL -
-  // utk sekarang summary-nya cuma per MC yg sedang dipilih di filter atas.
+  // UPDATE (permintaan user): akumulasi per Area & per Partner MENYUSUL -
+  // utk sekarang summary-nya cuma per District yg sedang dipilih di filter atas.
   const mcSummary = useMemo(() => {
     let totalActive = 0, totalVacant = 0, totalInterview = 0;
-    let qtySp = 0, nilaiSp = 0, qtyVoucher = 0, nilaiVoucher = 0, nilaiSaldo = 0, tunggakan = 0;
+    let qtySp = 0, nilaiSp = 0, qtyVoucher = 0, nilaiVoucher = 0, nilaiSaldo = 0, tunggakan = 0, totalDibayar = 0;
     for (const dse of dseList) {
       const liveStatus = identity[dse.dse_code]?.dse_status ?? dse.dse_status ?? "";
       // UPDATE (status per tanggal): mode Daily (tanggal spesifik, bukan
@@ -3338,9 +6579,21 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
         qtyVoucher += fRaw(e.qty_voucher); nilaiVoucher += fRaw(e.nilai_voucher);
         nilaiSaldo += fRaw(e.nilai_saldo);
         tunggakan += fRaw(e.ar_piutang);
+        totalDibayar += fRaw(e.ar_bayar);
       }
     }
-    return { totalAlokasi: dseList.length, totalActive, totalVacant, totalInterview, qtySp, nilaiSp, qtyVoucher, nilaiVoucher, nilaiSaldo, tunggakan, totalPenjualan: nilaiSp + nilaiVoucher + nilaiSaldo };
+    // UPDATE (permintaan user - "Total Piutang | Total Dibayar | Sisa
+    // Piutang, cardnya seperti ini juga"): StatTiles tab AR sekarang
+    // menambahkan Total Piutang & Total Dibayar di samping Sisa Piutang
+    // (tunggakan) yg sudah ada, pakai label/urutan sama persis dgn kolom
+    // tabel yg baru (Total Piutang, Total Dibayar, Sisa Piutang). Dihitung
+    // dari cache mf_dse_prod_ar yg SAMA dgn yg sudah dipakai `tunggakan`
+    // (entries[dse].ar_piutang = sisa, ar_bayar = dibayar HARI INI) - bukan
+    // query baru ke ar_piutang_items per-DSE (terlalu berat utk summary
+    // page-level) - totalPiutang = sisa + dibayar (identitas akuntansi
+    // harian: piutang hari ini = sisa yg belum dibayar + yg sudah dibayar).
+    const totalPiutang = tunggakan + totalDibayar;
+    return { totalAlokasi: dseList.length, totalActive, totalVacant, totalInterview, qtySp, nilaiSp, qtyVoucher, nilaiVoucher, nilaiSaldo, tunggakan, totalDibayar, totalPiutang, totalPenjualan: nilaiSp + nilaiVoucher + nilaiSaldo };
   }, [dseList, identity, entries, periodMode, entryDate, statusEvents]);
 
   // UPDATE (permintaan user - "harusnya angkanya saja yang loading namun
@@ -3392,6 +6645,11 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   const [dateTo, setDateTo] = useState("");
   const [totals, setTotals] = useState({ qty_sp: 0, nilai_sp: 0, qty_saldo: 0, nilai_saldo: 0, qty_voucher: 0, nilai_voucher: 0, ar_piutang: 0, ar_bayar: 0 });
   const [exportLoading, setExportLoading] = useState(false);
+  // Laporan Tunggakan massal (semua DSE yg masih nunggak di akhir bulan
+  // terpilih, calViewMonth) - lihat ArCetakBulkModal.
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [showCetakBulk, setShowCetakBulk] = useState(false);
+  const [bulkList, setBulkList] = useState([]);
 
   const fetchRiwayat = useCallback(async (pg = 1, srch = search) => {
     setFetching(true);
@@ -3447,7 +6705,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       if (dateTo) q = q.lte("tanggal", dateTo);
       const { data, error } = await q.limit(50000);
       if (error) throw error;
-      const head = ["Tanggal", "Kode DSE", "MC", "Branch", "Nama DS", "Nama DSE", "Qty SP", "Nilai SP", "Qty Saldo", "Nilai Saldo", "Qty Voucher", "Nilai Voucher", "Bayar AR", "Sisa AR/Piutang", "Catatan", "Terakhir Diperbarui"];
+      const head = ["Tanggal", "Kode DSE", "District", "Area", "Nama DS", "Nama DSE", "Qty SP", "Nilai SP", "Qty Saldo", "Nilai Saldo", "Qty Voucher", "Nilai Voucher", "Bayar AR", "Sisa AR/Piutang", "Catatan", "Terakhir Diperbarui"];
       const body = (data || []).map((r) => [
         r.tanggal, r.dse_code, r.mc || "", r.branch || "", r.ds_name || "", r.dse_name || "",
         fRaw(r.qty_sp), fRaw(r.nilai_sp), fRaw(r.qty_saldo), fRaw(r.nilai_saldo), fRaw(r.qty_voucher), fRaw(r.nilai_voucher),
@@ -3463,6 +6721,46 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       showToast(e.message || "Gagal export.", "error");
     } finally {
       setExportLoading(false);
+    }
+  };
+
+  // Ambil SEMUA transaksi piutang (semua DSE), kelompokkan per dse_code,
+  // hitung status "s.d. akhir bulan terpilih" (computeArAsOf - sama persis
+  // dgn yg dipakai laporan per-DSE), lalu saring yg masih > 0 (masih
+  // nunggak) - dipakai utk cetak massal 1x jalan buat submit ke HR.
+  const openCetakBulk = async () => {
+    setBulkLoading(true);
+    try {
+      const { data: itemsData, error: e1 } = await supabase.from("ar_piutang_items").select("*, ar_piutang_payments(*)").is("deleted_at", null);
+      if (e1) throw e1;
+      const byDse = {};
+      // Saring pembayaran yg sudah di-soft-delete (lihat migration
+      // ar_piutang_soft_delete) - items-nya sendiri sudah disaring via
+      // `.is("deleted_at", null)` di atas, tapi nested ar_piutang_payments(*)
+      // ga ikut tersaring otomatis oleh PostgREST, jadi disaring di sini
+      // sebelum masuk computeArAsOf (laporan cetak massal ke HR).
+      (itemsData || []).forEach((it) => { (byDse[it.dse_code] = byDse[it.dse_code] || []).push({ ...it, ar_piutang_payments: (it.ar_piutang_payments || []).filter((p) => !p.deleted_at) }); });
+      const codes = Object.keys(byDse);
+      if (codes.length === 0) { showToast("Belum ada transaksi piutang tercatat.", "ok"); return; }
+      const { data: dseRows } = await supabase.from("mf_dse_database").select("dse_code, dse_code_3id, ds_name, mc, branch").in("dse_code", codes);
+      const dseMap = {};
+      (dseRows || []).forEach((r) => { dseMap[r.dse_code] = r; });
+      const cutoffISO = endOfMonthISO(calViewMonth);
+      const list = codes.map((code) => ({
+        dseCode: code,
+        dseCode3id: dseMap[code]?.dse_code_3id || "",
+        dseName: dseMap[code]?.ds_name || "",
+        mc: dseMap[code]?.mc || "",
+        branch: dseMap[code]?.branch || "",
+        report: computeArAsOf(byDse[code], cutoffISO, calViewMonth),
+      })).filter((r) => r.report.sisaAkhir > 0).sort((a, b) => b.report.sisaAkhir - a.report.sisaAkhir);
+      if (list.length === 0) { showToast("Tidak ada DSE dengan tunggakan pada periode ini.", "ok"); return; }
+      setBulkList(list);
+      setShowCetakBulk(true);
+    } catch (e) {
+      showToast(e.message || "Gagal memuat data tunggakan.", "error");
+    } finally {
+      setBulkLoading(false);
     }
   };
 
@@ -3813,11 +7111,22 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           <div style={{ width: 36, height: 36, flexShrink: 0 }} />
           <div style={{ fontSize: 19, fontWeight: 700, letterSpacing: -0.3, whiteSpace: "nowrap" }}>DSE Prod. &amp; AR</div>
         </div>
+        {/* UPDATE (permintaan user - "untuk ar ini cukup full month saja"):
+            klon toggle Daily/Full Month + date-nav pill ini cuma relevan
+            kalau grup aslinya (lihat render asli di bawah) beneran
+            dirender - tab AR sekarang menyembunyikan grup itu (lihat
+            `tab !== "ar"` di render asli), jadi klon pengukurnya HARUS
+            ikutan disembunyikan jg di tab AR, biar scrollWidth yg diukur
+            `selectorFitsRow1` gak kehitung kelebaran (nganggep toggle+nav
+            masih ada padahal udah gak dirender). */}
+        {(
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {tab !== "ar" && (
           <div style={{ display: "flex", alignItems: "center", gap: 2, height: 36, padding: 3 }}>
             <div style={{ height: 30, padding: "0 13px", display: "flex", alignItems: "center", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>Daily</div>
             <div style={{ height: 30, padding: "0 13px", display: "flex", alignItems: "center", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>Full Month</div>
           </div>
+          )}
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <div style={{ width: 36, height: 36, flexShrink: 0 }} />
             <div style={{ height: 36, padding: "0 6px", display: "flex", alignItems: "center" }}>
@@ -3828,6 +7137,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
             <div style={{ width: 36, height: 36, flexShrink: 0 }} />
           </div>
         </div>
+        )}
         <div style={{ width: 36, height: 36, flexShrink: 0 }} />
       </div>
       {toast && <Toast msg={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
@@ -3841,32 +7151,50 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           kayak klik-nya ga ngapa2in padahal yg bener cuma ketutup. Naikin
           ke 9900, tertinggi di seluruh file ini, krn ini blocking dialog
           yg HARUS selalu di atas apapun yg lagi kebuka. */}
+      {/* UPDATE (permintaan user - screenshot dialog "Ada perubahan belum
+          disimpan", "perbaiki UI nya"): dulu polos banget (ga ada
+          icon/badge peringatan, border-radius 14 beda sendiri dari modal
+          lain yg konsisten 16/20, ga ada animasi masuk, tombol polos
+          tanpa icon) - dipoles biar SAMA PERSIS pola visual dgn modal
+          konfirmasi lain di file ini (vacantConfirmModal/ojtConfirmModal/
+          nameChangeModal): badge icon bulat warna amber (ini peringatan,
+          bukan aksi destructive merah - makanya beda dari Vacant/OJT yg
+          emang merah/amber solid), card border-radius 16, boxShadow +
+          animasi modalPopIn yg sama, tombol2 dikasih icon biar aksinya
+          lebih cepat ditangkep mata (Save/Trash2/X). */}
       {pendingGuardedAction && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 9900, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ width: 380, maxWidth: "90vw", background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 22, boxShadow: "0 12px 40px rgba(0,0,0,0.35)" }}>
-            <div style={{ fontSize: 16, fontWeight: 700, color: t.hi, marginBottom: 6 }}>Ada perubahan belum disimpan</div>
-            <div style={{ fontSize: 13, color: t.mid, lineHeight: 1.5, marginBottom: 18 }}>
-              Kamu punya {dirtyCount} DSE dengan perubahan yang belum disimpan. Simpan dulu sebelum lanjut, atau buang perubahannya?
+        <div style={{ position: "fixed", inset: 0, zIndex: 9900, background: "rgba(15,23,32,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ width: "100%", maxWidth: 380, background: t.card, borderRadius: 16, padding: 20, boxShadow: "0 24px 60px rgba(0,0,0,0.35)", fontFamily: FONT, animation: "modalPopIn 0.22s cubic-bezier(0.2, 0.8, 0.2, 1)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+              <div style={{ width: 32, height: 32, borderRadius: 999, background: t.amberBg, color: t.amber, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <AlertTriangle size={16} />
+              </div>
+              <div style={{ fontSize: 14.5, fontWeight: 800, color: t.hi }}>Ada Perubahan Belum Disimpan</div>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.mid, lineHeight: 1.6, marginBottom: 18 }}>
+              Kamu punya <strong style={{ color: t.hi }}>{dirtyCount} DSE</strong> dengan perubahan yang belum disimpan. Simpan dulu sebelum lanjut, atau buang perubahannya?
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <button onClick={handleConfirmSave} style={{ height: 40, borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontWeight: 700, fontSize: 13.5, cursor: "pointer" }}>
-                Simpan &amp; Lanjutkan
+              <button onClick={handleConfirmSave} style={{ height: 38, borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontWeight: 700, fontSize: 12.5, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+                <Save size={13} /> Simpan &amp; Lanjutkan
               </button>
-              <button onClick={handleConfirmDiscard} style={{ height: 40, borderRadius: 9, border: `1px solid ${t.line}`, background: "transparent", color: "#d14343", fontWeight: 700, fontSize: 13.5, cursor: "pointer" }}>
-                Buang Perubahan &amp; Lanjutkan
+              <button onClick={handleConfirmDiscard} style={{ height: 38, borderRadius: 9, border: `1px solid ${t.red}55`, background: t.redBg, color: t.red, fontWeight: 700, fontSize: 12.5, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+                <Trash2 size={13} /> Buang Perubahan &amp; Lanjutkan
               </button>
-              <button onClick={() => setPendingGuardedAction(null)} style={{ height: 40, borderRadius: 9, border: "none", background: "transparent", color: t.mid, fontWeight: 600, fontSize: 13.5, cursor: "pointer" }}>
+              <button onClick={() => setPendingGuardedAction(null)} style={{ height: 36, borderRadius: 9, border: "none", background: "transparent", color: t.mid, fontWeight: 600, fontSize: 12.5, cursor: "pointer" }}>
                 Batal
               </button>
             </div>
           </div>
         </div>
       )}
-      {historyFor && <DseHistoryModal t={t} dseCode={historyFor} dse={historyDse} initialTab={historyInitialTab} initialMonth={historyInitialMonth} onClose={() => { setHistoryFor(null); setHistoryDse(null); }} />}
+      {historyFor && <DseHistoryModal t={t} dseCode={historyFor} dse={historyDse} initialTab={historyInitialTab} initialMonth={historyInitialMonth}
+        onClose={() => { setHistoryFor(null); setHistoryDse(null); setHistoryOnBack(null); }}
+        onBack={() => { historyOnBack?.(); setHistoryFor(null); setHistoryDse(null); setHistoryOnBack(null); }} />}
 
       {/* ── Selector 3 modul tracking (DSE / DSO / HoA) — permintaan user
           "nanti akan ada 3 yang kita tracking: 1. Penjualan dan AR DSE,
-          2. AR DSO [level MC], 3. AR HoA": pill selector di paling atas
+          2. AR DSO [level District], 3. AR HoA": pill selector di paling atas
           halaman, "DSE" aktif penuh (semua fitur di bawah ini), "DSO" &
           "HoA" placeholder dulu krn datanya belum siap - begitu siap,
           tinggal isi blok render masing2 persis pola DSE yg sudah ada. ── */}
@@ -3992,8 +7320,55 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                 tanpa grup kanan) selalu lega & gak pernah overflow di lebar
                 berapapun di atas `isNarrowHeader`; di bawah itu, layout
                 mobile terpisah yg render title scara independen. */}
-            <div className="dseprod-title-text" style={{ fontSize: 19, fontWeight: 700, letterSpacing: -0.3, whiteSpace: "nowrap", flexShrink: 0 }}>DSE Prod. &amp; AR</div>
+            {/* UPDATE (feedback user, screenshot app-bar "DSE Prod. & AR"
+                plain/netral vs card title yg sempat jadi toggle berwarna):
+                judul mobile dikembalikan jadi teks STATIS/netral (warna
+                t.hi, tanpa onClick, tanpa pewarnaan per-kata) - tapi teks
+                diringkas tetap "Prod. & AR" (prefix "DSE" dibuang, bukan
+                revert total ke judul desktop). Toggle Prod/AR dipisah jadi
+                komponen pill compact tersendiri (gaya sama dgn
+                .dseprod-modetoggle Daily/Full Month di bawah), diletakkan
+                sbg SIBLING persis sesudah title text, masih di dalam
+                .dseprod-title (jadi "nempel" di kanan judul, bukan
+                didorong ke ujung kanan header via marginLeft:auto).
+                Desktop (!isNarrowHeader) sama sekali tidak disentuh. */}
+            {isNarrowHeader ? (
+              <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <button ref={categoryBtnRef} onClick={() => setCategoryMenuOpen((v) => !v)}
+                  style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: FONT, flexShrink: 0, outline: "none" }}>
+                  <div className="dseprod-title-text" style={{ fontSize: 19, fontWeight: 700, letterSpacing: -0.3, whiteSpace: "nowrap", flexShrink: 0, color: t.hi }}>{mobileTitleLabel}</div>
+                  <ChevronDown size={15} style={{ color: t.lo, flexShrink: 0, transform: categoryMenuOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+                </button>
+                <div className="dseprod-mobiletabtoggle" style={{ display: "flex", alignItems: "center", gap: 2, height: 36, padding: 3, borderRadius: 10, background: t.sub, flexShrink: 0 }}>
+                  {[{ k: "input", label: "Prod." }, { k: "ar", label: "AR" }].map(({ k, label }) => (
+                    <button key={k} onClick={() => runGuarded(() => switchTab(k))}
+                      style={{ height: 30, padding: "0 13px", borderRadius: 7, border: "none", outline: "none", background: tab === k ? t.card : "transparent", color: tab === k ? t.hi : t.mid, fontSize: 12, fontWeight: tab === k ? 700 : 600, cursor: "pointer", fontFamily: FONT, boxShadow: tab === k ? t.shadowSm : "none", transition: "background 0.2s, box-shadow 0.2s, color 0.2s", whiteSpace: "nowrap" }}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <button ref={categoryBtnRef} onClick={() => setCategoryMenuOpen((v) => !v)}
+                  style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: FONT, outline: "none" }}>
+                  <div className="dseprod-title-text" style={{ fontSize: 19, fontWeight: 700, letterSpacing: -0.3, whiteSpace: "nowrap", flexShrink: 0, color: t.hi }}>{desktopTitleLabel}</div>
+                  <ChevronDown size={15} style={{ color: t.lo, flexShrink: 0, transform: categoryMenuOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+                </button>
+                {category === "dse" && (tab === "input" || tab === "ar") && (
+                  <div className="dseprod-mobiletabtoggle" style={{ display: "flex", alignItems: "center", gap: 2, height: 36, padding: 3, borderRadius: 10, background: t.sub, flexShrink: 0 }}>
+                    {[{ k: "input", label: "Prod." }, { k: "ar", label: "AR" }].map(({ k, label }) => (
+                      <button key={k} onClick={() => runGuarded(() => switchTab(k))}
+                        style={{ height: 30, padding: "0 13px", borderRadius: 7, border: "none", outline: "none", background: tab === k ? t.card : "transparent", color: tab === k ? t.hi : t.mid, fontSize: 12, fontWeight: tab === k ? 700 : 600, cursor: "pointer", fontFamily: FONT, boxShadow: tab === k ? t.shadowSm : "none", transition: "background 0.2s, box-shadow 0.2s, color 0.2s", whiteSpace: "nowrap" }}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
+          {categoryMenuPortal}
           {/* UPDATE (user report - "MENGAPA YANG 02 NOV ITU KAN BISA
               DISEMPITKAN RUANGNYA AGAR TITLE TIDAK DIRINGKAS"): dulu
               `.dseprod-header-right` punya flexShrink:1, SAMA PERSIS
@@ -4013,6 +7388,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           {selectorFitsRow1 && (
             <div className="dseprod-header-right" style={{ display: "flex", alignItems: "center", flexWrap: "nowrap", justifyContent: "flex-end", gap: 8, flexShrink: 20, minWidth: 0, marginLeft: "auto", marginRight: 8 }}>
               <div className="dseprod-controls" style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, justifyContent: "flex-end" }}>
+                {tab !== "ar" && (
                 <div className="dseprod-modetoggle" style={{ display: "flex", alignItems: "center", gap: 2, height: 36, padding: 3, borderRadius: 10, background: t.sub, flexShrink: 0 }}>
                   {[{ k: "tanggal", label: "Daily" }, { k: "bulan", label: "Full Month" }].map(({ k, label }) => (
                     <button key={k} onClick={() => runGuarded(() => switchPeriodMode(k))} className="dseprod-modetoggle-btn"
@@ -4021,11 +7397,12 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                     </button>
                   ))}
                 </div>
+                )}
                 {periodNavEl}
               </div>
             </div>
           )}
-          {!isNarrowHeader && collapseBtnEl}
+          {collapseBtnEl}
         </div>
 
         {!isNarrowHeader && !selectorFitsRow1 && (
@@ -4033,6 +7410,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
             <div style={{ margin: "8px -16px -2px -16px", borderTop: `1px solid ${t.line}` }} />
             <div className="dseprod-header-right" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-start", gap: 8, marginTop: 8 }}>
               <div className="dseprod-controls" style={{ display: "flex", alignItems: "center", gap: 8, flex: "1 1 auto", minWidth: 0, justifyContent: "flex-start" }}>
+                {tab !== "ar" && (
                 <div className="dseprod-modetoggle" style={{ display: "flex", alignItems: "center", gap: 2, height: 36, padding: 3, borderRadius: 10, background: t.sub, flexShrink: 0 }}>
                   {[{ k: "tanggal", label: "Daily" }, { k: "bulan", label: "Full Month" }].map(({ k, label }) => (
                     <button key={k} onClick={() => runGuarded(() => switchPeriodMode(k))} className="dseprod-modetoggle-btn"
@@ -4041,6 +7419,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                     </button>
                   ))}
                 </div>
+                )}
                 {periodNavEl}
               </div>
             </div>
@@ -4054,13 +7433,13 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           dse prod, bukan menjadi menu terpisah, namanya user management" ->
           "harusnya nama sub menunya mapping dan user management"): tab
           ke-3 "Mapping & User Management" ditambahkan di sini, isSPM saja
-          (sama spt pembatasan akses "Mapping Admin MC" sblmnya) - fitur
-          kelola email Admin MC (AdminMcMapping.jsx) skrg dirender di dalam
+          (sama spt pembatasan akses "Mapping Admin District" sblmnya) - fitur
+          kelola email Admin District (AdminMcMapping.jsx) skrg dirender di dalam
           halaman DSE Prod. & AR ini, bukan menu/DashCard terpisah lagi
           (lihat page.jsx). */}
       {/* UPDATE (permintaan user - "untuk layar yang lebih lebar,
           pindahkan Penjualan DSE dan AR DSE di kiri opsi Partner/Region/
-          Branch/MC/DSE, dalam satu line yang sama"): sempat dicoba
+          Area/District/DSE, dalam satu line yang sama"): sempat dicoba
           digabung sebaris di layar lebar, lalu di-revert balik ke
           susunan bertumpuk (Tabs di atas, toggle grouping di bawah,
           sama-sama dalam satu container .dseprod-mastercard) sesuai
@@ -4073,10 +7452,15 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           pindahkan penjualan DSE dan AR DSE menjadi dibawah summary
           card"): di mobile (isNarrowHeader) Tabs full-width ini TIDAK
           dirender di sini - dirender ulang sbg pill compact (screenshot:
-          "buat stylenya seperti ini") di bawah kartu summary MC, sblm
+          "buat stylenya seperti ini") di bawah kartu summary District, sblm
           toggle grouping Partner/Region/dll (lihat tabsPillEl). Desktop
           (!isNarrowHeader) tetap full-width di posisi atas spt semula. */}
-      {!isNarrowHeader && !showCombinedTabsToggle && (
+      {/* UPDATE: baris Tabs full-width ini sekarang DUPLIKAT dgn pill
+          "Prod."/"AR" yg sudah dipindah ke header (.dseprod-header-top,
+          nempel sblh dropdown category) utk !isNarrowHeader jg - jadi
+          disable permanen (bukan cuma dirender kondisional) spy gak ada
+          2 toggle keliatan bareng di desktop. */}
+      {false && !isNarrowHeader && !showCombinedTabsToggle && (
       <div className="dseprod-tabs" style={{ display: "flex", width: "100%" }}>
         {TAB_DEFS.map(({ k, label, icon: Icon }) => (
           <button key={k} onClick={() => runGuarded(() => setTab(k))}
@@ -4089,6 +7473,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
 
       {isNarrowHeader && (
         <div style={{ padding: "10px 16px", display: "flex", alignItems: "center", gap: width < 400 ? 6 : 8, flexWrap: "nowrap" }}>
+          {tab !== "ar" && (
           <div className="dseprod-modetoggle" style={{ display: "flex", alignItems: "center", gap: 2, height: width < 400 ? 36 : 44, padding: 3, borderRadius: 11, background: t.sub, flexShrink: 0 }}>
             {[{ k: "tanggal", label: "Daily" }, { k: "bulan", label: "Full Month" }].map(({ k, label }) => (
               <button key={k} onClick={() => runGuarded(() => switchPeriodMode(k))} className="dseprod-modetoggle-btn"
@@ -4097,6 +7482,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
               </button>
             ))}
           </div>
+          )}
           <div style={{ flex: "1 1 180px", minWidth: 0 }}>{periodNavEl}</div>
         </div>
       )}
@@ -4104,7 +7490,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       {/* UPDATE (permintaan user - "jika tutup hanya menampilkan full
           month daily dan pickernya, namun animasinya sangat bagus saat
           menampilkan atau menutupnya"): seluruh sisa isi hero card
-          (Filter/Search/Refresh, kartu Summary MC, Tabs pill mobile,
+          (Filter/Search/Refresh, kartu Summary District, Tabs pill mobile,
           toggle Partner/Region/dll) dibungkus 1 wrapper grid - teknik
           "grid-template-rows 1fr/0fr" (CSS-only accordion, ga perlu
           ukur scrollHeight manual via JS) biar transisi buka/tutupnya
@@ -4158,12 +7544,12 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                       </div>
                     </div>
                     <div>
-                      <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>Branch</div>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>Area</div>
                       {/* UPDATE (permintaan user - "ketika salah satu
                           filter yang dibawahnya dipilih, otomatis akan
-                          mentrigger filter yang di atasnya, misal MC Banda
+                          mentrigger filter yang di atasnya, misal District Banda
                           Aceh harusnya langsung diisi filter yang
-                          diatasnya, buat animasinya bagus"): pilih Branch
+                          diatasnya, buat animasinya bagus"): pilih Area
                           langsung sekarang cari row dseMeta yg match &
                           AUTO-ISI Partner+Region di atasnya (kalau belum
                           diisi manual) - bukan cuma cascading ke bawah spt
@@ -4186,14 +7572,14 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                             }
                           });
                         }} style={{ ...inputStyle, width: "100%", appearance: "none", cursor: "pointer" }}>
-                          <option value="">— semua Branch —</option>
+                          <option value="">— semua Area —</option>
                           {branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
                         </select>
                         <ChevronDown size={14} style={{ position: "absolute", right: 10, top: 12, color: t.lo, pointerEvents: "none" }} />
                       </div>
                     </div>
                     <div>
-                      <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>Micro Cluster</div>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>District</div>
                       <div key={`mf-${mcFilter}`} className="periodFade" style={{ position: "relative" }}>
                         <select value={mcFilter} onChange={(e) => {
                           const v = e.target.value;
@@ -4208,7 +7594,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                             }
                           });
                         }} style={{ ...inputStyle, width: "100%", appearance: "none", cursor: "pointer" }}>
-                          <option value="">— semua MC —</option>
+                          <option value="">— semua District —</option>
                           {mcOptions.map((mc) => <option key={mc} value={mc}>{mc}</option>)}
                         </select>
                         <ChevronDown size={14} style={{ position: "absolute", right: 10, top: 12, color: t.lo, pointerEvents: "none" }} />
@@ -4223,6 +7609,33 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
               <Search size={14} style={{ position: "absolute", left: 12, top: 12, color: t.lo }} />
               <input value={dseSearch} onChange={(e) => setDseSearch(e.target.value)} placeholder="Cari Kode DSE / Nama…" style={{ ...inputStyle, paddingLeft: 34 }} />
             </div>
+            {/* UPDATE (permintaan user - "mana tombol clear all filter"):
+                tombol reset filter yg JELAS & SELALU KELIHATAN (nempel di
+                toolbar atas, sebaris sama kotak Cari - sama di tampilan
+                kartu mobile MAUPUN tabel desktop), bukan cuma yg kecil di
+                kolom "#" tabel desktop. Cuma nongol kalau beneran ada
+                filter kolom yg aktif, label + badge angka kolom yg
+                difilter biar jelas dampaknya sebelum diklik. */}
+            {anyColFilterActive && (
+              <button onClick={resetColFilters} title="Hapus semua filter kolom yang aktif"
+                style={{ display: "flex", alignItems: "center", gap: 6, height: 38, padding: "0 12px", borderRadius: 9, border: `1px solid ${t.red}55`, background: t.redBg, color: t.red, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap", flexShrink: 0 }}>
+                <X size={13} /> Reset Filter
+                <span style={{ fontSize: 10, fontWeight: 800, background: t.red, color: "#fff", borderRadius: 999, padding: "1.5px 6px", minWidth: 14, textAlign: "center" }}>{activeColFilterCount}</span>
+              </button>
+            )}
+            {/* UPDATE (permintaan user - "untuk kolom partner region
+                branch dan mc ada opsi untuk hide column"): begitu kolom
+                disembunyikan lewat tombol mata di header-nya, HEADER-nya
+                sendiri ikut hilang - ga ada cara balikin lagi dari situ.
+                Tombol ini (pola sama persis "Reset Filter" di atas) jadi
+                satu2nya cara nampilin lagi semua kolom yg disembunyikan,
+                cuma nongol kalau beneran ada yg lagi disembunyikan. */}
+            {anyColHidden && (
+              <button onClick={() => setHiddenCols({ partner: false, region: false, branch: false, mc: false })} title="Tampilkan semua kolom yang disembunyikan"
+                style={{ display: "flex", alignItems: "center", gap: 6, height: 38, padding: "0 12px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap", flexShrink: 0 }}>
+                <Eye size={13} /> Tampilkan Kolom
+              </button>
+            )}
             <button onClick={() => runGuarded(loadDseAndEntries)} title="Refresh" style={{ width: width >= 480 ? "auto" : 38, height: 38, borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, padding: width >= 480 ? "0 14px" : 0, fontSize: 13, fontWeight: 700, fontFamily: FONT, flexShrink: 0, whiteSpace: "nowrap" }}>
               <RefreshCw size={14} className={loadingDse ? "spin" : ""} />
               {width >= 480 && "Refresh"}
@@ -4239,7 +7652,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           saja, dan juga jika textnya tidak muat ... ringkas saja menjadi
           jta atau milyar agar lebih compact namun ada tombol i yang bisa
           di klik untuk menampilkan detailnya"): di mobile (isCardView)
-          Ringkasan MC sekarang SELALU 1 BARIS, 2 kartu sejajar (Active/
+          Ringkasan District sekarang SELALU 1 BARIS, 2 kartu sejajar (Active/
           Vacant ringkas 1 baris & Total Penjualan/Tunggakan dgn angka
           format compact Jt/M via fmtCompact) - detail lengkap (SP/
           Voucher/Saldo/Interview, angka penuh) dipindah ke POPUP modal yg
@@ -4252,7 +7665,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           <div style={{ padding: "10px 16px" }}>
             {/* UPDATE (permintaan user - "hilangkan bagian ini" [subtitle
                 "Ringkasan Semua Partner (ALL Sumatera) · Bulan ini"]):
-                subtitle di atas kartu ringkasan MC dihapus total. */}
+                subtitle di atas kartu ringkasan District dihapus total. */}
             {isCardView ? (
               <div style={{ display: "flex", gap: 8 }}>
                 <div style={{ flex: 1, minWidth: 0, borderRadius: 12, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: "10px 12px" }}>
@@ -4290,7 +7703,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, marginBottom: 7 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
                       {tab !== "ar" ? <CircleDollarSign size={11} color={t.teal} style={{ flexShrink: 0 }} /> : <AlertTriangle size={11} color={t.amber} style={{ flexShrink: 0 }} />}
-                      <span style={{ fontSize: 9, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tab !== "ar" ? "Total Penjualan" : "Total Tunggakan"}</span>
+                      <span style={{ fontSize: 9, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tab !== "ar" ? "Total Penjualan" : "Sisa Piutang"}</span>
                     </div>
                     <ChevronRight size={13} color={t.lo} style={{ flexShrink: 0 }} />
                   </div>
@@ -4308,7 +7721,18 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                     </div>
                     <span style={{ color: t.mid, fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>DSE Active / Vacant</span>
                   </div>
-                  <div style={{ display: "flex", alignItems: "flex-end", gap: 16 }}>
+                  {/* UPDATE (permintaan user - "untuk ojt jangan buat
+                      dibawah agar tetap rapi"): angka OJT dulu dirender
+                      sbg baris TERPISAH di bawah Active/Vacant - cuma
+                      muncul kalau totalInterview > 0, jadi TINGGI kartu
+                      ini jadi GA KONSISTEN dibanding kartu2 lain di
+                      row yg sama (kartu tanpa OJT lebih pendek) - keliatan
+                      "berantakan" pas sejajar. Sekarang OJT jadi segmen
+                      ke-3 SEJAJAR Active/Vacant (dgn divider yg sama),
+                      SELALU dirender (walau nilainya 0) biar tinggi kartu
+                      ini KONSISTEN apapun kondisinya - rapi dibanding
+                      kartu2 lain. */}
+                  <div style={{ display: "flex", alignItems: "flex-end", gap: 14 }}>
                     <div>
                       <div style={{ fontSize: 20, fontWeight: 800, color: t.teal, lineHeight: 1.15, letterSpacing: -0.3, fontVariantNumeric: "tabular-nums" }}>{isSummaryLoading ? <NumSkeleton t={t} width={36} height={20} /> : fmtID(mcSummary.totalActive)}</div>
                       <div style={{ fontSize: 10, fontWeight: 700, color: t.teal, textTransform: "uppercase", letterSpacing: 0.3, marginTop: 3 }}>Active</div>
@@ -4318,10 +7742,12 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                       <div style={{ fontSize: 20, fontWeight: 800, color: mcSummary.totalVacant > 0 ? t.red : t.hi, lineHeight: 1.15, letterSpacing: -0.3, fontVariantNumeric: "tabular-nums" }}>{isSummaryLoading ? <NumSkeleton t={t} width={36} height={20} /> : fmtID(mcSummary.totalVacant)}</div>
                       <div style={{ fontSize: 10, fontWeight: 700, color: t.red, textTransform: "uppercase", letterSpacing: 0.3, marginTop: 3 }}>Vacant</div>
                     </div>
+                    <div style={{ width: 1, alignSelf: "stretch", background: t.line, flexShrink: 0 }} />
+                    <div>
+                      <div style={{ fontSize: 20, fontWeight: 800, color: mcSummary.totalInterview > 0 ? t.amber : t.hi, lineHeight: 1.15, letterSpacing: -0.3, fontVariantNumeric: "tabular-nums" }}>{isSummaryLoading ? <NumSkeleton t={t} width={28} height={20} /> : fmtID(mcSummary.totalInterview)}</div>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: t.amber, textTransform: "uppercase", letterSpacing: 0.3, marginTop: 3 }}>OJT</div>
+                    </div>
                   </div>
-                  {!isSummaryLoading && mcSummary.totalInterview > 0 && (
-                    <div style={{ fontSize: 11.5, color: t.lo, marginTop: 7, fontWeight: 500 }}>{fmtID(mcSummary.totalInterview)} Interview</div>
-                  )}
                 </div>
                 {tab !== "ar" ? (
                   <>
@@ -4331,7 +7757,15 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                     <StatTile t={t} icon={<Wallet size={13} />} label="Penjualan Saldo" value={isSummaryLoading ? <NumSkeleton t={t} width={72} height={20} /> : `Rp ${fmtID(mcSummary.nilaiSaldo)}`} />
                   </>
                 ) : (
-                  <StatTile t={t} icon={<AlertTriangle size={13} color={t.amber} />} label="Total Tunggakan" value={isSummaryLoading ? <NumSkeleton t={t} width={72} height={20} /> : `Rp ${fmtID(mcSummary.tunggakan)}`} sub="AR / Piutang" />
+                  // UPDATE (permintaan user - "Total Piutang | Total
+                  // Dibayar | Sisa Piutang, cardnya seperti ini juga"):
+                  // dulu cuma 1 kartu "Total Tunggakan", sekarang 3 kartu
+                  // match label/urutan kolom tabel AR yg baru.
+                  <>
+                    <StatTile t={t} icon={<CircleDollarSign size={13} color={t.hi} />} label="Total Piutang" value={isSummaryLoading ? <NumSkeleton t={t} width={72} height={20} /> : `Rp ${fmtID(mcSummary.totalPiutang)}`} sub="Piutang + Dibayar" />
+                    <StatTile t={t} icon={<Wallet size={13} color={t.teal} />} label="Total Dibayar" value={isSummaryLoading ? <NumSkeleton t={t} width={72} height={20} /> : `Rp ${fmtID(mcSummary.totalDibayar)}`} sub="Piutang terbayar" />
+                    <StatTile t={t} icon={<AlertTriangle size={13} color={t.amber} />} label="Sisa Piutang" value={isSummaryLoading ? <NumSkeleton t={t} width={72} height={20} /> : `Rp ${fmtID(mcSummary.tunggakan)}`} sub="AR / Piutang" />
+                  </>
                 )}
               </div>
             )}
@@ -4339,77 +7773,26 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
         </>
       )}
 
-      {/* UPDATE (permintaan user - screenshot toggle Partner/Region/
-          Branch/MC/DSE: "masukkan ini ke dalam hero card sticky hilangkan
-          subtitlenya"): toggle kelompokkan Ringkasan per-Partner/Region/
-          Branch/MC/DSE dipindah ke DALAM hero card sticky (sebelumnya
-          jadi header terpisah di atas tabel ringkasan) - teks subtitle
-          "Ringkasan per X — ALL Sumatera · tanggal" dihapus total, toggle
-          berdiri sendiri (list ringkasannya sendiri tetap di bawah hero
-          card, cuma kontrolnya yg pindah). */}
-      {isNarrowHeader && !showCombinedTabsToggle && (
-        <>
-          <div style={{ borderTop: `1px solid ${t.line}` }} />
-          <div style={{ padding: "10px 16px" }}>
-            <div style={{ display: "flex", gap: 3, padding: 3, borderRadius: 9, background: t.sub, border: `1px solid ${t.line}`, width: "100%" }}>
-              {TAB_DEFS.map(({ k, label, icon: Icon }) => (
-                <button key={k} onClick={() => runGuarded(() => setTab(k))}
-                  style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "6px 10px", borderRadius: 7, border: "none", background: tab === k ? t.card : "transparent", color: tab === k ? t.hi : t.mid, fontSize: 12, fontWeight: 700, cursor: "pointer", boxShadow: tab === k ? t.shadowSm : "none", whiteSpace: "nowrap" }}>
-                  <Icon size={13} color={tab === k ? t.teal : t.lo} /> {label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </>
-      )}
+      {/* UPDATE (permintaan user - "untuk tampilan mobilenya pindahkan
+          toggle Penjualan DSE dan AR, disamping title"): pill compact
+          toggle Penjualan DSE/AR DSE versi mobile yg dulu dirender di
+          sini (di bawah kartu summary District) sudah DIPINDAH ke dalam
+          .dseprod-header-top (sejajar title "DSE Prod. & AR", lihat di
+          atas) - jadi render di sini dihapus total, bukan cuma disembunyikan,
+          biar gak ada toggle duplikat/dead code di mobile. */}
 
       {category === "dse" && (tab === "input" || tab === "ar") && isSPM && (
         <>
           <div style={{ borderTop: `1px solid ${t.line}` }} />
-          {/* UPDATE (permintaan user - navigasi hirarkis Partner/Region/
-              Branch/MC/DSE, breadcrumb "Ya" direkomendasikan & disetujui
-              user): breadcrumb trail drill-down - "Semua Partner" (reset
-              total) lalu 1 chip per level yang SUDAH dipilih, bisa diklik
-              utk balik ke daftar anak level itu. Di-key-in ulang per
-              kombinasi filter aktif supaya replay animasi fade+slide tiap
-              kali hirarkinya berubah (lihat @keyframes drillCrumbIn). */}
-          {/* UPDATE (permintaan user - "jika masih semua partner tidak
-              perlu menampilkan breadcrumbnya, namun pada saat tampil
-              pastikan animasi bagus"): breadcrumb cuma berguna begitu ada
-              minimal 1 level yg sudah dipilih (selain "Semua Partner") -
-              di root (belum ada filter apa pun) disembunyikan total biar
-              ga keliatan nganggur isinya cuma "Semua Partner" doang. Grid
-              accordion (gridTemplateRows 0fr/1fr, sama teknik dgn
-              heroCollapsed) dipakai alih2 show/hide polos biar muncul/
-              hilangnya smooth (slide+fade), bukan "loncat". */}
-          <div style={{ display: "grid", gridTemplateRows: drillBreadcrumbs.length > 1 ? "1fr" : "0fr", transition: "grid-template-rows 0.3s cubic-bezier(0.4, 0, 0.2, 1)" }}>
-          <div style={{ overflow: "hidden" }}>
-          <div ref={breadcrumbScrollRef} key={`crumbs-${partnerFilter}-${regionFilter}-${branchFilter}-${mcFilter}-${summaryGroupBy}`} style={{ padding: "10px 16px 0", display: "flex", alignItems: "center", gap: 4, flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", animation: "drillCrumbIn 0.28s cubic-bezier(0.16, 1, 0.3, 1)" }}>
-            {drillBreadcrumbs.map((c, i) => (
-              <div key={c.idx} style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-                {i > 0 && <ChevronRight size={12} color={t.lo} style={{ flexShrink: 0 }} />}
-                <button onClick={() => goToLevel(c.idx)}
-                  style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 9px", borderRadius: 999, border: "none", background: i === drillBreadcrumbs.length - 1 ? t.tealBg : "transparent", color: i === drillBreadcrumbs.length - 1 ? t.teal : t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", fontFamily: FONT }}>
-                  {c.label}
-                </button>
-              </div>
-            ))}
-          </div>
-          </div>
-          </div>
           <div style={{ padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: showCombinedTabsToggle ? "space-between" : "center", gap: 10, flexWrap: showCombinedTabsToggle ? "nowrap" : "wrap", overflowX: showCombinedTabsToggle ? "auto" : "visible", WebkitOverflowScrolling: "touch", scrollbarWidth: "none" }}>
-            {showCombinedTabsToggle && (
-              <div style={{ display: "flex", gap: 3, padding: 3, borderRadius: 9, background: t.sub, border: `1px solid ${t.line}`, flexShrink: 0 }}>
-                {TAB_DEFS.map(({ k, label, icon: Icon }) => (
-                  <button key={k} onClick={() => runGuarded(() => setTab(k))}
-                    style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 10px", borderRadius: 7, border: "none", background: tab === k ? t.card : "transparent", color: tab === k ? t.hi : t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer", boxShadow: tab === k ? t.shadowSm : "none", whiteSpace: "nowrap" }}>
-                    <Icon size={12.5} color={tab === k ? t.teal : t.lo} /> {label}
-                  </button>
-                ))}
-              </div>
-            )}
+            {/* UPDATE: tombol Prod./AR di sini DIHAPUS (bukan cuma
+                disembunyikan) - sudah duplikat dgn pill di header
+                (.dseprod-header-top) yg sekarang selalu tampil (mobile &
+                desktop) utk category "dse" & tab input/ar. `showCombinedTabsToggle`
+                sendiri tetap dipakai di bawah cuma utk sizing/layout tombol
+                groupby Partner/Region/dll, bukan utk nge-render tabs lagi. */}
             <div style={{ display: "flex", gap: 3, padding: 3, borderRadius: 9, background: t.sub, border: `1px solid ${t.line}`, flexShrink: showCombinedTabsToggle ? 0 : 1, width: showCombinedTabsToggle ? "auto" : "100%" }}>
-              {[{ v: "partner", label: "Partner" }, { v: "region", label: "Region" }, { v: "branch", label: "Branch" }, { v: "mc", label: "MC" }, { v: "dse", label: "DSE" }].map((o) => (
+              {[{ v: "partner", label: "Partner" }, { v: "region", label: "Region" }, { v: "branch", label: "Area" }, { v: "mc", label: "District" }, { v: "dse", label: "DSE" }].map((o) => (
                 <button key={o.v} onClick={() => goToLevel(HIERARCHY.indexOf(o.v))}
                   style={{ flex: showCombinedTabsToggle ? "none" : 1, minWidth: showCombinedTabsToggle ? "auto" : 0, padding: showCombinedTabsToggle ? "6px 10px" : (width < 400 ? "6px 4px" : "6px 8px"), borderRadius: 7, border: "none", background: summaryGroupBy === o.v ? t.card : "transparent", color: summaryGroupBy === o.v ? t.hi : t.mid, fontSize: showCombinedTabsToggle ? 11.5 : (width < 400 ? 11 : 12), fontWeight: 700, cursor: "pointer", boxShadow: summaryGroupBy === o.v ? t.shadowSm : "none", whiteSpace: "nowrap", textAlign: "center", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {o.label}
@@ -4423,7 +7806,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       </div>
 
       {/* UPDATE (permintaan user - "untuk tampilkan detail dia menjadi
-          popup saja"): popup detail Ringkasan MC (angka PENUH, bukan
+          popup saja"): popup detail Ringkasan District (angka PENUH, bukan
           compact) - dibuka dari tombol "i" di kartu "Total Penjualan/
           Total Tunggakan" versi mobile di atas. */}
       </div>
@@ -4450,14 +7833,16 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
               {[
                 { label: "DSE Active", value: fmtID(mcSummary.totalActive), color: t.teal },
                 { label: "DSE Vacant", value: fmtID(mcSummary.totalVacant), color: mcSummary.totalVacant > 0 ? t.red : t.hi },
-                ...(mcSummary.totalInterview > 0 ? [{ label: "DSE Interview", value: fmtID(mcSummary.totalInterview), color: t.amber }] : []),
+                ...(mcSummary.totalInterview > 0 ? [{ label: "DSE OJT", value: fmtID(mcSummary.totalInterview), color: t.amber }] : []),
                 ...(tab !== "ar" ? [
                   { label: "Penjualan SP", value: `Rp ${fmtID(mcSummary.nilaiSp)}`, color: t.hi },
                   { label: "Penjualan Voucher", value: `Rp ${fmtID(mcSummary.nilaiVoucher)}`, color: t.hi },
                   { label: "Penjualan Saldo", value: `Rp ${fmtID(mcSummary.nilaiSaldo)}`, color: t.hi },
                   { label: "Total Penjualan", value: `Rp ${fmtID(mcSummary.totalPenjualan)}`, color: t.teal, bold: true },
                 ] : [
-                  { label: "Total Tunggakan", value: `Rp ${fmtID(mcSummary.tunggakan)}`, color: mcSummary.tunggakan > 0 ? t.red : t.hi, bold: true },
+                  { label: "Total Piutang", value: `Rp ${fmtID(mcSummary.totalPiutang)}`, color: t.hi },
+                  { label: "Total Dibayar", value: `Rp ${fmtID(mcSummary.totalDibayar)}`, color: t.hi },
+                  { label: "Sisa Piutang", value: `Rp ${fmtID(mcSummary.tunggakan)}`, color: mcSummary.tunggakan > 0 ? t.red : t.hi, bold: true },
                 ]),
               ].map((row, i) => (
                 <div key={row.label} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 14px", background: row.bold ? t.tealBg : (i % 2 === 1 ? t.sub : t.card) }}>
@@ -4476,18 +7861,84 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       </div>
 
       {category !== "dse" ? (
-        <div style={{ borderRadius: 14, border: `1px dashed ${t.line}`, background: t.card, padding: "48px 24px", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 10 }}>
-          <div style={{ width: 48, height: 48, borderRadius: 14, background: t.sub, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <Construction size={22} color={t.mid} />
+        // UPDATE (permintaan user - "gunakan konsep yang sama persis untuk
+        // DSO/DSP AR dan juga HoA AR"): placeholder "Segera Hadir" diganti
+        // modul beneran - <ArDsoHoaPanel> (lihat definisinya di atas),
+        // reuse TOTAL logic <ArPiutangInput> yg sama persis AR DSE, cuma
+        // levelnya District (dso) / Area (hoa) bukan per-DSE.
+        // UPDATE (permintaan user - "saya ingin style nya sama sehingga
+        // ketika berpindah dia seamless"): sebelumnya <ArDsoHoaPanel>
+        // dirender TELANJANG di sini (ga ada title card/dropdown kategori/
+        // period nav sama sekali - itu semua cuma dirender kalau
+        // category==="dse"), jadi pas pindah ke DSO/DSP AR atau HoA AR
+        // toolbar atasnya hilang total & kerasa beda sistem. Sekarang
+        // title card (ikon+dropdown kategori persis sama dgn versi "dse" -
+        // categoryBtnRef/categoryMenuPortal yg SAMA, cuma 1 instance tombol
+        // yg kepasang di DOM tiap saat krn category==="dse" & !=="dse"
+        // mutually exclusive) + period nav (periodNavEl, komponen generik
+        // yg sama dipakai "dse") ditambahkan di sini supaya transisi antar
+        // 3 modul (DSE/DSO/HoA) kerasa seamless, bukan loncat.
+        <>
+          <div className="dseprod-sticky" style={{ position: "sticky", top: 0, zIndex: 40, background: stickyBg, marginLeft: -28, marginRight: -28, paddingTop: 28, paddingLeft: 28, paddingRight: 28, paddingBottom: 4, borderBottom: `1px solid ${t.line}` }}>
+            <div className="dseprod-mastercard" style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden", marginBottom: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 16px", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 10, background: t.tealBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <Wallet size={17} color={t.teal} />
+                  </div>
+                  <button ref={categoryBtnRef} onClick={() => setCategoryMenuOpen((v) => !v)}
+                    style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: FONT, outline: "none" }}>
+                    <div style={{ fontSize: 19, fontWeight: 700, letterSpacing: -0.3, whiteSpace: "nowrap", color: t.hi }}>{desktopTitleLabel}</div>
+                    <ChevronDown size={15} style={{ color: t.lo, flexShrink: 0, transform: categoryMenuOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+                  </button>
+                </div>
+                {periodNavEl}
+              </div>
+            </div>
           </div>
-          <div style={{ fontSize: 15, fontWeight: 800, color: t.hi }}>{CATEGORY_OPTIONS.find((c) => c.k === category)?.label} — Segera Hadir</div>
-          <div style={{ fontSize: 12.5, color: t.mid, maxWidth: 360, lineHeight: 1.6 }}>
-            Modul ini sedang disiapkan. {CATEGORY_OPTIONS.find((c) => c.k === category)?.desc} akan mengikuti struktur Penjualan &amp; AR yang sama seperti DSE (input harian, riwayat &amp; laporan).
-          </div>
-        </div>
+          {categoryMenuPortal}
+          <ArDsoHoaPanel t={t} d={d} profile={profile} entryDate={entryDate} arMonth={calViewMonth} dseMeta={dseMeta} kind={category} />
+        </>
       ) : (
       <>
 
+
+      {isSPM && (tab === "input" || tab === "ar") && (
+        <>
+          {/* UPDATE (permintaan user - navigasi hirarkis Partner/Region/
+              Area/District/DSE, breadcrumb "Ya" direkomendasikan & disetujui
+              user): breadcrumb trail drill-down - "Semua Partner" (reset
+              total) lalu 1 chip per level yang SUDAH dipilih, bisa diklik
+              utk balik ke daftar anak level itu. Di-key-in ulang per
+              kombinasi filter aktif supaya replay animasi fade+slide tiap
+              kali hirarkinya berubah (lihat @keyframes drillCrumbIn). */}
+          {/* UPDATE (permintaan user - "jika masih semua partner tidak
+              perlu menampilkan breadcrumbnya, namun pada saat tampil
+              pastikan animasi bagus"): breadcrumb cuma berguna begitu ada
+              minimal 1 level yg sudah dipilih (selain "Semua Partner") -
+              di root (belum ada filter apa pun) disembunyikan total biar
+              ga keliatan nganggur isinya cuma "Semua Partner" doang. Grid
+              accordion (gridTemplateRows 0fr/1fr, sama teknik dgn
+              heroCollapsed) dipakai alih2 show/hide polos biar muncul/
+              hilangnya smooth (slide+fade), bukan "loncat". */}
+          <div style={{ display: "grid", gridTemplateRows: drillBreadcrumbs.length > 1 ? "1fr" : "0fr", transition: "grid-template-rows 0.3s cubic-bezier(0.4, 0, 0.2, 1)", marginTop: 14 }}>
+          <div style={{ overflow: "hidden" }}>
+          <div ref={breadcrumbScrollRef} key={`crumbs-${partnerFilter}-${regionFilter}-${branchFilter}-${mcFilter}-${summaryGroupBy}`} style={{ padding: "0 0 12px", display: "flex", alignItems: "center", gap: 4, flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", animation: "drillCrumbIn 0.28s cubic-bezier(0.16, 1, 0.3, 1)" }}>
+            {drillBreadcrumbs.map((c, i) => (
+              <div key={c.idx} style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                {i > 0 && <ChevronRight size={12} color={t.lo} style={{ flexShrink: 0 }} />}
+                <button onClick={() => goToLevel(c.idx)}
+                  style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 9px", borderRadius: 999, border: "none", background: i === drillBreadcrumbs.length - 1 ? t.tealBg : "transparent", color: i === drillBreadcrumbs.length - 1 ? t.teal : t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", fontFamily: FONT }}>
+                  {c.label}
+                </button>
+              </div>
+            ))}
+          </div>
+          </div>
+          </div>
+        </>
+
+      )}
       {tab === "input" || tab === "ar" ? (
         <>
 
@@ -4591,7 +8042,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                       paling kiri + tombol sort metric, "dan setiap
                       tambahkan kolom rank yang sudah diupdate ini
                       keseluruh tampilan, termasuk tampilan partner,
-                      region, branch, MC, dan bahkan DSE"): tabel ini DIPAKAI
+                      region, branch, District, dan bahkan DSE"): tabel ini DIPAKAI
                       BARENG utk ke-5 level (summaryGroupBy) - jadi 1x
                       update kolom Rank di sini otomatis berlaku ke semua
                       level. Kolom Rank (badge Crown/Medal/angka, lihat
@@ -4606,7 +8057,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                       data totalActive/totalVacant yg SAMA persis dari
                       regionSummary (udah dihitung bareng, tinggal
                       ditampilin). */}
-                  <div style={{ display: "grid", gridTemplateColumns: tab === "ar" ? "44px 1.5fr 1fr 1fr" : "44px 1.5fr 1fr 1fr 1fr 1fr 1fr", gap: 0, padding: "11px 18px", background: t.sub, fontSize: 10.5, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: tab === "ar" ? "44px 1.5fr 1fr 1fr 1fr 1fr" : "44px 1.5fr 1fr 1fr 1fr 1fr 1fr", gap: 0, padding: "11px 18px", background: t.sub, fontSize: 10.5, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 4, height: "100%" }}>
                       <span>#</span>
                       {tab !== "ar" && <RankMetricMenu t={t} value={rankMetric} onChange={setRankMetric} />}
@@ -4615,7 +8066,9 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                     {tab === "ar" ? (
                       <>
                         <div style={{ textAlign: "right", display: "flex", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>DSE Active / Vacant</div>
-                        <div style={{ textAlign: "right", display: "flex", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>Tunggakan</div>
+                        <div style={{ textAlign: "right", display: "flex", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>Total Piutang</div>
+                        <div style={{ textAlign: "right", display: "flex", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>Total Dibayar</div>
+                        <div style={{ textAlign: "right", display: "flex", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>Sisa Tunggakan</div>
                       </>
                     ) : (
                       <>
@@ -4629,7 +8082,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                   </div>
                   {regionSummary.map((r, i) => (
                     <div key={r.key} onClick={() => drillInto(r.label)} title={`Lihat detail ${summaryGroupLabel} ${r.label}`}
-                      style={{ display: "grid", gridTemplateColumns: tab === "ar" ? "44px 1.5fr 1fr 1fr" : "44px 1.5fr 1fr 1fr 1fr 1fr 1fr", gap: 0, padding: "14px 18px", borderTop: i === 0 ? "none" : `1px solid ${t.line}`, cursor: "pointer", fontSize: 13, fontVariantNumeric: "tabular-nums", transition: "background 0.12s", background: i === 0 ? t.tealBg : "transparent" }}
+                      style={{ display: "grid", gridTemplateColumns: tab === "ar" ? "44px 1.5fr 1fr 1fr 1fr 1fr" : "44px 1.5fr 1fr 1fr 1fr 1fr 1fr", gap: 0, padding: "14px 18px", borderTop: i === 0 ? "none" : `1px solid ${t.line}`, cursor: "pointer", fontSize: 13, fontVariantNumeric: "tabular-nums", transition: "background 0.12s", background: i === 0 ? t.tealBg : "transparent" }}
                       onMouseEnter={(e) => { e.currentTarget.style.background = t.sub; }}
                       onMouseLeave={(e) => { e.currentTarget.style.background = i === 0 ? t.tealBg : "transparent"; }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -4642,7 +8095,9 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                       {tab === "ar" ? (
                         <>
                           <div style={{ textAlign: "right", color: t.mid }}>{fmtID(r.totalActive)} / <span style={{ color: r.totalVacant > 0 ? t.red : t.mid, fontWeight: r.totalVacant > 0 ? 700 : 400 }}>{fmtID(r.totalVacant)}</span></div>
-                          <div style={{ textAlign: "right", fontWeight: 700, color: r.tunggakan > 0 ? t.amber : t.mid }}>Rp {fmtID(r.tunggakan)}</div>
+                          <div style={{ textAlign: "right", fontWeight: 700, color: t.hi }}>Rp {fmtID(r.totalPiutang)}</div>
+                          <div style={{ textAlign: "right", fontWeight: 700, color: t.teal }}>Rp {fmtID(r.totalDibayar)}</div>
+                          <div style={{ textAlign: "right", fontWeight: 800, color: (r.totalPiutang - r.totalDibayar) > 0 ? t.amber : t.mid }}>Rp {fmtID(r.totalPiutang - r.totalDibayar)}</div>
                         </>
                       ) : (
                         <>
@@ -4678,7 +8133,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
             // wrapper di atas) sbg indikator lagi refresh.
             <LoadingBlock t={t} label="Memuat daftar DSE…" />
           ) : filteredDseList.length === 0 ? (
-            <div style={{ padding: 28, textAlign: "center", color: t.mid, borderRadius: 12, border: `1px dashed ${t.line}` }}>Belum ada Kode DSE terdaftar untuk MC ini. Tambahkan dulu di menu Database DSE.</div>
+            <div style={{ padding: 28, textAlign: "center", color: t.mid, borderRadius: 12, border: `1px dashed ${t.line}` }}>Belum ada Kode DSE terdaftar untuk District ini. Tambahkan dulu di menu Database DSE.</div>
           ) : isCardView ? (
             // UPDATE (permintaan user - "untuk dse belum ada gap dan juga
             // cardnya belum di rank"): sama spt fix gap di kartu Ringkasan
@@ -4699,9 +8154,12 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
               {filteredDseList.map((dse, dseIdx) => (
                 <DseInputRow key={dse.dse_code} t={t} profile={profile} isCardView dse={dse} mode={dseInputMode} rank={dseIdx + 1} isToday={periodMode === "tanggal" && entryDate === todayISO()}
                   entryDate={entryDate}
+                  arMonth={calViewMonth}
                   periodMode={periodMode}
                   periodSubtitle={periodColumnSubtitle}
-                  onPickDate={(iso) => runGuarded(() => { setPeriodMode("tanggal"); jumpToDay(iso); })}
+                  onPickDate={(iso) => runGuarded(() => { if (tab === "ar") setTab("input"); setPeriodMode("tanggal"); jumpToDay(iso); })}
+                  onSwitchPeriodMode={(m) => runGuarded(() => switchPeriodMode(m))}
+                  loadingDse={loadingDse}
                   entry={entries[dse.dse_code]}
                   onEntryChange={handleEntryChange}
                   onIdentityChange={handleIdentityChange}
@@ -4710,14 +8168,23 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                   saving={savingCode === dse.dse_code}
                   dirty={!!dirty[dse.dse_code]}
                   prevOutstanding={prevAr[dse.dse_code]}
-                  onShowHistory={(dseObj, tab) => { setHistoryFor(dseObj.dse_code); setHistoryDse(dseObj); setHistoryInitialTab(tab || "info"); setHistoryInitialMonth(entryDate ? entryDate.slice(0, 7) : ""); }}
+                  onShowHistory={(dseObj, tab, onBack) => { setHistoryFor(dseObj.dse_code); setHistoryDse(dseObj); setHistoryInitialTab(tab || "info"); setHistoryInitialMonth(entryDate ? entryDate.slice(0, 7) : ""); setHistoryOnBack(() => onBack); }}
                   readOnly={isRangeMode}
+                  runGuarded={runGuarded}
+                  statusEvents={statusEvents}
                   audit={(() => { const be = entries[dse.dse_code]; return be?.updated_at || be?.uploaded_by ? { updated_at: be.updated_at, uploaded_at: be.uploaded_at, by: profilesMap[be.uploaded_by] } : null; })()} />
               ))}
             </div>
           ) : (
             <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden", marginBottom: 20 }}>
-              <div style={{ overflowX: "auto" }}>
+              {/* FREEZE HEADER (permintaan user - "untuk setiap header
+                  table freeze agar rapi"): container tabel dikasih
+                  maxHeight + overflowY:auto biar jadi scroll-area sendiri,
+                  thead-nya position:sticky top:0 (lihat di bawah) jadi
+                  nempel pas body tabel di-scroll ke bawah - sama persis
+                  pola yg sudah dipakai di tabel riwayat AR (lihat
+                  <ArPiutangInput>). */}
+              <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "70vh" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                   <thead>
                     <tr style={{ background: t.sub }}>
@@ -4730,9 +8197,10 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                           ga ada baris filter permanen lagi di bawahnya. */}
                       {[
                         { key: null, label: "#", noFilter: true },
-                        { key: "partner", label: "Partner" },
-                        { key: "region", label: "Region" },
-                        { key: "branch", label: "Branch" },
+                        { key: "partner", label: "Partner", hideable: true },
+                        { key: "region", label: "Region", hideable: true },
+                        { key: "branch", label: "Area", hideable: true },
+                        { key: "mc", label: "District", hideable: true },
                         { key: "id", label: "ID DSE" },
                         { key: "nama", label: "Nama DSE" },
                         { key: "status", label: "Status" },
@@ -4741,22 +8209,67 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                         // penjualan dse ke menu terpisah"): kolom Total SP/
                         // Voucher/Saldo/Penjualan cuma muncul di tab
                         // Penjualan DSE, kolom AR/Catatan cuma di tab AR DSE.
+                        // UPDATE (permintaan user - "mengapa tidak ada
+                        // subtitlenya di level DSE, seharusnya ada seperti
+                        // yang sudah dibuat di level mc dan level lainnya"):
+                        // header kolom Penjualan SP/Voucher/Saldo/Total di
+                        // level DSE dulu cuma label polos - sekarang
+                        // dikasih `sub: periodColumnSubtitle` (SAMA PERSIS
+                        // sumber data & formatnya dgn subtitle yg sudah ada
+                        // di tabel rollup Partner/Region/Area/District), dibaca
+                        // & dirender di bawah (lihat col.sub).
                         ...(tab === "ar" ? [] : [
-                          { key: "totalSp", label: "Penjualan SP" },
-                          { key: "totalVoucher", label: "Penjualan Voucher" },
-                          { key: "saldo", label: "Penjualan Saldo" },
-                          { key: "totalPenjualan", label: "Total Penjualan" },
+                          { key: "totalSp", label: "Penjualan SP", sub: periodColumnSubtitle },
+                          { key: "totalVoucher", label: "Penjualan Voucher", sub: periodColumnSubtitle },
+                          { key: "saldo", label: "Penjualan Saldo", sub: periodColumnSubtitle },
+                          { key: "totalPenjualan", label: "Total Penjualan", sub: periodColumnSubtitle },
                         ]),
                         ...(tab === "ar" ? [
-                          { key: "ar", label: "AR / Piutang (Utang · Bayar · Sisa)" },
-                          { key: "catatan", label: "Catatan" },
+                          { key: "totalPiutang", label: "Total Piutang" },
+                          { key: "totalDibayar", label: "Total Dibayar" },
+                          { key: "ar", label: "Sisa Piutang" },
+                          { key: "arStatus", label: "Status" },
+                          { key: "jatuhTempo", label: "Jatuh Tempo" },
+                          // UPDATE (permintaan user - "pada ar, kolom catatan
+                          // hilangkan saja, ganti dengan kolom AKSI, isinya
+                          // button EDIT AR"): kolom "Catatan" (free-text
+                          // umum, ga ada hubungannya sama AR) diganti kolom
+                          // "Aksi" khusus tab AR - isinya SATU tombol "Edit
+                          // AR" (lihat <ArPiutangInput>, trigger openList
+                          // dipindah ke sini drpd ikon di kolom Status, biar
+                          // ga redundan & lebih jelas labelnya). `noFilterIcon`
+                          // = kolom ini bukan data yg bisa difilter/diurutkan,
+                          // jadi ga pakai ExcelFilter - tapi TETAP lebar normal
+                          // (beda dari `noFilter` yg dipakai kolom "#").
+                          { key: "aksi", label: "Aksi", noFilterIcon: true },
                         ] : []),
-                      ].map((col, i) => {
-                        const groupCols = [8];
+                      ].filter((col) => !(col.hideable && hiddenCols[col.key])).map((col, i) => {
+                        // UPDATE (permintaan user - "untuk kolom partner
+                        // region branch dan mc ada opsi untuk hide
+                        // column"): dulu border pemisah "identitas vs
+                        // angka" ini dicocokkan pakai INDEX ARRAY TETAP
+                        // ([8]) - begitu kolom "District" ditambah & kolom lain
+                        // bisa disembunyikan (indexnya jadi GESER-GESER
+                        // tergantung kolom mana yg lagi hidden), index 8
+                        // ga lagi nunjuk ke kolom yg bener. Diganti cek
+                        // berdasarkan KEY kolomnya langsung (kolom uang
+                        // pertama di tiap tab), konsisten & kebal
+                        // terhadap filter kolom hidden maupun kolom baru.
+                        const groupStartKeys = ["totalSp", "totalPiutang"];
+                        // FREEZE (permintaan user - "kolom aksi di freeze
+                        // selalu di paling kanan"): th "Aksi" ikut sticky
+                        // right:0, mirip pola td-nya di <ArPiutangInput> -
+                        // background t.sub (sama kaya bg <tr> header-nya),
+                        // zIndex dinaikin 1 tingkat drpd td body (3 vs 2)
+                        // biar header tetap di atas body pas scroll bareng.
+                        const isAksiCol = col.key === "aksi";
                         return (
-                          <th key={col.key || `plain-${i}`} style={{ textAlign: "left", padding: "10px 12px", color: t.mid, fontWeight: 700, whiteSpace: "nowrap", borderBottom: `1px solid ${t.line}`, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.2, borderLeft: groupCols.includes(i) ? `2px solid ${t.line}` : "none", overflow: "visible", ...(col.noFilter ? { width: 40, minWidth: 40 } : null) }}>
+                          <th key={col.key || `plain-${i}`} style={{ textAlign: "left", padding: "10px 12px", color: t.mid, fontWeight: 700, whiteSpace: "nowrap", borderBottom: `1px solid ${t.line}`, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.2, borderLeft: groupStartKeys.includes(col.key) ? `2px solid ${t.line}` : "none", overflow: "visible", position: "sticky", top: 0, zIndex: 2, background: t.sub, ...(col.noFilter ? { width: 40, minWidth: 40 } : null), ...(isAksiCol ? { right: 0, zIndex: 3, boxShadow: "-6px 0 8px -6px rgba(0,0,0,0.18)" } : null) }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                              <span>{col.label}</span>
+                              <span>
+                                {col.label}
+                                {col.sub && <div style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1 }}>{col.sub}</div>}
+                              </span>
                               {col.noFilter ? (
                                 <>
                                   {/* UPDATE (permintaan user - "ada tombol
@@ -4775,15 +8288,63 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                                       <X size={10} /> Reset
                                     </button>
                                   )}
+                                  {/* UPDATE (permintaan user - "jika di
+                                      hide seharusnya ada button untuk
+                                      tampilkan kolom"): sebelumnya SATU-
+                                      SATUNYA cara nampilin kolom yg
+                                      disembunyikan adalah tombol "Tampilkan
+                                      Kolom" di toolbar ATAS tabel - begitu
+                                      kolomnya disembunyikan (th-nya ikut
+                                      ngilang dari header), user yg udah
+                                      scroll ke bawah ga ada petunjuk sama
+                                      sekali gimana cara balikin lagi tanpa
+                                      scroll ke atas dulu. Ditambahkan
+                                      tombol kecil yg SAMA PERSIS di sini -
+                                      nempel di kolom "#" paling kiri header
+                                      (selalu kelihatan tanpa scroll ke
+                                      atas), muncul cuma kalau ada kolom yg
+                                      lagi disembunyikan. */}
+                                  {anyColHidden && (
+                                    <button onClick={() => setHiddenCols({ partner: false, region: false, branch: false, mc: false })} title="Tampilkan semua kolom yang disembunyikan"
+                                      style={{ display: "flex", alignItems: "center", gap: 4, height: 22, padding: "0 7px", borderRadius: 6, border: "none", background: t.tealBg, color: t.teal, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap" }}>
+                                      <Eye size={10} /> Tampilkan
+                                    </button>
+                                  )}
                                 </>
+                              ) : col.noFilterIcon ? null : col.key === "status" ? (
+                                <StatusAgeFilterMenu t={t} d={d}
+                                  statusOptions={colOptions.status}
+                                  ageOptionsByStatus={ageOptionsByStatus}
+                                  selectedStatus={colFilters.status}
+                                  selectedAge={colFilters.statusAge}
+                                  onApply={(statusVals, ageVals) => setColFilters((prev) => ({ ...prev, status: statusVals, statusAge: ageVals }))} />
                               ) : col.key ? (
-                                <ExcelFilter t={t} d={d} label={col.label}
-                                  options={colOptions[col.key]}
-                                  selected={colFilters[col.key]}
-                                  onApply={(vals) => setColFilter(col.key, vals)}
-                                  onClear={() => resetOneFilter(col.key)}
-                                  sortDir={sortConfig.key === col.key ? sortConfig.dir : null}
-                                  onSort={(dir) => setSortConfig({ key: col.key, dir })} />
+                                <>
+                                  <ExcelFilter t={t} d={d} label={col.label}
+                                    options={colOptions[col.key]}
+                                    selected={colFilters[col.key]}
+                                    onApply={(vals) => setColFilter(col.key, vals)}
+                                    onClear={() => resetOneFilter(col.key)}
+                                    sortDir={sortConfig.key === col.key ? sortConfig.dir : null}
+                                    onSort={(dir) => setSortConfig({ key: col.key, dir })} />
+                                  {/* UPDATE (permintaan user - "untuk kolom
+                                      partner region branch dan mc ada opsi
+                                      untuk hide column"): tombol mata kecil
+                                      di sebelah ikon filter - KHUSUS 4
+                                      kolom struktural ini (hideable:true),
+                                      klik langsung sembunyikan kolomnya
+                                      (th + td, lihat hiddenCols). Cara
+                                      nampilin lagi: tombol "Tampilkan
+                                      Kolom" di toolbar atas (nempel sama
+                                      tombol Reset Filter), muncul cuma
+                                      kalau ada kolom yg lagi disembunyikan. */}
+                                  {col.hideable && (
+                                    <button onClick={() => toggleColHidden(col.key)} title={`Sembunyikan kolom ${col.label}`}
+                                      style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: 5, border: "none", background: "transparent", color: t.lo, cursor: "pointer", flexShrink: 0 }}>
+                                      <EyeOff size={12} />
+                                    </button>
+                                  )}
+                                </>
                               ) : null}
                             </div>
                           </th>
@@ -4795,9 +8356,12 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                     {filteredDseList.map((dse, dseIdx) => (
                       <DseInputRow key={dse.dse_code} t={t} profile={profile} isCardView={false} dse={dse} mode={dseInputMode} rank={dseIdx + 1} isToday={periodMode === "tanggal" && entryDate === todayISO()}
                         entryDate={entryDate}
+                        arMonth={calViewMonth}
                         periodMode={periodMode}
                         periodSubtitle={periodColumnSubtitle}
-                        onPickDate={(iso) => runGuarded(() => { setPeriodMode("tanggal"); jumpToDay(iso); })}
+                        onPickDate={(iso) => runGuarded(() => { if (tab === "ar") setTab("input"); setPeriodMode("tanggal"); jumpToDay(iso); })}
+                        onSwitchPeriodMode={(m) => runGuarded(() => switchPeriodMode(m))}
+                        loadingDse={loadingDse}
                         entry={entries[dse.dse_code]}
                         onEntryChange={handleEntryChange}
                         onIdentityChange={handleIdentityChange}
@@ -4806,8 +8370,11 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                         saving={savingCode === dse.dse_code}
                         dirty={!!dirty[dse.dse_code]}
                         prevOutstanding={prevAr[dse.dse_code]}
-                        onShowHistory={(dseObj, tab) => { setHistoryFor(dseObj.dse_code); setHistoryDse(dseObj); setHistoryInitialTab(tab || "info"); setHistoryInitialMonth(entryDate ? entryDate.slice(0, 7) : ""); }}
+                        onShowHistory={(dseObj, tab, onBack) => { setHistoryFor(dseObj.dse_code); setHistoryDse(dseObj); setHistoryInitialTab(tab || "info"); setHistoryInitialMonth(entryDate ? entryDate.slice(0, 7) : ""); setHistoryOnBack(() => onBack); }}
                         readOnly={isRangeMode}
+                        runGuarded={runGuarded}
+                        statusEvents={statusEvents}
+                        hiddenCols={hiddenCols}
                         audit={(() => { const be = entries[dse.dse_code]; return be?.updated_at || be?.uploaded_by ? { updated_at: be.updated_at, uploaded_at: be.uploaded_at, by: profilesMap[be.uploaded_by] } : null; })()} />
                     ))}
                   </tbody>
@@ -4840,7 +8407,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                 </div>
                 {isMPX && myMcNames.length > 1 && (
                   <div style={{ marginBottom: 12, maxWidth: 260 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>Import untuk MC</div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>Import untuk District</div>
                     <select value={mpxMcFilter || myMcNames[0]} onChange={(e) => setMpxMcFilter(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
                       {myMcNames.map((mc) => <option key={mc} value={mc}>{mc}</option>)}
                     </select>
@@ -4895,13 +8462,13 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
             <div style={{ display: "flex", flexDirection: isCardView ? "column" : "row", alignItems: isCardView ? "stretch" : "center", gap: 10, padding: 16, borderBottom: `1px solid ${t.line}` }}>
               <div style={{ position: "relative", flex: isCardView ? "none" : 1, minWidth: isCardView ? 0 : 180 }}>
                 <Search size={14} style={{ position: "absolute", left: 12, top: 12, color: t.lo }} />
-                <input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="Cari Kode DSE / MC / Nama…" style={{ ...inputStyle, paddingLeft: 34 }} />
+                <input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="Cari Kode DSE / District / Nama…" style={{ ...inputStyle, paddingLeft: 34 }} />
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 6, width: isCardView ? "100%" : "auto" }}>
                 <Calendar size={14} color={t.lo} style={{ flexShrink: 0 }} />
-                <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={{ ...inputStyle, width: isCardView ? "100%" : 140, minWidth: 0 }} />
+                <input type="date" onClick={(ev) => { if (!ev.currentTarget.disabled) ev.currentTarget.showPicker?.(); }} value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={{ ...inputStyle, width: isCardView ? "100%" : 140, minWidth: 0 }} />
                 <span style={{ color: t.mid, fontSize: 12, flexShrink: 0 }}>—</span>
-                <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={{ ...inputStyle, width: isCardView ? "100%" : 140, minWidth: 0 }} />
+                <input type="date" onClick={(ev) => { if (!ev.currentTarget.disabled) ev.currentTarget.showPicker?.(); }} value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={{ ...inputStyle, width: isCardView ? "100%" : 140, minWidth: 0 }} />
               </div>
               <div style={{ display: "flex", gap: 10, width: isCardView ? "100%" : "auto" }}>
                 <button onClick={() => fetchRiwayat(page, search)} title="Refresh" style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -4910,6 +8477,10 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                 <button onClick={handleExport} disabled={exportLoading} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, height: 38, padding: "0 14px", borderRadius: 9, border: `1px solid ${t.tealBd}`, background: t.tealBg, color: t.teal, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: exportLoading ? 0.6 : 1, flexShrink: 0, flex: isCardView ? 1 : "none" }}>
                   {exportLoading ? <Loader2 size={14} className="spin" /> : <FileDown size={14} />}
                   Export
+                </button>
+                <button onClick={openCetakBulk} disabled={bulkLoading} title="Cetak laporan tunggakan semua DSE (akhir bulan terpilih di tab AR DSE)" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, height: 38, padding: "0 14px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: bulkLoading ? 0.6 : 1, flexShrink: 0, flex: isCardView ? 1 : "none" }}>
+                  {bulkLoading ? <Loader2 size={14} className="spin" /> : <Printer size={14} />}
+                  Cetak Tunggakan
                 </button>
               </div>
             </div>
@@ -4958,7 +8529,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                   <thead>
                     <tr style={{ background: t.sub }}>
-                      {["Tanggal", "Kode DSE", "MC", "Branch", "Qty SP", "Nilai SP", "Qty Saldo", "Nilai Saldo", "Qty Voucher", "Nilai Voucher", "AR/Piutang", "Catatan"].map((h, i) => (
+                      {["Tanggal", "Kode DSE", "District", "Area", "Qty SP", "Nilai SP", "Qty Saldo", "Nilai Saldo", "Qty Voucher", "Nilai Voucher", "AR/Piutang", "Catatan"].map((h, i) => (
                         <th key={i} style={{ textAlign: i >= 4 ? "right" : "left", padding: "9px 12px", color: t.mid, fontWeight: 700, whiteSpace: "nowrap", borderBottom: `1px solid ${t.line}` }}>{h}</th>
                       ))}
                     </tr>
@@ -5001,7 +8572,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       </>
       )}
 
-      <style>{`.spin { animation: spin 0.8s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } } @keyframes loadingSpin { to { transform: rotate(360deg); } } @keyframes loadingPulse { 0%, 100% { opacity: 0.4; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } } @keyframes loadingFadeIn { from { opacity: 0; } to { opacity: 1; } } @keyframes claudeDotWave { 0%, 100% { opacity: 0.22; transform: scale(0.7); } 25% { opacity: 0.55; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } 75% { opacity: 0.55; transform: scale(0.85); } } .periodFade { animation: periodFade 0.22s cubic-bezier(0.16, 1, 0.3, 1); } @keyframes periodFade { from { opacity: 0; transform: translateY(-3px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } } @keyframes modalPopIn { from { opacity: 0; transform: scale(0.94) translateY(6px); } to { opacity: 1; transform: scale(1) translateY(0); } } @keyframes drillCrumbIn { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: translateX(0); } } @keyframes drillContentIn { from { opacity: 0; transform: translateY(8px) scale(0.985); } to { opacity: 1; transform: translateY(0) scale(1); } } @keyframes sheetUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
+      <style>{`.spin { animation: spin 0.8s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } } @keyframes loadingSpin { to { transform: rotate(360deg); } } @keyframes loadingPulse { 0%, 100% { opacity: 0.4; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } } @keyframes loadingFadeIn { from { opacity: 0; } to { opacity: 1; } } @keyframes claudeDotWave { 0%, 100% { opacity: 0.22; transform: scale(0.7); } 25% { opacity: 0.55; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } 75% { opacity: 0.55; transform: scale(0.85); } } .periodFade { animation: periodFade 0.22s cubic-bezier(0.16, 1, 0.3, 1); } .noScrollbar::-webkit-scrollbar { display: none; } @keyframes periodFade { from { opacity: 0; transform: translateY(-3px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } } @keyframes modalPopIn { from { opacity: 0; transform: scale(0.94) translateY(6px); } to { opacity: 1; transform: scale(1) translateY(0); } } @keyframes drillCrumbIn { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: translateX(0); } } @keyframes drillContentIn { from { opacity: 0; transform: translateY(8px) scale(0.985); } to { opacity: 1; transform: translateY(0) scale(1); } } @keyframes sheetUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
         /* UPDATE (permintaan user - "pastikan responsive untuk ukuran
            layar kecil untuk menu DSE Prod & AR"): di layar sempit (hp,
            misal iPhone SE 375px) baris kontrol Periode (toggle Full
@@ -5090,6 +8661,10 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           .dseprod-tabs button { flex: 1 1 0; min-width: 0; flex-direction: row !important; justify-content: center; align-items: center; gap: 5px !important; white-space: nowrap !important; text-align: center; padding: 9px 6px !important; font-size: 11.5px !important; line-height: 1.2 !important; }
         }
       `}</style>
+      {showCetakBulk && typeof document !== "undefined" && createPortal(
+        <ArCetakBulkModal t={t} arMonth={calViewMonth} list={bulkList} profile={profile} onClose={() => setShowCetakBulk(false)} />,
+        document.body
+      )}
     </div>
   );
 }
