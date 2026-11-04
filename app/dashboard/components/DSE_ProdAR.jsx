@@ -5227,7 +5227,6 @@ function ArDsoHoaPanel({ t, d, profile, entryDate, arMonth, dseMeta, kind }) {
                 <th style={{ ...th, textAlign: "right" }}>Sisa Piutang</th>
                 <th style={th}>Status</th>
                 <th style={th}>Jatuh Tempo</th>
-                <th style={th}>Keterangan</th>
                 <th style={th}>Aksi</th>
               </tr>
             </thead>
@@ -5248,7 +5247,7 @@ function ArDsoHoaPanel({ t, d, profile, entryDate, arMonth, dseMeta, kind }) {
                   <td style={{ padding: "10px 12px", color: t.mid, fontSize: 11.5, fontWeight: 600, whiteSpace: "nowrap" }}>{g.partner || "—"}</td>
                   <td style={{ padding: "10px 12px", color: t.mid, fontSize: 11.5, fontWeight: 600, whiteSpace: "nowrap" }}>{g.region || "—"}</td>
                   <td style={{ padding: "10px 12px", color: t.mid, fontSize: 11.5, fontWeight: 600, whiteSpace: "nowrap" }}>{g.branch || "—"}</td>
-                  {isDso && <td style={{ padding: "10px 12px", fontWeight: 700, color: t.hi, whiteSpace: "nowrap" }}>{g.mc}</td>}
+                  {isDso && <td style={{ padding: "10px 12px", fontSize: 12.5, fontWeight: 700, color: t.hi, whiteSpace: "nowrap" }}>{g.mc}</td>}
                   <td style={{ padding: "10px 12px", minWidth: 180 }}>
                     {isDso ? (
                       editingCode === g.code ? (
