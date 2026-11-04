@@ -25,7 +25,7 @@ import {
 // ─── Constants ────────────────────────────────────────────────────────────────
 const ALL_ROLES = [
   { value: "spm_sumatera",         label: "SPM Sumatera",               color: "#C6168D" },
-  { value: "finance_mpx",          label: "Finance MPX",                color: "#ED1C24" },
+  { value: "finance_mpx",          label: "District Admin",             color: "#ED1C24" },
   { value: "internal_ioh",         label: "Internal IOH (Seluruh Sum.)", color: "#32BCAD" },
   { value: "ioh_north_sumatera",   label: "IOH North Sumatera",         color: "#3B82F6" },
   { value: "ioh_central_sumatera", label: "IOH Central Sumatera",       color: "#F59E0B" },
@@ -273,7 +273,7 @@ function AccessCodesSection({ t, d, refreshTrigger }) {
     if (!form.code.trim()) { showToast("error", "Kode tidak boleh kosong"); return; }
     if (!form.type)        { showToast("error", "Role wajib dipilih"); return; }
     if (form.type === "finance_mpx" && !form.partner_name) {
-      showToast("error", "Partner wajib dipilih untuk Finance MPX"); return;
+      showToast("error", "Partner wajib dipilih untuk District Admin"); return;
     }
 
     // Check duplicate code
@@ -725,7 +725,7 @@ function PartnerBranchesSection({ t, d, onBranchAdded, onChanged }) {
             </div>
           ))}
           <div style={{ fontSize: 11, color: t.mid, marginTop: 8 }}>
-            Berikan kode ini ke partner Finance MPX yang bersangkutan.
+            Berikan kode ini ke partner District Admin yang bersangkutan.
           </div>
         </div>
       )}
@@ -774,7 +774,7 @@ function PartnerBranchesSection({ t, d, onBranchAdded, onChanged }) {
           {!editId && (
             <div style={{ fontSize: 12, color: t.mid, marginBottom: 14, display: "flex", alignItems: "center", gap: 5 }}>
               <Zap size={12} style={{ color: t.sky }} />
-              Kode otoritas Finance MPX akan digenerate otomatis jika partner belum memiliki kode.
+              Kode otoritas District Admin akan digenerate otomatis jika partner belum memiliki kode.
             </div>
           )}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 12, marginBottom: 14 }}>

@@ -249,7 +249,17 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
   // "virtual", dari Database DSE tapi belum ada mapping-nya), otomatis
   // dibuat. Field yg tidak diedit tetap pakai nilai yang sudah tersimpan. ──
   const [savingKey, setSavingKey] = useState(null);
-  const EDITABLE_FIELDS = ["circle", "region", "branch", "full_name"];
+  // UPDATE (permintaan user - "bukannya nilai dari circle region dan branch
+  // ini statis ya" + "ini data yang sama yang digunakan pada dse, jangan
+  // biarkan kita bisa ubah ubah"): Circle/Region/Branch DIBALIK lagi jadi
+  // read-only, diambil OTOMATIS dari Database DSE (dseRefMap) - UPDATE 6 di
+  // atas (manual/bebas diketik per baris) dibatalkan, karena nilai2 ini
+  // SUDAH ada & statis per MC di Database DSE (sumber yang sama dipakai
+  // DSE_ProdAR), jadi membiarkannya diketik ulang manual di sini cuma bikin
+  // resiko typo/beda sendiri drpd sumber aslinya. Hanya "full_name" (Nama
+  // Admin) yang masih field manual/editable - itu bukan data yang ada di
+  // Database DSE.
+  const EDITABLE_FIELDS = ["full_name"];
   const ensureMappingRow = useCallback(async (mc) => {
     const key = mc.toLowerCase();
     const existing = rows.find((r) => r.mc?.toLowerCase() === key);
@@ -377,7 +387,20 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
       if (byMc.has(key)) return;
       byMc.set(key, { id: null, mc: ref.mc, region: ref.region, branch: ref.branch, circle: ref.circle, full_name: "", active: true });
     });
-    return Array.from(byMc.values()).sort((a, b) => (a.mc || "").localeCompare(b.mc || ""));
+    // UPDATE (permintaan user - "ini data yang sama yang digunakan pada
+    // dse, jangan biarkan kita bisa ubah ubah"): Circle/Region/Branch yang
+    // DITAMPILKAN selalu di-override dari dseRefMap (Database DSE, sumber
+    // yang sama dipakai DSE_ProdAR) kalau tersedia - bukan dari nilai yang
+    // (dulu) sempat diketik manual & tersimpan di mf_dse_admin_mc_mapping.
+    // Fallback ke nilai tersimpan cuma kalau MC itu sudah tidak ada lagi di
+    // Database DSE (dseRefMap kosong utk MC itu - mis. data historis/lama),
+    // supaya baris lama tetap kebaca, bukan jadi kosong.
+    return Array.from(byMc.values())
+      .map((r) => {
+        const ref = dseRefMap.get(r.mc?.toLowerCase());
+        return ref ? { ...r, circle: ref.circle, region: ref.region, branch: ref.branch } : r;
+      })
+      .sort((a, b) => (a.mc || "").localeCompare(b.mc || ""));
   }, [rows, dseRefMap]);
 
   // UPDATE (permintaan user - "coba kelompokkan / rapatkan urutan yang
@@ -630,7 +653,7 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
         </div>
 
         <div style={{ padding: "8px 16px", fontSize: 11.5, color: t.mid, borderBottom: `1px solid ${t.line}` }}>
-          Circle, Region, Branch & Nama Admin bisa langsung diketik di tabel ini — tidak perlu upload ulang.
+          Circle/Region/Branch diambil otomatis dari Database DSE (tidak bisa diubah di sini). Nama Admin bisa langsung diketik di tabel ini — tidak perlu upload ulang.
         </div>
 
         <div style={{ overflowX: "auto" }}>
@@ -654,18 +677,18 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
                 const activeEmails = emails.filter((e) => e.active !== false);
                 return (
                   <tr key={r.mc} style={{ borderBottom: `1px solid ${t.line}`, opacity: isVirtual ? 0.85 : 1 }}>
-                    <td style={{ padding: "6px 10px", minWidth: 110 }}>
-                      <input key={`${r.mc}-ci-${r.circle || ""}`} defaultValue={r.circle || ""} placeholder="-"
-                        onBlur={(e) => handleCellBlur(r.mc, "circle", e.target.value)} disabled={isHistorical} style={cellInputStyle} />
-                    </td>
-                    <td style={{ padding: "6px 10px", minWidth: 130 }}>
-                      <input key={`${r.mc}-re-${r.region || ""}`} defaultValue={r.region || ""} placeholder="-"
-                        onBlur={(e) => handleCellBlur(r.mc, "region", e.target.value)} disabled={isHistorical} style={cellInputStyle} />
-                    </td>
-                    <td style={{ padding: "6px 10px", minWidth: 130 }}>
-                      <input key={`${r.mc}-br-${r.branch || ""}`} defaultValue={r.branch || ""} placeholder="-"
-                        onBlur={(e) => handleCellBlur(r.mc, "branch", e.target.value)} disabled={isHistorical} style={cellInputStyle} />
-                    </td>
+                    {/* UPDATE (permintaan user - "bukannya nilai dari
+                        circle region dan branch ini statis ya" + "ini data
+                        yang sama yang digunakan pada dse, jangan biarkan
+                        kita bisa ubah ubah"): 3 kolom ini DIBALIK dari
+                        <input> yang bisa diketik manual jadi TEKS read-only
+                        (nilainya sendiri sudah di-override dari Database
+                        DSE lewat `displayRows`, lihat komentar di atas) -
+                        sama persis perlakuannya dgn kolom MC di sebelahnya
+                        yang juga sudah read-only. */}
+                    <td style={{ padding: "8px 10px", minWidth: 110, color: r.circle ? t.hi : t.lo, fontWeight: 600, fontStyle: r.circle ? "normal" : "italic" }}>{r.circle || "—"}</td>
+                    <td style={{ padding: "8px 10px", minWidth: 130, color: r.region ? t.hi : t.lo, fontWeight: 600, fontStyle: r.region ? "normal" : "italic" }}>{r.region || "—"}</td>
+                    <td style={{ padding: "8px 10px", minWidth: 130, color: r.branch ? t.hi : t.lo, fontWeight: 600, fontStyle: r.branch ? "normal" : "italic" }}>{r.branch || "—"}</td>
                     <td style={{ padding: "8px 12px", whiteSpace: "nowrap", fontWeight: 700 }}>
                       {r.mc}
                       {isVirtual && <span title="MC ini belum punya mapping — langsung isi di baris ini" style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: t.amber, background: t.amberBg, borderRadius: 6, padding: "1px 6px" }}>baru</span>}

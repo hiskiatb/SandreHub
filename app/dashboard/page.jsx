@@ -248,7 +248,7 @@ const HIDE_DATE_PICKER_VIEWS    = new Set(["overview","control-center","pivot-su
 // User Management (permintaan user - "beda beda untuk detailnya"). ready:
 // false = belum ada UI kelolanya, tampil placeholder "Segera hadir".
 const USER_MGMT_ROLES = [
-  { k: "finance_mpx",                 label: "Finance MPX",                   ready: true },
+  { k: "finance_mpx",                 label: "District Admin",                ready: true },
   { k: "spm_sumatera",                label: "SPM Sumatera",                  ready: false },
   { k: "marketing_sumatera_program",  label: "Marketing Sumatera Program",    ready: false },
   { k: "ioh_north_sumatera",          label: "IOH North Sumatera",            ready: false },
@@ -541,36 +541,15 @@ export default function DashboardPage() {
   // Prod & AR (Penjualan&AR DSE / AR DSO / AR HoA) di-LIFT ke sini (dulu
   // state lokal di dalam DSE_ProdAR.jsx) supaya bisa dikontrol dari
   // dropdown di header - dikirim turun ke <DSE_ProdAR /> sebagai props.
+  // UPDATE (permintaan user - "pindahin dropdown-nya ke dalam card title,
+  // bukan di app bar lagi"): dropdown pemilih category (tombol + portal
+  // menu) dipindah seluruhnya ke dalam DSE_ProdAR.jsx (nempel di title
+  // card-nya sendiri) - state `dseCategory` TETAP di-lift di sini (masih
+  // dipakai sidebar submenu "Prod. & AR" & dikirim turun sbg props ke
+  // <DSE_ProdAR category=.. setCategory=.. />), cuma UI dropdown app-bar-nya
+  // (dseCategoryOpen/Pos + refs + effect positioning) sudah tidak dipakai lagi
+  // & dihapus.
   const [dseCategory,       setDseCategory]      = useState("dse");
-  const [dseCategoryOpen,   setDseCategoryOpen]  = useState(false);
-  const [dseCategoryPos,    setDseCategoryPos]   = useState(null); // {left, top} - posisi tombol, dipakai portal
-  const dseCategoryBtnRef = useRef(null);
-  const dseCategoryMenuRef = useRef(null);
-  // UPDATE (permintaan user - "masih tidak kelihatan"): popup dropdown ini
-  // ternyata ke-CLIP (ilang total, bukan cuma ketutupan) oleh <header>,
-  // karena .header-pad punya `overflow-x: auto !important` di mobile
-  // (buat scroll baris date-picker) - begitu satu axis overflow diset
-  // non-visible, browser otomatis bikin axis satunya (overflow-y) ikut
-  // ke-clip juga, jadi apapun yg "nongol" keluar tinggi header (termasuk
-  // popup absolute ini) ikut kepotong/invisible. Fix: render popup-nya
-  // lewat React Portal ke document.body (posisinya dihitung manual dari
-  // getBoundingClientRect tombolnya) supaya dia keluar dari DOM tree
-  // header sepenuhnya & ga kena clip apapun.
-  useEffect(() => {
-    if (!dseCategoryOpen) return;
-    const btn = dseCategoryBtnRef.current;
-    if (btn) {
-      const r = btn.getBoundingClientRect();
-      setDseCategoryPos({ left: r.left, top: r.bottom + 8 });
-    }
-    const onClick = (e) => {
-      if (dseCategoryBtnRef.current && dseCategoryBtnRef.current.contains(e.target)) return;
-      if (dseCategoryMenuRef.current && dseCategoryMenuRef.current.contains(e.target)) return;
-      setDseCategoryOpen(false);
-    };
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, [dseCategoryOpen]);
   // Grup "Archive" di Overview — menu lama yang dipertimbangkan dihapus ke
   // depannya, tapi code-nya sengaja belum disentuh/dihapus. Lihat-lihat saja
   // di sini, disembunyikan (collapsed) secara default supaya overview tidak
@@ -588,6 +567,7 @@ export default function DashboardPage() {
   // default; klik label menu tetap buka layar PNL_MPX_Menu, chevron ini
   // cuma pintasan sidebar.
   const [pnlGroupOpen,      setPnlGroupOpen]     = useState(false);
+  const [prodArOpen,        setProdArOpen]       = useState(false);
 
   // ── Role flags ────────────────────────────────────────────────────────────
   const isSPM       = profile?.role === "spm_sumatera";
@@ -823,6 +803,13 @@ export default function DashboardPage() {
     if (PNL_MPX_VIEWS.has(view)) setPnlGroupOpen(true);
   }, [view]);
 
+  // Sama seperti grup "MPX P&L Report" di atas — begitu masuk ke
+  // "DSE Prod. & AR" (view === "dse-prod-ar"), sub-menunya (DSE/DSO-DSP/HoA)
+  // langsung dibuka otomatis di sidebar.
+  useEffect(() => {
+    if (view === "dse-prod-ar") setProdArOpen(true);
+  }, [view]);
+
   const navigateTab = (tabId) => {
     if (tabId === view) return;
     if (formDirty) { setPendingView(tabId); setExitConfirm(true); }
@@ -955,7 +942,25 @@ export default function DashboardPage() {
                       "Mapping Admin MC" yg terpisah DIHAPUS - fitur yg sama
                       skrg jadi tab "User Management" DI DALAM DSE Prod. &
                       AR itu sendiri (lihat DSE_ProdAR.jsx). */}
-                  {(isSPM || isMPX) && <SNavItem icon={<Wallet size={14} />}     label="DSE Prod. & AR"     active={view === "dse-prod-ar"}    onClick={() => navigate("dse-prod-ar")} />}
+                  {(isSPM || isMPX) && (
+                    <>
+                      <button onClick={() => setProdArOpen(v => !v)}
+                        style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", background: (view === "dse-prod-ar") ? t.blueBg : "transparent", border: "none", borderRadius: 8, cursor: "pointer", padding: "9px 11px", color: (view === "dse-prod-ar") ? t.blue : t.mid, fontFamily: "inherit", fontSize: 13.5, fontWeight: (view === "dse-prod-ar") ? 600 : 500 }}>
+                        <Wallet size={14} style={{ flexShrink: 0, opacity: (view === "dse-prod-ar") ? 1 : 0.7 }} />
+                        <span style={{ flex: 1, textAlign: "left", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>Prod. & AR</span>
+                        {prodArOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                      </button>
+                      {prodArOpen && (
+                        <div style={{ marginLeft: 10, paddingLeft: 8, borderLeft: `1px solid ${t.line}`, display: "flex", flexDirection: "column", gap: 2 }}>
+                          {DSE_CATEGORY_OPTIONS.map((opt) => (
+                            <SNavItem key={opt.k} icon={<Wallet size={13} />} label={opt.label}
+                              active={view === "dse-prod-ar" && dseCategory === opt.k}
+                              onClick={() => { setDseCategory(opt.k); navigate("dse-prod-ar"); }} />
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
                   {isSPM        && <SNavItem icon={<UserRoundCog size={14} />}   label="User Management"   active={view === "user-management"} onClick={() => navigate("user-management")} />}
 
                   {/* Archive — menu lama, dipertimbangkan dihapus ke depannya;
@@ -1012,62 +1017,16 @@ export default function DashboardPage() {
             <button className="mob-hamburger" onClick={() => setMobileOpen(true)} style={{ display: "none", width: 36, height: 36, alignItems: "center", justifyContent: "center", border: `1px solid ${t.line}`, background: t.inputBg, borderRadius: 8, cursor: "pointer", color: t.mid }}>
               <Menu size={17} />
             </button>
-            {/* UPDATE (permintaan user - "disamping kanan sidebar maksud
-                saya, dan pastikan popup option paling depan karena saat
-                ini ketutupan"): dropdown pemilih modul DSE Prod & AR
-                (Penjualan & AR DSE / AR DSO / AR HoA) - cuma tampil pas
-                lagi di halaman DSE Prod & AR (view === "dse-prod-ar"),
-                posisinya di KANAN tombol toggle sidebar (desktop) /
-                hamburger (mobile), bukan di kiri lagi. Popup-nya sempat
-                ketutupan sama toolbar sticky DSE_ProdAR.jsx (z-index sama
-                persis 40, menang krn urutan DOM content-pad SETELAH
-                header) - fix-nya di z-index header sendiri (lihat
-                <header> di atas, dinaikkan ke 100). */}
+            {/* UPDATE (permintaan user - "di samping kanan button show hide
+                sidebar tambahkan title Productivity & AR"): judul halaman
+                di header atas - CUMA utk view "dse-prod-ar" (menu Prod &
+                AR), krn header-nya kosong di situ (hideDatePicker=true,
+                ga ada datepicker yg biasanya ngisi slot ini) - jadi kalau
+                nanti ada view lain yg butuh judul serupa, tinggal tambah
+                kondisi baru di sini, bukan di-generic-kan dulu skrg krn
+                cuma 1 kebutuhan konkret. */}
             {view === "dse-prod-ar" && (
-              <div style={{ position: "relative", flexShrink: 0 }}>
-                <button ref={dseCategoryBtnRef} onClick={() => setDseCategoryOpen((v) => !v)}
-                  style={{ display: "flex", alignItems: "center", gap: 7, height: 36, padding: "0 10px 0 8px", borderRadius: 8, border: `1px solid ${dseCategoryOpen ? t.greenBd : t.line}`, background: dseCategoryOpen ? t.greenBg : t.inputBg, cursor: "pointer", fontFamily: "inherit" }}>
-                  {(() => {
-                    const CurIcon = DSE_CATEGORY_OPTIONS.find((o) => o.k === dseCategory)?.icon;
-                    return CurIcon ? <CurIcon size={15} color={t.green} /> : null;
-                  })()}
-                  {/* UPDATE (permintaan user - "mengapa disini nya masih hanya
-                      DSE": chip header harusnya ikut nampilin label
-                      lengkap yg baru diganti [DSE Prod. & AR / DSO/DSP AR
-                      / HoA AR], bukan shortLabel singkat lagi): shortLabel
-                      -> label. */}
-                  <span className="lg-hide-text" style={{ fontSize: 13, fontWeight: 700, color: t.hi, whiteSpace: "nowrap" }}>
-                    {DSE_CATEGORY_OPTIONS.find((o) => o.k === dseCategory)?.label}
-                  </span>
-                  <ChevronDown size={13} style={{ color: t.lo, transform: dseCategoryOpen ? "rotate(180deg)" : "rotate(0)", transition: "transform 0.15s" }} />
-                </button>
-                {typeof document !== "undefined" && createPortal(
-                  <AnimatePresence>
-                    {dseCategoryOpen && dseCategoryPos && (
-                      <motion.div ref={dseCategoryMenuRef} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 6 }} transition={{ duration: 0.13 }}
-                        style={{ position: "fixed", left: dseCategoryPos.left, top: dseCategoryPos.top, width: 272, background: t.surface, border: `1px solid ${t.line}`, borderRadius: 12, boxShadow: t.shadowLg, zIndex: 9999, overflow: "hidden", padding: 6 }}>
-                        {DSE_CATEGORY_OPTIONS.map((opt) => {
-                          const Icon = opt.icon;
-                          const active = dseCategory === opt.k;
-                          return (
-                            <button key={opt.k} onClick={() => { setDseCategory(opt.k); setDseCategoryOpen(false); }}
-                              style={{ display: "flex", alignItems: "flex-start", gap: 10, width: "100%", textAlign: "left", padding: "9px 10px", borderRadius: 9, border: "none", background: active ? t.greenBg : "transparent", cursor: "pointer", fontFamily: "inherit" }}>
-                              <div style={{ width: 30, height: 30, borderRadius: 8, background: active ? t.green : t.hover, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                                <Icon size={14} color={active ? "#fff" : t.mid} />
-                              </div>
-                              <div style={{ minWidth: 0 }}>
-                                <div style={{ fontSize: 13, fontWeight: 700, color: active ? t.green : t.hi }}>{opt.label}</div>
-                                <div style={{ fontSize: 11, color: t.mid, marginTop: 1, lineHeight: 1.35 }}>{opt.desc}</div>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>,
-                  document.body
-                )}
-              </div>
+              <span style={{ fontSize: 15, fontWeight: 800, color: t.hi, whiteSpace: "nowrap", flexShrink: 0 }}>Productivity &amp; AR</span>
             )}
             {!hideDatePicker && (
               <div className="hdr-datepicker" style={{ display: "flex", alignItems: "center", border: `1px solid ${t.inputBd}`, borderRadius: 8, background: t.inputBg, height: 36, overflow: "hidden", flexShrink: 0, minWidth: 0 }}>
@@ -1196,9 +1155,16 @@ export default function DashboardPage() {
                       tab "User Management" di dalam kartu DSE Prod. & AR
                       ini sendiri (lihat DSE_ProdAR.jsx), bukan tujuan
                       navigasi sendiri lagi. */}
+                  {/* UPDATE (permintaan user - "ubah title menjadi Prod. & AR
+                      saja dan subtitle juga sesuaikan karena isinya bukan
+                      hanya DSE prod & ar"): modul ini sekarang mencakup 3
+                      kategori (lihat CATEGORY_OPTIONS di DSE_ProdAR.jsx -
+                      DSE Prod & AR, DSO/DSP AR, HoA AR), jadi title/desc
+                      kartu di dashboard ini ga boleh nyebut "DSE" doang
+                      lagi supaya ga menyesatkan. */}
                   {(isSPM || isMPX) && (
-                    <DashCard icon={<Wallet size={20} />} title="DSE Prod. & AR"
-                      desc="Upload produksi harian DSE (SP, Saldo, Voucher) dan AR/piutang outstanding, per Kode DSE."
+                    <DashCard icon={<Wallet size={20} />} title="Prod. & AR"
+                      desc="Upload penjualan harian & kelola AR/piutang outstanding — level DSE, DSO/DSP, maupun HoA."
                       tag={isMPX ? "Admin MC" : "SPM"} active={true} onClick={() => navigate("dse-prod-ar")} t={t} d={d}
                       accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.11)" : "rgba(26,158,144,0.07)", bd: d ? "rgba(50,188,173,0.28)" : "rgba(26,158,144,0.20)", shadow: "rgba(26,158,144,0.16)" }} />
                   )}
