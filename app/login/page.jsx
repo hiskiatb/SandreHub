@@ -11,6 +11,11 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sun, Moon, ChevronRight, Settings, Lock, X, Eye, EyeOff } from "lucide-react";
 import { HubLogo } from "../../components/HubLogo";
+// Catatan: PwaInstallBanner (komponen "Instal aplikasi ke Home Screen")
+// sengaja TIDAK di-import/ditampilkan di sini (halaman pilih platform).
+// SandraHub punya banner-nya sendiri di /sandra/login, dan MartaHub punya
+// aplikasi mobile terpisah (bukan lewat PWA installer ini) - jadi di
+// halaman pemilihan platform ini tidak relevan utk keduanya.
 import { PwaInstallBanner } from "../../components/PwaInstallBanner";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -240,8 +245,6 @@ export default function HubPickerPage() {
             </motion.button>
           ))}
         </div>
-
-        <PwaInstallBanner dark={d} />
 
         {/* Footer note */}
         <div style={{ marginTop: 28, textAlign: "center", fontSize: 11, color: t.lo }}>

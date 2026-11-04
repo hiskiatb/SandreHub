@@ -5,7 +5,8 @@ import { supabase } from "../../../lib/supabase";
 import { canViewMarta } from "../../../lib/martaAccess";
 import { useOtpResendCooldown } from "../../../lib/otpCooldown";
 import { HubLogo } from "../../../components/HubLogo";
-import { PwaInstallBanner } from "../../../components/PwaInstallBanner";
+// PwaInstallBanner sengaja tidak dipakai di sini - MartaHub punya aplikasi
+// mobile terpisah sendiri, bukan lewat PWA installer ini.
 import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, ChevronRight, ChevronDown, Camera, LayoutDashboard, LayoutGrid, QrCode, Store, CheckCircle2, KeyRound } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -788,8 +789,6 @@ function MartaLoginInner() {
             </motion.div>
           )}
         </AnimatePresence>
-
-        <PwaInstallBanner dark={d} />
 
         <div style={{ marginTop: 18, textAlign: "center", fontSize: 10.5, letterSpacing: "0.12em", textTransform: "uppercase", color: t.lo, opacity: 0.35, fontWeight: 600 }}>
           © 2026 MartaHub · Marketing Sumatera
