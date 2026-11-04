@@ -420,15 +420,44 @@ function SubmissionBody() {
       const { default: JSZip } = await import("jszip");
       const zip = new JSZip();
       // 0-80% = mengunduh foto (per file yg selesai), 80-100% = mengompres ZIP.
+      // CATATAN: sebelumnya semua foto di-fetch() sekaligus lewat
+      // Promise.all tanpa batas - utk 1000+ foto ini membanjiri browser
+      // (jauh di atas batas koneksi per-origin, ~6) sampai sebagian request
+      // gagal dgn "Failed to fetch" (bukan error dari server/Supabase sama
+      // sekali). Diperbaiki jadi antrean dgn concurrency terbatas (8
+      // sekaligus) + retry ringan per foto, supaya tetap jalan walau
+      // jumlahnya ribuan.
       let done = 0;
+      let failed = 0;
       setJob({ kind: "zip", label: `Mengunduh foto 0/${list.length}`, pct: 0 });
-      await Promise.all(list.map(async (item) => {
-        const res = await fetch(item.url);
-        const blob = await res.blob();
-        zip.file(item.filename, blob);
-        done++;
-        setJob({ kind: "zip", label: `Mengunduh foto ${done}/${list.length}`, pct: Math.round((done / list.length) * 80) });
-      }));
+      const CONCURRENCY = 8;
+      const MAX_RETRY = 2;
+      let cursor = 0;
+      const worker = async () => {
+        for (;;) {
+          const i = cursor++;
+          if (i >= list.length) return;
+          const item = list[i];
+          let lastErr;
+          for (let attempt = 0; attempt <= MAX_RETRY; attempt++) {
+            try {
+              const res = await fetch(item.url);
+              if (!res.ok) throw new Error(`HTTP ${res.status}`);
+              const blob = await res.blob();
+              zip.file(item.filename, blob);
+              lastErr = null;
+              break;
+            } catch (e) {
+              lastErr = e;
+            }
+          }
+          if (lastErr) { failed++; console.error("[downloadZip] gagal unduh foto:", item.filename, lastErr); }
+          done++;
+          setJob({ kind: "zip", label: `Mengunduh foto ${done}/${list.length}${failed ? ` (${failed} gagal)` : ""}`, pct: Math.round((done / list.length) * 80) });
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, list.length) }, worker));
+      if (failed) alert(`${failed} dari ${list.length} foto gagal diunduh (jaringan tidak stabil) dan tidak ikut masuk ZIP. Sisanya tetap disertakan.`);
       setJob({ kind: "zip", label: "Mengompres ZIP...", pct: 80 });
       let lastPct = -1;
       const blob = await zip.generateAsync({ type: "blob" }, (m) => {
@@ -440,8 +469,9 @@ function SubmissionBody() {
       const tag = dateFrom || dateTo ? `_${dateFrom || "awal"}_${dateTo || "akhir"}` : "";
       a.download = `Foto Etalase dan Tampak Depan Outlet${tag}.zip`;
       a.click();
-    } catch {
-      alert("Gagal membuat file ZIP.");
+    } catch (e) {
+      console.error("[downloadZip] gagal:", e);
+      alert("Gagal membuat file ZIP." + (e?.message ? `\n\n${e.message}` : ""));
     } finally { setZipping(false); setJob(null); }
   };
 
