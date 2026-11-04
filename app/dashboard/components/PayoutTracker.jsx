@@ -149,12 +149,6 @@ function fmtMonthYear(x) {
   return d.toLocaleDateString("en-GB", { month:"short", year:"numeric" });
 }
 
-function daysBetween(a, b) {
-  const d1=toDate(a), d2=toDate(b);
-  if (!d1||!d2) return null;
-  return Math.round((d2-d1)/86400000);
-}
-
 // Hari kerja (Senin–Jumat) dari a (eksklusif) s.d. b (inklusif). Negatif → null.
 function workDaysBetween(a, b) {
   const d1=toDate(a), d2=toDate(b);
@@ -694,29 +688,6 @@ function StatusBadge({ val, t }) {
   return <span style={{display:"inline-flex",padding:"2px 8px",borderRadius:6,fontFamily:MONO,fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em",background:bg,color:c,border:`1px solid ${bd}`}}>{val}</span>;
 }
 
-function DonutChart({ pieces, t, size=144 }) {
-  if (!pieces.length) return null;
-  const total = pieces.reduce((a,b)=>a+b.v,0);
-  const cx=size/2, cy=size/2, R=size/2-7, r2=R*0.75;
-  let ang = -Math.PI/2;
-  const paths = pieces.map((p,i)=>{
-    const sh=p.v/total, nx=ang+sh*2*Math.PI, lg=sh>0.5?1:0;
-    const x1=cx+R*Math.cos(ang),y1=cy+R*Math.sin(ang);
-    const x2=cx+R*Math.cos(nx), y2=cy+R*Math.sin(nx);
-    const x3=cx+r2*Math.cos(nx),y3=cy+r2*Math.sin(nx);
-    const x4=cx+r2*Math.cos(ang),y4=cy+r2*Math.sin(ang);
-    ang=nx;
-    return <path key={i} d={`M${x1},${y1} A${R},${R} 0 ${lg} 1 ${x2},${y2} L${x3},${y3} A${r2},${r2} 0 ${lg} 0 ${x4},${y4} Z`} fill={p.color} stroke={t.surf} strokeWidth="2"><title>{p.label}: {p.v.toLocaleString()}</title></path>;
-  });
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{display:"block",margin:"0 auto",flexShrink:0}}>
-      {paths}
-      <text x={cx} y={cy+2} textAnchor="middle" fontSize={size*0.16} fontWeight="800" fill={t.ink} fontFamily="inherit">{total.toLocaleString()}</text>
-      <text x={cx} y={cy+18} textAnchor="middle" fontSize={9} fill={t.muted} fontFamily={MONO}>TOTAL</text>
-    </svg>
-  );
-}
-
 function BarChart({ series, t }) {
   if (!series.length) return null;
   const W=480,H=200,pL=36,pR=8,pT=12,pB=40;
@@ -831,9 +802,7 @@ export default function PayoutTracker({
   const [searchIdx, setSearchIdx]     = useState(-1);
   const searchRef                     = useRef(null);
   const [funnelExp, setFunnelExp]     = useState(null);
-  const [donutExp, setDonutExp]       = useState(null);
   const [bnExp, setBnExp]             = useState(null);
-  const [tpExp, setTpExp]             = useState(null);
   const realtimeCh = useRef(null);
   const toastTmr   = useRef(null);
 
@@ -1007,23 +976,9 @@ export default function PayoutTracker({
       // Tiap step hanya menghitung baris dari flow-nya (step PO tidak ikut menghitung Direct Invoice, dan sebaliknya)
       filtRaw.forEach(r=>{ if(p.flow&&rowFlow(r)!==p.flow)return; const d=workDaysBetween(gcell(r,p.from),gcell(r,p.to)); if(d==null)return; details.push({days:d,po:refNo(r),name:gstr(r,["partner name","agency name"]),title:gstr(r,["project title"])||"—",month:gstr(r,["program date","month"]),amt:gnum(r,["amount"])}); });
       const ds=details.map(d=>d.days);
-      return {...p,avg:ds.length?ds.reduce((a,b)=>a+b,0)/ds.length:0,n:ds.length,details:details.sort((a,b)=>b.days-a.days)};
+      return {...p,avg:ds.length?ds.reduce((a,b)=>a+b,0)/ds.length:0,n:ds.length,ok:ds.filter(d=>d<=p.sla).length,details:details.sort((a,b)=>b.days-a.days)};
     });
   },[filtRaw,slaSet]);
-
-  const topPartners = useMemo(()=>{
-    if (!filtRaw.length) return [];
-    const agg={};
-    filtRaw.forEach(r=>{ const n=gstr(r,["partner name","agency name"]); if(!n)return; if(!agg[n])agg[n]={name:n,amt:0,n:0,clr:0,progs:[]}; agg[n].amt+=gnum(r,["amount"]); agg[n].n++; if(gcell(r,H_CLR))agg[n].clr++; agg[n].progs.push({po:refNo(r),title:gstr(r,["project title"])||"—",month:gstr(r,["program date","month"]),amt:gnum(r,["amount"]),cleared:!!gcell(r,H_CLR)}); });
-    return Object.values(agg).sort((a,b)=>b.amt-a.amt).slice(0,10);
-  },[filtRaw]);
-
-  const donutPieces = useMemo(()=>{
-    const cm={"PAID":C.teal,"Payment Process":C.tealD,"Invoice Not Submitted":C.yellow,"Unknown":C.grey};
-    const cnt={};
-    filtRaw.forEach(r=>{ const s=rowStatus(r)||"Unknown"; cnt[s]=(cnt[s]||0)+1; });
-    return Object.entries(cnt).map(([label,v])=>({label,v,color:cm[label]||C.pink}));
-  },[filtRaw]);
 
   const heatData = useMemo(()=>{
     const months=unique(filtAgg.map(r=>r.month)).sort((a,b)=>monthKey(b)-monthKey(a));
@@ -1188,10 +1143,10 @@ export default function PayoutTracker({
     rawPage,setRawPage,rawPageSize,collapsed,setCollapsed,
     dragOver,setDragOver,searchFocus,setSearchFocus,searchIdx,setSearchIdx,
     searchRef,searchSuggestions,allSuggestions,searchInput,setSearchInput,
-    funnelExp,setFunnelExp,donutExp,setDonutExp,bnExp,setBnExp,tpExp,setTpExp,
+    funnelExp,setFunnelExp,bnExp,setBnExp,
     src,setSrc,flowSel,activeTab,setActiveTab,heatMetric,setHeatMetric,
     curRaw,curAgg,filtAgg,filtRaw,grand,grandPartnerCount,
-    funnelStages,trendSeries,donutPieces,heatData,bnResults,topPartners,sortedMonths,
+    funnelStages,trendSeries,heatData,bnResults,sortedMonths,
     rawKeys,rawKeysAll,rawKeysMain,showAllCols,setShowAllCols,
     pageRaw,curRawPage,totalRawPages,fmtCellT,isLeftCol,
     handleFile,publish,viewDash,clearData,exportSummary,exportRaw,showToast,
@@ -1319,11 +1274,6 @@ function AdminScreen({ t, pubMeta, partnerFile, agencyFile, partnerRaw, agencyRa
   );
 }
 
-function NoteCard({n,t}) {
-  const [hov,hE]=useHover();
-  return <div {...hE} style={{padding:"10px 14px",borderRadius:12,background:hov?t.surf3:t.surf2,borderTop:`1px solid ${hov?t.line2:t.line}`,borderRight:`1px solid ${hov?t.line2:t.line}`,borderBottom:`1px solid ${hov?t.line2:t.line}`,borderLeft:`3px solid ${n.c}`,transition:"all .15s"}}><div style={{fontFamily:MONO,fontSize:9.5,letterSpacing:"0.12em",textTransform:"uppercase",color:t.muted,marginBottom:4}}>{n.l}</div><div style={{fontSize:12,color:t.ink2,lineHeight:1.45}}>{n.txt}</div></div>;
-}
-
 function SegBtn({s,active,disabled,count,label,onClick,t}) {
   const [hov,hE]=useHover();
   const ac=s==="partner"?C.teal:C.magenta;
@@ -1358,27 +1308,6 @@ function SugItem({s,active,iconLabel,accentColor,onPick,t}) {
   return <div {...hE} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 14px",cursor:"pointer",background:active||hov?t.surf3:"transparent",borderTop:`1px solid ${t.line}`,transition:"background .1s"}} onMouseDown={onPick}><span style={{width:22,height:22,borderRadius:7,background:accentColor,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontFamily:MONO,fontSize:8,fontWeight:700,color:"#fff"}}>{iconLabel}</span><span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontSize:12.5,fontWeight:500,color:t.ink}}>{s.label}</span><span style={{fontFamily:MONO,fontSize:10,flexShrink:0,color:t.muted}}>{s.count}</span></div>;
 }
 
-function DonutRow({p,total,isExp,onToggle,filtRaw,t}) {
-  const [hov,hE]=useHover();
-  const recs=isExp?filtRaw.filter(r=>(rowStatus(r)||"Unknown")===p.label).slice(0,30):[];
-  return (
-    <div>
-      <div {...hE} {...kbd(onToggle)} onClick={onToggle} aria-expanded={isExp} style={{display:"grid",gridTemplateColumns:"1fr auto 20px",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:10,background:isExp?`${C.teal}12`:hov?t.surf3:t.surf2,border:`1px solid ${isExp?C.teal:hov?t.line2:t.line}`,cursor:"pointer",transition:"all .15s"}}>
-        <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}><span style={{width:10,height:10,borderRadius:"50%",background:p.color,flexShrink:0}}/><span style={{fontWeight:600,fontSize:12,color:t.ink,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.label}</span></div>
-        <div style={{display:"flex",alignItems:"baseline",gap:5}}><span style={{fontFamily:MONO,fontWeight:600,fontSize:12,color:t.ink}}>{p.v.toLocaleString()}</span><span style={{fontFamily:MONO,fontSize:10,color:t.muted}}>({Math.round(p.v/(total||1)*100)}%)</span></div>
-        <span style={{fontSize:9,color:isExp?C.teal:t.muted,display:"inline-block",transform:isExp?"rotate(180deg)":"none",transition:"transform .2s"}}>▼</span>
-      </div>
-      {isExp&&recs.length>0&&<div style={{marginTop:4,background:t.surf2,border:`1px solid ${t.line}`,borderRadius:10,overflow:"hidden",maxHeight:200,overflowY:"auto"}}>{recs.map((r,j)=><DetailRow key={j} po={refNo(r)||"No PO"} name={gstr(r,["project title"])||gstr(r,["partner name","agency name"])||"—"} meta={fmtMoney(gnum(r,["amount"]))} t={t}/>)}</div>}
-      {isExp&&recs.length===0&&<div style={{marginTop:4,padding:"8px 12px",background:t.surf2,border:`1px solid ${t.line}`,borderRadius:10,fontSize:11.5,fontStyle:"italic",color:t.muted}}>No records match the current filters.</div>}
-    </div>
-  );
-}
-
-function DetailRow({po,name,meta,t}) {
-  const [hov,hE]=useHover();
-  return <div {...hE} style={{display:"grid",gridTemplateColumns:"auto 1fr auto",gap:8,padding:"7px 12px",borderBottom:`1px solid ${t.line}`,fontSize:11.5,alignItems:"center",background:hov?t.surf3:"transparent",transition:"background .1s"}}><span style={{fontFamily:MONO,fontSize:10,fontWeight:600,background:t.surf3,padding:"2px 7px",borderRadius:5,border:`1px solid ${t.line}`,whiteSpace:"nowrap",color:t.ink}}>{po}</span><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{name}</span><span style={{fontFamily:MONO,fontSize:10,color:t.muted,textAlign:"right",whiteSpace:"nowrap"}}>{meta}</span></div>;
-}
-
 function HeatBtn({m,active,onClick,t}) {
   const [hov,hE]=useHover();
   return <button {...hE} onClick={onClick} style={{fontFamily:MONO,fontSize:10,letterSpacing:"0.06em",textTransform:"uppercase",padding:"5px 10px",borderRadius:8,border:`1px solid ${active?m.ac:hov?C.tealD:t.line}`,background:active?m.ac:hov?t.surf3:t.surf2,color:active?(m.dark?"#1a1a1a":"#fff"):hov?t.ink:t.muted,cursor:"pointer",transition:"all .15s"}}>{m.l}</button>;
@@ -1389,105 +1318,9 @@ function HeatCell({bg,light,pp,v,n}) {
   return <div {...hE} style={{borderRadius:8,padding:"9px 5px",textAlign:"center",background:bg,color:light?"#1a1a1a":"#fff",cursor:"default",transition:"transform .12s",transform:hov?"scale(1.05)":"scale(1)",position:"relative",zIndex:hov?2:0}}><div style={{fontWeight:700,fontSize:12,fontFamily:MONO,lineHeight:1}}>{pp}%</div><div style={{fontSize:9,opacity:.9,marginTop:2,fontFamily:MONO}}>{v}/{n}</div></div>;
 }
 
-function BnRow({r,showFlow,isExp,onToggle,t}) {
-  const [hov,hE]=useHover();
-  const s=r.avg<=r.sla?"ok":r.avg<=r.sla*1.5?"warn":"breach";
-  const sc=s==="ok"?t.good:s==="warn"?t.warn:t.bad;
-  const sb=s==="ok"?t.goodBg:s==="warn"?t.warnBg:t.badBg;
-  const sbd=s==="ok"?t.goodBd:s==="warn"?t.warnBd:t.badBd;
-  const fill=Math.min(100,(r.avg/(r.sla*2))*100);
-  const clickable=r.n>0;
-  return (
-    <div {...hE} {...(clickable?kbd(onToggle):{})} onClick={clickable?onToggle:undefined} aria-expanded={isExp} style={{borderRadius:12,background:hov?t.surf3:t.surf2,border:`${isExp?"2":"1"}px solid ${isExp?C.magenta:hov?t.line2:t.line}`,padding:"11px 14px",transition:"all .15s",cursor:clickable?"pointer":"default"}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:8,flexWrap:"wrap"}}>
-        <div style={{fontWeight:700,fontSize:13,color:t.ink,display:"flex",alignItems:"center",gap:6}}>{r.label}{showFlow&&r.flow&&<FlowBadge flow={r.flow} t={t}/>}{clickable&&<span style={{fontSize:9,color:isExp?C.magenta:t.muted,display:"inline-block",transform:isExp?"rotate(180deg)":"none",transition:"transform .2s"}}>▼</span>}</div>
-        <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <span style={{fontFamily:MONO,fontSize:9.5,fontWeight:600,padding:"3px 8px",borderRadius:6,background:sb,color:sc,border:`1px solid ${sbd}`,textTransform:"uppercase",letterSpacing:"0.08em"}}>{s==="ok"?"WITHIN SLA":s==="warn"?"APPROACHING SLA":"OVERDUE"}</span>
-          <span style={{fontFamily:MONO,fontWeight:700,fontSize:14}}><span style={{color:sc}}>{r.avg.toFixed(1)}d</span><span style={{fontSize:10,color:t.muted,fontWeight:400}}> / {r.sla} WD</span></span>
-        </div>
-      </div>
-      <div style={{display:"flex",alignItems:"center",gap:9}}>
-        <div style={{flex:1,height:7,borderRadius:4,background:t.surf4,position:"relative",overflow:"hidden"}}><div style={{position:"absolute",top:0,left:0,height:"100%",width:`${fill}%`,background:sc,borderRadius:4,transition:"width .4s"}}/><div style={{position:"absolute",top:-3,bottom:-3,left:"50%",width:2,background:t.ink,opacity:.25,borderRadius:1}}/></div>
-        <span style={{fontFamily:MONO,fontSize:10,color:t.muted,minWidth:40,textAlign:"right"}}>n={r.n}</span>
-      </div>
-      {isExp&&r.details.length>0&&(
-        <div style={{marginTop:10,background:t.surf,border:`1px solid ${t.line}`,borderRadius:10,overflow:"hidden"}}>
-          <div style={{padding:"7px 12px",background:t.badBg,borderBottom:`1px solid ${t.badBd}`,fontFamily:MONO,fontSize:9.5,color:t.bad,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Top {Math.min(r.details.length,20)} longest cases</div>
-          <div style={{maxHeight:250,overflowY:"auto"}}>{r.details.slice(0,20).map((d,j)=><BnDetailRow key={j} d={d} t={t}/>)}</div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function BnDetailRow({d,t}) {
   const [hov,hE]=useHover();
   return <div {...hE} style={{display:"grid",gridTemplateColumns:"44px auto 1fr auto",gap:8,padding:"7px 12px",borderBottom:`1px solid ${t.line}`,fontSize:11,alignItems:"center",background:hov?t.surf2:"transparent",transition:"background .1s"}}><span style={{fontFamily:MONO,fontSize:11,fontWeight:700,color:t.bad,textAlign:"center",background:t.badBg,padding:"3px 5px",borderRadius:6}}>{d.days}d</span><span style={{fontFamily:MONO,fontSize:10,fontWeight:600,background:t.surf3,padding:"2px 7px",borderRadius:5,border:`1px solid ${t.line}`,whiteSpace:"nowrap",color:t.ink}}>{d.po||"No PO"}</span><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{d.title}</span><span style={{fontFamily:MONO,fontSize:10,color:t.muted,textAlign:"right",whiteSpace:"nowrap"}}>{d.month}{d.amt&&<><br/>{fmtMoney(d.amt)}</>}</span></div>;
-}
-
-function TpRow({p,i,maxAmt,isExp,onToggle,t}) {
-  const [hov,hE]=useHover();
-  const cr=p.n?Math.round(p.clr/p.n*100):0;
-  const clrC=cr>=80?t.good:cr>=50?t.warn:t.bad, clrBg=cr>=80?t.goodBg:cr>=50?t.warnBg:t.badBg, clrBd=cr>=80?t.goodBd:cr>=50?t.warnBd:t.badBd;
-  const grads=["linear-gradient(90deg,#EC008C,#C6168D)","linear-gradient(90deg,#FFCB05,#c49b00)","linear-gradient(90deg,#32BCAD,#1d8078)","linear-gradient(90deg,#32BCAD,#27a093)"];
-  return (
-    <div {...hE} {...kbd(onToggle)} onClick={onToggle} aria-expanded={isExp} style={{borderRadius:12,background:hov?t.surf3:t.surf2,border:`${isExp?"2":"1"}px solid ${isExp?C.magenta:hov?t.line2:t.line}`,padding:"10px 12px",cursor:"pointer",transition:"all .15s"}}>
-      <div style={{display:"flex",alignItems:"center",gap:9,marginBottom:7,flexWrap:"wrap"}}>
-        <span style={{fontFamily:MONO,fontSize:11,fontWeight:600,color:t.muted,width:22,flexShrink:0}}>#{i+1}</span>
-        <span style={{fontWeight:700,fontSize:12.5,flex:"1 1 120px",minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink}}>{p.name}</span>
-        <span style={{fontFamily:MONO,fontSize:9.5,fontWeight:600,padding:"2px 7px",borderRadius:6,background:clrBg,color:clrC,border:`1px solid ${clrBd}`,flexShrink:0}}>{cr}% cleared</span>
-        <span style={{fontWeight:700,fontSize:12.5,flexShrink:0,fontFamily:MONO,color:t.ink}}>{fmtMoney(p.amt)}</span>
-        <span style={{fontSize:9,color:isExp?C.magenta:t.muted,display:"inline-block",transform:isExp?"rotate(180deg)":"none",transition:"transform .2s",flexShrink:0}}>▼</span>
-      </div>
-      <div style={{height:5,borderRadius:3,background:t.surf4,overflow:"hidden"}}><div style={{height:"100%",width:`${(p.amt/maxAmt)*100}%`,background:grads[Math.min(i,3)],borderRadius:3,transition:"width .4s"}}/></div>
-      {isExp&&(
-        <div style={{marginTop:9,background:t.surf,border:`1px solid ${t.line}`,borderRadius:10,overflow:"hidden"}}>
-          <div style={{padding:"7px 12px",background:t.surf2,borderBottom:`1px solid ${t.line}`,display:"flex",justifyContent:"space-between",fontFamily:MONO,fontSize:9.5,color:C.magenta,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600,flexWrap:"wrap",gap:8}}>
-            <span>{p.progs.length} program{p.progs.length!==1?"s":""} · {p.clr} cleared</span><span>Total {fmtMoney(p.amt)}</span>
-          </div>
-          <div style={{maxHeight:260,overflowY:"auto"}}>{p.progs.sort((a,b)=>b.amt-a.amt).slice(0,20).map((pr,j)=><TpProgRow key={j} pr={pr} t={t}/>)}</div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function TpProgRow({pr,t}) {
-  const [hov,hE]=useHover();
-  return <div {...hE} style={{display:"grid",gridTemplateColumns:"auto 1fr auto auto",gap:8,padding:"7px 12px",borderBottom:`1px solid ${t.line}`,fontSize:11,alignItems:"center",background:hov?t.surf2:"transparent",transition:"background .1s"}}><span style={{fontFamily:MONO,fontSize:10,fontWeight:600,background:t.surf3,padding:"2px 7px",borderRadius:5,border:`1px solid ${t.line}`,whiteSpace:"nowrap",color:t.ink}}>{pr.po||"No PO"}</span><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{pr.title}</span><span style={{fontFamily:MONO,fontSize:11,fontWeight:600,color:t.ink}}>{fmtMoney(pr.amt)}</span><span style={{fontFamily:MONO,fontSize:9,fontWeight:600,padding:"3px 7px",borderRadius:5,textTransform:"uppercase",background:pr.cleared?t.goodBg:t.warnBg,color:pr.cleared?t.goodDark:t.warnDark,border:`1px solid ${pr.cleared?t.goodBd:t.warnBd}`}}>{pr.cleared?"✓ Clr":"Pending"}</span></div>;
-}
-
-function ThCell({col,sortState,setSort,t}) {
-  const [hov,hE]=useHover();
-  const active=sortState.col===col.k;
-  return <th {...hE} onClick={()=>setSort(s=>({col:col.k,dir:s.col===col.k&&s.dir==="desc"?"asc":"desc"}))} style={{position:"sticky",top:0,zIndex:2,fontFamily:MONO,fontSize:10,letterSpacing:"0.1em",textTransform:"uppercase",color:active?C.teal:hov?t.ink:t.muted,fontWeight:active?700:500,background:hov?t.surf3:t.surf2,padding:"9px",textAlign:col.left?"left":"center",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap",cursor:"pointer",transition:"all .15s"}}>{col.l}{active?(sortState.dir==="asc"?" ▲":" ▼"):""}</th>;
-}
-
-function SummaryDataRow({r,j,isAg,t}) {
-  const [hov,hE]=useHover();
-  return (
-    <tr {...hE} style={{borderBottom:`1px solid ${t.line}`,background:hov?t.rowHover:j%2===1?t.rowStripe:"transparent",transition:"background .1s"}}>
-      <td style={{padding:"8px 9px 8px 28px",textAlign:"left",fontSize:12,color:t.muted}}>{r.month}</td>
-      <td style={{padding:"8px 9px",textAlign:"left",fontSize:12,color:t.ink}}>{r.entity}</td>
-      <td style={{padding:"8px 9px",textAlign:"left",fontSize:12,fontWeight:600,color:t.ink}}>{r.ptype}</td>
-      <td style={{padding:"8px 9px",textAlign:"left",fontSize:12,color:t.muted}}>{r.prog}</td>
-      <td style={{padding:"8px 9px",textAlign:"left"}}><FlowBadge flow={r.flow} t={t}/></td>
-      <td style={{textAlign:"center",padding:"8px 9px",color:t.ink}}>{r.n||""}</td>
-      <td style={{textAlign:"center",padding:"8px 9px",color:t.ink}}>{r.po||""}</td>
-      {!isAg&&<td style={{textAlign:"center",padding:"8px 9px",color:t.ink}}>{r.surat||""}</td>}
-      <td style={{textAlign:"center",padding:"8px 9px",color:t.ink}}>{r.inv||""}</td>
-      <td style={{textAlign:"center",padding:"8px 9px",color:t.ink}}>{r.clv||""}</td>
-      <td style={{textAlign:"center",padding:"8px 9px",color:t.ink}}>{r.clr||""}</td>
-      <td style={{textAlign:"center",padding:"8px 9px"}}>{r.n?<PctBadge val={pct(r.inv,r.n)} t={t}/>:""}</td>
-      <td style={{textAlign:"center",padding:"8px 9px"}}>{r.n?<PctBadge val={pct(r.clv,r.n)} t={t}/>:""}</td>
-      <td style={{textAlign:"center",padding:"8px 9px"}}>{r.n?<PctBadge val={pct(r.clr,r.n)} t={t}/>:""}</td>
-    </tr>
-  );
-}
-
-function MonthTotalRow({m,mT,isAg,isCol,colCount,onToggle,t}) {
-  const [hov,hE]=useHover();
-  return <tr {...hE} {...kbd(onToggle)} onClick={onToggle} aria-expanded={!isCol} style={{background:hov?`${C.teal}18`:t.monthBg,borderTop:`1px solid ${C.teal}30`,cursor:"pointer",transition:"background .1s"}}><td colSpan={colCount} style={{padding:"9px",textAlign:"left",fontWeight:700,fontSize:12.5,color:t.ink}}><span style={{display:"inline-block",width:14,marginRight:6,color:t.muted,transition:"transform .15s",transform:isCol?"rotate(-90deg)":"rotate(0deg)"}}>▼</span>TOTAL {fmtMonthYear(m)} · {mT.n} records · {pct(mT.clr,mT.n)}% cleared</td></tr>;
 }
 
 function RawThCell({k,rawSort,setRawSort,setRawPage,isLeftCol,label,t}) {
@@ -1549,101 +1382,6 @@ function FunnelRowItem({s,prevKey,drop,isExp,filtRaw,grand,onToggle,t}) {
       {isExp&&pending.length===0&&(
         <div style={{marginTop:6,padding:"8px 10px",borderRadius:10,background:t.surf2,border:`1px solid ${t.line}`,fontSize:11.5,fontStyle:"italic",color:t.muted}}>No pending records match the current filters.</div>
       )}
-    </div>
-  );
-}
-
-/* ─────────────────────────────────────────────────────────────────────
-   GRAND TOTAL BANNER (v5.2-EN — fully responsive, all-English)
-   Hero summary: Total Amount · Total Transactions · Total Partners ·
-   Bank Cleared + milestone progress. 2-col grid on mobile, 4 on desktop.
-   ───────────────────────────────────────────────────────────────────── */
-function GrandTotalBanner({ grand, partnerCount, monthsCount = 0, groupCount = 0, isAg, w, t }) {
-  const invPct = pct(grand.inv, grand.n);
-  const clvPct = pct(grand.clv, grand.n);
-  const clrPct = pct(grand.clr, grand.n);
-  const isNarrow = w < 600;
-  const isTiny   = w < 400;
-  const pad      = isTiny ? "16px 14px 18px" : isNarrow ? "18px 18px 20px" : "24px 28px 24px";
-  const padLeft  = isTiny ? 18 : isNarrow ? 22 : 34;
-
-  const metricBox = (icon, label, value, sub, accent) => (
-    <div style={{
-      background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.13)",
-      borderRadius:14, padding:isTiny?"12px 13px":"14px 16px",
-      display:"flex", flexDirection:"column", gap:5, minWidth:0,
-    }}>
-      <div style={{display:"flex",alignItems:"center",gap:7,minWidth:0}}>
-        <span style={{width:24,height:24,borderRadius:7,background:accent||"rgba(255,255,255,0.18)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{icon}</span>
-        <span style={{fontFamily:MONO,fontSize:9.5,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(255,255,255,0.72)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label}</span>
-      </div>
-      <div style={{fontWeight:900,fontSize:isTiny?20:isNarrow?23:26,letterSpacing:"-0.03em",color:"#FFFFFF",lineHeight:1.05,wordBreak:"break-word"}}>{value}</div>
-      {sub&&<div style={{fontFamily:MONO,fontSize:9.5,color:"rgba(255,255,255,0.55)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sub}</div>}
-    </div>
-  );
-
-  return (
-    <div style={{
-      position:"relative", overflow:"hidden", borderRadius:20, marginBottom:16,
-      background:`linear-gradient(135deg, ${C.grey} 0%, #15151a 40%, ${C.magenta} 150%)`,
-      boxShadow:t.shadow3, border:"1px solid rgba(255,255,255,0.10)",
-    }}>
-      {/* brand color accent bar on the left */}
-      <div style={{position:"absolute",top:0,bottom:0,left:0,width:6,background:`linear-gradient(180deg,${C.yellow},${C.teal},${C.magenta})`}}/>
-      {/* decorative transparent circle */}
-      <div style={{position:"absolute",right:-50,top:-50,width:220,height:220,borderRadius:"50%",background:"radial-gradient(circle,rgba(255,203,5,0.16),transparent 70%)",pointerEvents:"none"}}/>
-
-      <div style={{padding:pad,paddingLeft:padLeft,position:"relative",zIndex:1}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6,flexWrap:"wrap"}}>
-          <span style={{width:13,height:13,borderRadius:4,background:C.yellow,display:"inline-block",boxShadow:`0 0 12px ${C.yellow}`,flexShrink:0}}/>
-          <span style={{fontWeight:900,fontSize:isNarrow?17:22,letterSpacing:"-0.02em",color:"#FFFFFF"}}>GRAND TOTAL</span>
-          <span style={{fontFamily:MONO,fontSize:9.5,letterSpacing:"0.12em",textTransform:"uppercase",color:"rgba(255,255,255,0.62)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:99,padding:"3px 10px"}}>
-            {isAg?"Agency Prepaid":"Partner Prepaid"}
-          </span>
-        </div>
-        <div style={{fontFamily:MONO,fontSize:10.5,color:"rgba(255,255,255,0.55)",marginBottom:16,letterSpacing:"0.03em"}}>
-          {monthsCount} active month{monthsCount!==1?"s":""} · {groupCount} groups · {grand.n.toLocaleString()} records
-        </div>
-
-        <div style={{display:"grid",gridTemplateColumns:isNarrow?"repeat(2,1fr)":"repeat(4,1fr)",gap:isTiny?9:12}}>
-          {metricBox(
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#1a1a1d" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,
-            "Total Amount", fmtMoney(grand.amt), isTiny?null:fmtMoney(grand.amt,false), C.yellow
-          )}
-          {metricBox(
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>,
-            "Total Transactions", grand.n.toLocaleString(), `${grand.po.toLocaleString()} POs issued`, C.teal
-          )}
-          {metricBox(
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
-            isAg?"Total Agencies":"Total Partners", partnerCount.toLocaleString(), "unique entities", C.magenta
-          )}
-          {metricBox(
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#1a1a1d" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>,
-            "Bank Cleared", `${clrPct}%`, `${grand.clr.toLocaleString()} / ${grand.n.toLocaleString()} records`, clrPct>=80?C.teal:clrPct>=50?C.yellow:C.red
-          )}
-        </div>
-
-        {/* milestone progress bars */}
-        <div style={{display:"grid",gridTemplateColumns:isNarrow?"1fr":"repeat(3,1fr)",gap:isNarrow?12:14,marginTop:16}}>
-          {[
-            {l:"Invoice Sub.", v:invPct, c:C.yellow, desc:"Submitted to Coupa · AP verification"},
-            {l:"CLV", v:clvPct, c:C.teal, desc:"Checklist Verification · Finance approved"},
-            {l:"Bank Cleared", v:clrPct, c:"#7ee8e0", desc:"Fund transfer completed (3 WD)"},
-          ].map((m,i)=>(
-            <div key={i}>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:5,fontFamily:MONO,fontSize:10,color:"rgba(255,255,255,0.7)"}}>
-                <span style={{textTransform:"uppercase",letterSpacing:"0.08em"}}>{m.l}</span>
-                <span style={{fontWeight:700,color:"#fff"}}>{m.v}%</span>
-              </div>
-              <div style={{height:8,borderRadius:5,background:"rgba(255,255,255,0.14)",overflow:"hidden"}}>
-                <div style={{height:"100%",width:`${m.v}%`,background:m.c,borderRadius:5,transition:"width .5s"}}/>
-              </div>
-              <div style={{marginTop:6,fontFamily:MONO,fontSize:9.5,lineHeight:1.45,color:"rgba(255,255,255,0.5)"}}>{m.desc}</div>
-            </div>
-          ))}
-        </div>
-      </div>
     </div>
   );
 }
@@ -1724,7 +1462,7 @@ function DashScreen(props) {
           <h1 style={{fontWeight:800,fontSize:"clamp(1.6rem,3.5vw,2.4rem)",letterSpacing:"-0.03em",color:t.ink,margin:"0 0 8px",lineHeight:1.04}}>
             Payout Tracker <em style={{fontStyle:"italic",color:C.magenta}}>Sumatera</em>
           </h1>
-          <p style={{color:t.muted,fontSize:14,margin:0,lineHeight:1.6}}>PO flow: PO → Invoice → CLV → Bank Cleared · Direct Invoice: Invoice → AP Verified → Bank Cleared · Partner &amp; Agency Prepaid</p>
+          <p style={{color:t.muted,fontSize:14,margin:0,lineHeight:1.6}}>PO &amp; Direct Invoice payouts · Partner &amp; Agency Prepaid</p>
           {(regionFilter || filterMpxType) && (
             <div style={{display:"inline-flex",alignItems:"center",gap:8,marginTop:10,padding:"5px 12px",borderRadius:8,background:t.surf2,border:`1px solid ${t.line}`,fontSize:12,color:t.muted,flexWrap:"wrap"}}>
               <span style={{width:7,height:7,borderRadius:"50%",background:C.teal,flexShrink:0}}/>
@@ -1889,108 +1627,9 @@ function DashScreen(props) {
   );
 }
 
-function DashTab(props) {
-  const { t, w, grand, grandPartnerCount, filtAgg, filtRaw, src, flowSel, funnelStages, trendSeries, donutPieces, heatData, heatMetric, setHeatMetric, bnResults, topPartners, sortedMonths, collapsed, setCollapsed, tblSort, setTblSort, funnelExp, setFunnelExp, donutExp, setDonutExp, bnExp, setBnExp, tpExp, setTpExp, exportSummary } = props;
-  const isAg = src==="agency";
-  const ins = useMemo(()=>computeInsights(filtRaw, isAg),[filtRaw,isAg]);
-  const noteItems = [
-    {l:"Data Source",   txt:`SAP & Web Coupa · PO flow ${isAg?"Agency SLA 2/2/2/3":"Partner SLA 2/1/2/2/3"} WD · Direct Invoice SLA 4/5 WD`, c:C.teal},
-    {l:"Flow",          txt:"Since Coupa go-live (11 Oct 2026) Requisition/PO is optional: Direct Invoice rows skip Req & PO", c:C.pink},
-    {l:"Invoice Sub.",  txt:"Submitted to Coupa · AP verification",                                                        c:C.yellow},
-    {l:"CLV / AP Verified", txt:"Cleared Voucher · Finance approved (Clv Date)",                                         c:C.magenta},
-    {l:"Bank Cleared",  txt:"Fund transfer completed (3 WD)",                                                               c:C.tealD},
-  ];
-  return (
-    <>
-      {/* Grand Total Banner — hero summary */}
-      <GrandTotalBanner grand={grand} partnerCount={grandPartnerCount} monthsCount={unique(filtAgg.map(r=>r.month)).length} groupCount={filtAgg.length} isAg={isAg} w={w} t={t}/>
-      <KpiRow ins={ins} w={w} t={t}/>
-
-      <div style={{display:"grid",gridTemplateColumns:w>=1000?"1.05fr 1fr":"1fr",gap:14,marginBottom:14}}>
-        <Card t={t} pad={false}>
-          <CardHead title="Completion Funnel" accent={C.teal} sub={`${isAg?"Agency":"Partner"} milestones · ${flowSel===FLOW_PO?"PO flow":flowSel===FLOW_DI?"Direct Invoice flow":"all flows (from Invoice Submitted)"} · click "pending" badge to view records`} t={t}/>
-          <div style={{padding:20,display:"flex",gap:18,alignItems:"flex-start",flexWrap:"wrap"}}>
-            <div style={{flexShrink:0}}>
-              {(()=>{
-                const W=190,H=Math.max(110,funnelStages.length*43),pad=5,sH=(H-pad*2)/funnelStages.length;
-                const maxV=grand.n||1;
-                return <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{display:"block"}} role="img" aria-label="Milestone funnel">{funnelStages.map((s,i)=>{ const w1=(s.val/maxV)*(W-12); const nv=funnelStages[i+1]?funnelStages[i+1].val:s.val; const w2=(nv/maxV)*(W-12); const x1a=(W-w1)/2,x1b=x1a+w1,x2a=(W-w2)/2,x2b=x2a+w2,y1=pad+i*sH,y2=y1+sH-1; const darkTxt=s.color===C.yellow||s.color==="#FFCB05"; return <g key={s.key}><path d={`M${x1a},${y1} L${x1b},${y1} L${x2b},${y2} L${x2a},${y2} Z`} fill={s.color} opacity={.95}/><text x={W/2} y={y1+sH/2+4} textAnchor="middle" fill={darkTxt?"#1a1a1a":"#fff"} fontSize={10.5} fontWeight="700" fontFamily="inherit">{s.val.toLocaleString()}</text></g>; })}</svg>;
-              })()}
-            </div>
-            <div style={{flex:1,minWidth:220}}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:`linear-gradient(90deg,${C.red},${C.magenta})`,color:"#fff",borderRadius:10,padding:"9px 14px",marginBottom:10,fontSize:13,fontWeight:700}}><span>Total Records</span><span style={{fontFamily:MONO,fontSize:16,fontWeight:600}}>{grand.n.toLocaleString()}</span></div>
-              {funnelStages.map((s,i)=>{ const prev=i>0?funnelStages[i-1]:null; const drop=(prev?prev.val:grand.n)-s.val; return <FunnelRowItem key={s.key} s={s} prevKey={prev?prev.key:null} drop={drop} isExp={funnelExp===s.key} filtRaw={filtRaw} grand={grand} onToggle={()=>setFunnelExp(k=>k===s.key?null:s.key)} t={t}/>; })}
-            </div>
-          </div>
-        </Card>
-        <Card t={t} pad={false}>
-          <CardHead title="Status Distribution" accent={C.magenta} sub="Click a status to view records" t={t}/>
-          <div style={{padding:20}}>
-            <DonutChart pieces={donutPieces} t={t} size={140}/>
-            <div style={{marginTop:14,display:"flex",flexDirection:"column",gap:5}}>
-              {donutPieces.map((p,i)=><DonutRow key={i} p={p} total={donutPieces.reduce((a,b)=>a+b.v,0)} isExp={donutExp===p.label} filtRaw={filtRaw} onToggle={()=>setDonutExp(e=>e===p.label?null:p.label)} t={t}/>)}
-            </div>
-          </div>
-        </Card>
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:w>=1000?"1fr 1fr":"1fr",gap:14,marginBottom:14}}>
-        <Card t={t} pad={false}>
-          <CardHead title="Monthly Trends" accent={C.yellow} sub="% Invoice & % Bank Cleared per month" t={t}/>
-          <div style={{padding:20}}>
-            <BarChart series={trendSeries} t={t}/>
-            <div style={{display:"flex",gap:16,justifyContent:"center",marginTop:10,flexWrap:"wrap",fontSize:12,fontWeight:600}}>
-              <span style={{display:"flex",alignItems:"center",gap:6,color:t.ink}}><span style={{width:12,height:12,background:C.yellow,borderRadius:3,display:"inline-block"}}/> % Invoice</span>
-              <span style={{display:"flex",alignItems:"center",gap:6,color:t.ink}}><span style={{width:12,height:12,background:C.teal,borderRadius:3,display:"inline-block"}}/> % Cleared</span>
-            </div>
-          </div>
-        </Card>
-        <Card t={t} pad={false}>
-          <CardHead title="Completion Heatmap" accent={C.magenta} sub={`Month × ${isAg?"Agency":"Partner"} Type`} t={t}
-            right={<div style={{display:"flex",gap:5,marginTop:8,flexWrap:"wrap"}}>{[{k:"inv",l:"Invoice",ac:C.yellow,dark:true},{k:"clv",l:"CLV",ac:C.tealD},{k:"clr",l:"Clearing",ac:C.teal}].map(m=><HeatBtn key={m.k} m={m} active={heatMetric===m.k} onClick={()=>setHeatMetric(m.k)} t={t}/>)}</div>}/>
-          <div style={{padding:20}}>
-            <div style={{overflowX:"auto"}}>
-              <table style={{borderCollapse:"separate",borderSpacing:3,minWidth:320,fontSize:12,width:"100%"}}>
-                <thead><tr><th style={{fontFamily:MONO,fontSize:9.5,color:t.muted,textAlign:"left",padding:"4px 6px",textTransform:"uppercase",letterSpacing:"0.1em",fontWeight:500}}>Month</th>{heatData.ptypes.map(p=><th key={p} style={{fontFamily:MONO,fontSize:9.5,color:t.muted,textAlign:"center",padding:"4px 6px",textTransform:"uppercase",letterSpacing:"0.1em",fontWeight:500}}>{p}</th>)}</tr></thead>
-                <tbody>{heatData.months.map(m=><tr key={m}><td style={{fontFamily:MONO,fontSize:11,fontWeight:600,color:t.ink,padding:"3px 6px",whiteSpace:"nowrap"}}>{m}</td>{heatData.ptypes.map(p=>{ const c=heatData.cells[m+"\x00"+p]; if(!c)return <td key={p}><div style={{borderRadius:8,padding:"9px 5px",textAlign:"center",background:t.surf3,color:t.muted2,fontFamily:MONO,fontSize:11}}>—</div></td>; const v=c[heatMetric]||0,pp=pct(v,c.n),bg=heatClr(pp),light=bg==="#FFCB05"||bg===C.yellow; return <td key={p} title={`${m}·${p}: ${v}/${c.n} (${pp}%)`}><HeatCell bg={bg} light={light} pp={pp} v={v} n={c.n}/></td>; })}</tr>)}</tbody>
-              </table>
-            </div>
-            <div style={{display:"flex",alignItems:"center",gap:7,marginTop:10,fontFamily:MONO,fontSize:10,color:t.muted,flexWrap:"wrap"}}>
-              Scale: <div style={{display:"flex",gap:2}}>{[5,25,50,70,85,97].map(p=><span key={p} style={{width:20,height:11,borderRadius:3,background:heatClr(p),display:"block"}}/>)}</div> 0% → 100%
-            </div>
-          </div>
-        </Card>
-      </div>
-      {filtRaw.length>0&&(
-        <div style={{display:"grid",gridTemplateColumns:w>=1000?"1fr 1fr":"1fr",gap:14,marginBottom:14}}>
-          <Card t={t} pad={false}>
-            <CardHead title="SLA Bottleneck Analysis" accent={C.red} sub={`${flowSel===FLOW_DI?"":`PO ${isAg?"Agency 2/2/2/3":"Partner 2/1/2/2/3"}`}${flowSel==="all"?" · ":""}${flowSel===FLOW_PO?"":"Direct Invoice 4/5"} WD (Working Days) · each step counts its own flow only`} t={t}/>
-            <div style={{padding:20}}>
-              <div style={{fontFamily:MONO,fontSize:10,color:t.muted,padding:"6px 12px",background:t.surf2,borderRadius:9,marginBottom:14,borderLeft:`3px solid ${C.teal}`}}><strong style={{color:t.ink,fontSize:11}}>{unique(filtRaw.map(r=>gstr(r,["program date","month"]))).length} month{unique(filtRaw.map(r=>gstr(r,["program date","month"]))).length!==1?"s":""}</strong>{" · "}<strong style={{color:t.ink,fontSize:11}}>{filtRaw.length.toLocaleString()}</strong> records</div>
-              <div style={{display:"flex",flexDirection:"column",gap:9}}>{bnResults.map(r=><BnRow key={r.key} r={r} showFlow={flowSel==="all"} isExp={bnExp===r.key} onToggle={()=>r.n>0&&setBnExp(e=>e===r.key?null:r.key)} t={t}/>)}</div>
-              <div style={{display:"flex",gap:12,marginTop:12,padding:"8px 12px",background:t.surf2,borderRadius:9,border:`1px solid ${t.line}`,flexWrap:"wrap",fontFamily:MONO,fontSize:10,color:t.muted,textTransform:"uppercase",letterSpacing:"0.06em"}}>{[{c:t.good,l:"Within SLA"},{c:t.warn,l:"Approaching SLA"},{c:t.bad,l:"Overdue"}].map(x=><span key={x.l} style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,borderRadius:3,background:x.c}}/>{x.l}</span>)}</div>
-            </div>
-          </Card>
-          <Card t={t} pad={false}>
-            <CardHead title={isAg?"Top Agencies":"Top Partners"} accent={C.magenta} sub="By total amount · click to view all programs" t={t}/>
-            <div style={{padding:20}}>
-              {topPartners.length===0?<div style={{textAlign:"center",color:t.muted,padding:"2rem",fontFamily:MONO,fontSize:12}}>No data available</div>:<div style={{display:"flex",flexDirection:"column",gap:6}}>{topPartners.map((p,i)=><TpRow key={i} p={p} i={i} maxAmt={topPartners[0]?.amt||1} isExp={tpExp===p.name} onToggle={()=>setTpExp(e=>e===p.name?null:p.name)} t={t}/>)}</div>}
-            </div>
-          </Card>
-        </div>
-      )}
-      {filtRaw.length>0&&<InsightSections ins={ins} isAg={isAg} flowSel={flowSel} w={w} t={t}/>}
-      <SummaryTable t={t} w={w} filtAgg={filtAgg} grand={grand} grandPartnerCount={grandPartnerCount} sortedMonths={sortedMonths} collapsed={collapsed} setCollapsed={setCollapsed} tblSort={tblSort} setTblSort={setTblSort} isAg={isAg} exportSummary={exportSummary}/>
-      <Card t={t} pad={false} style={{marginBottom:14}}>
-        <div style={{padding:"13px 20px",fontWeight:700,fontSize:13.5,letterSpacing:"-0.01em",borderBottom:`1px solid ${t.line}`,color:t.ink,background:t.surf2}}>Data References &amp; Remarks</div>
-        <div style={{display:"grid",gridTemplateColumns:w>=900?"repeat(5,1fr)":w>=600?"repeat(2,1fr)":"1fr",gap:12,padding:16}}>{noteItems.map((n,i)=><NoteCard key={i} n={n} t={t}/>)}</div>
-      </Card>
-    </>
-  );
-}
-
 /* ─────────────────────────────────────────────────────────────────────
-   INSIGHTS — KPI, outstanding & aging, upcoming payments, SLA compliance,
-   PO vs Direct Invoice, per Partner/Agency, Accrual Agency.
+   INSIGHTS — KPI cards, Outstanding (aging + due this/next week), Partners,
+   Flow Comparison, Accrual Agency.
    Semua dihitung sekali dari filtRaw (sudah ikut filter Flow/Month/Entity/dst).
    ───────────────────────────────────────────────────────────────────── */
 const DAY = 86400000;
@@ -2008,57 +1647,6 @@ const SLA_COMPLIANCE = [
   { key:"ap_clr", label:"CLV / AP Verified → Bank Clearing", from:H_CLV, to:H_CLR, sla:{ [FLOW_PO]:3, [FLOW_DI]:5 } },
 ];
 const stripCat = (s) => String(s||"").toUpperCase().replace(/[^A-Z0-9]/g,"");
-
-function computeInsights(rows, isAg) {
-  const today = dayStart(new Date());
-  const wk0 = new Date(today.getTime() - ((today.getDay()+6)%7)*DAY); // Senin minggu ini
-  const wk1 = new Date(wk0.getTime()+7*DAY), wk2 = new Date(wk0.getTime()+14*DAY);
-  const k = { total:0, paid:0, out:0, outN:0, notSub:0, notSubAmt:0, cycSum:0, cycN:0, n:rows.length };
-  const buckets = [
-    { key:"b0",  label:"0–14 days",  n:0, amt:0 },
-    { key:"b15", label:"15–30 days", n:0, amt:0 },
-    { key:"b30", label:">30 days",   n:0, amt:0 },
-    { key:"nod", label:"No invoice date", n:0, amt:0 },
-  ];
-  const aging = [];
-  const up = { this:{ n:0, amt:0, rows:[] }, next:{ n:0, amt:0, rows:[] } };
-  const slaC = SLA_COMPLIANCE.map(s=>({ ...s, [FLOW_PO]:{n:0,ok:0}, [FLOW_DI]:{n:0,ok:0} }));
-  const fl = { [FLOW_PO]:{n:0,amt:0,paid:0,out:0,cycSum:0,cycN:0}, [FLOW_DI]:{n:0,amt:0,paid:0,out:0,cycSum:0,cycN:0} };
-  const owners = {};
-  rows.forEach(r=>{
-    const amt = gnum(r,["amount"]), st = rowStatus(r), flow = rowFlow(r), name = ownerName(r) || "—";
-    const invV = gcell(r,H_INV), clrV = gcell(r,H_CLR);
-    const paid = isPaidStatus(st), proc = isProcessStatus(st);
-    const f = fl[flow] || fl[FLOW_PO];
-    k.total += amt; f.n++; f.amt += amt;
-    if (paid) { k.paid += amt; f.paid += amt; }
-    if (proc) { k.out += amt; k.outN++; f.out += amt; }
-    if (isNotSubStatus(st)) { k.notSub++; k.notSubAmt += amt; }
-    const cyc = workDaysBetween(invV, clrV);
-    if (cyc!=null) { k.cycSum += cyc; k.cycN++; f.cycSum += cyc; f.cycN++; }
-    if (!owners[name]) owners[name] = { name, total:0, paid:0, out:0, n:0 };
-    const o = owners[name]; o.total += amt; o.n++; if (paid) o.paid += amt; if (proc) o.out += amt;
-    if (proc) {
-      const d = toDate(invV);
-      const days = d ? Math.max(0, Math.round((today - dayStart(d))/DAY)) : null;
-      const b = days==null ? buckets[3] : days<=14 ? buckets[0] : days<=30 ? buckets[1] : buckets[2];
-      b.n++; b.amt += amt;
-      aging.push({ name, title:gstr(r,["project title"])||"—", ref:refNo(r), flow, amt, days, inv:d });
-    }
-    if (!paid && !clrV) {
-      const est = toDate(gcell(r,H_EST));
-      if (est) {
-        const e = dayStart(est);
-        const slot = e>=wk0 && e<wk1 ? up.this : e>=wk1 && e<wk2 ? up.next : null;
-        if (slot) { slot.n++; slot.amt += amt; slot.rows.push({ name, title:gstr(r,["project title"])||"—", ref:refNo(r), flow, amt, est:e, status:st }); }
-      }
-    }
-    slaC.forEach(s=>{ const wd = workDaysBetween(gcell(r,s.from), gcell(r,s.to)); if (wd==null) return; const c = s[flow]; if (!c) return; c.n++; if (wd<=s.sla[flow]) c.ok++; });
-  });
-  aging.sort((a,b)=>(b.days??-1)-(a.days??-1));
-  up.this.rows.sort((a,b)=>a.est-b.est); up.next.rows.sort((a,b)=>a.est-b.est);
-  return { k, buckets, aging, up, slaC, fl, owners:Object.values(owners), wk0, wk1, wk2, accrual: isAg ? computeAccrual(rows) : null };
-}
 
 // Accrual Agency: actual per Agency × Program Type × bulan; bulan kosong = rata-rata bulan terisi
 // (kecuali kategori non-accrual), agency pengecualian di-skip.
@@ -2098,373 +1686,443 @@ function FlowBadge({ flow, t }) {
   return <span style={{display:"inline-flex",padding:"2px 7px",borderRadius:6,fontFamily:MONO,fontSize:9.5,fontWeight:600,letterSpacing:"0.04em",whiteSpace:"nowrap",background:di?`${C.yellow}22`:`${C.teal}18`,color:di?t.warnDark:t.goodDark,border:`1px solid ${di?`${C.yellow}55`:`${C.teal}40`}`}}>{di?"Direct Inv":"PO"}</span>;
 }
 
-function KpiTile({ label, value, sub, accent, t }) {
-  return (
-    <div style={{background:t.surf,border:`1px solid ${t.line}`,borderRadius:16,padding:"14px 16px",boxShadow:t.shadow1,minWidth:0,borderTop:`3px solid ${accent}`}}>
-      <div style={{fontFamily:MONO,fontSize:9.5,letterSpacing:"0.1em",textTransform:"uppercase",color:t.muted,marginBottom:6,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label}</div>
-      <div style={{fontWeight:800,fontSize:22,letterSpacing:"-0.03em",color:t.ink,lineHeight:1.1,wordBreak:"break-word"}}>{value}</div>
-      {sub&&<div style={{fontFamily:MONO,fontSize:10,color:t.muted,marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sub}</div>}
-    </div>
-  );
-}
-
-function KpiRow({ ins, w, t }) {
-  const { k } = ins;
-  const avg = k.cycN ? (k.cycSum/k.cycN).toFixed(1) : "—";
-  return (
-    <div style={{display:"grid",gridTemplateColumns:w>=1100?"repeat(5,1fr)":w>=640?"repeat(3,1fr)":"repeat(2,1fr)",gap:12,marginBottom:14}}>
-      <KpiTile t={t} label="Total Payout" value={fmtMoney(k.total)} sub={`${k.n.toLocaleString()} records`} accent={C.yellow}/>
-      <KpiTile t={t} label="Paid" value={fmtMoney(k.paid)} sub={`${pct(k.paid,k.total)}% of amount`} accent={C.teal}/>
-      <KpiTile t={t} label="Outstanding" value={fmtMoney(k.out)} sub={`${k.outN.toLocaleString()} in Payment Process`} accent={C.magenta}/>
-      <KpiTile t={t} label="Invoice Not Submitted" value={k.notSub.toLocaleString()} sub={fmtMoney(k.notSubAmt)} accent={C.red}/>
-      <KpiTile t={t} label="Avg Invoice → Clearing" value={avg==="—"?avg:`${avg} WD`} sub={`n=${k.cycN.toLocaleString()} cleared`} accent={C.tealDp}/>
-    </div>
-  );
-}
-
 const thS = (t, left) => ({position:"sticky",top:0,zIndex:1,fontFamily:MONO,fontSize:10,letterSpacing:"0.08em",textTransform:"uppercase",color:t.muted,fontWeight:500,background:t.surf2,padding:"8px 9px",textAlign:left?"left":"right",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap"});
 const tdS = (t, left) => ({padding:"7px 9px",textAlign:left?"left":"right",borderBottom:`1px solid ${t.line}`,fontSize:11.5,color:t.ink2,whiteSpace:"nowrap",maxWidth:left?240:undefined,overflow:"hidden",textOverflow:"ellipsis"});
 const EmptyNote = ({ t, children }) => <div style={{textAlign:"center",color:t.muted,padding:"1.5rem",fontFamily:MONO,fontSize:12}}>{children}</div>;
 
-function AgingCard({ ins, isAg, t }) {
-  const { buckets, aging } = ins;
-  const colors = [C.teal, C.yellow, C.red, C.grey];
-  const maxN = Math.max(1, ...buckets.map(b=>b.n));
-  return (
-    <Card t={t} pad={false}>
-      <CardHead title="Outstanding & Aging" accent={C.magenta} sub={`Status = Payment Process · aging = today − Invoice Submission · ${aging.length.toLocaleString()} records`} t={t}/>
-      <div style={{padding:20}}>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10,marginBottom:14}}>
-          {buckets.filter(b=>b.key!=="nod"||b.n>0).map((b,i)=>(
-            <div key={b.key} style={{background:t.surf2,border:`1px solid ${t.line}`,borderLeft:`3px solid ${colors[i]}`,borderRadius:12,padding:"10px 12px"}}>
-              <div style={{fontFamily:MONO,fontSize:9.5,letterSpacing:"0.1em",textTransform:"uppercase",color:t.muted}}>{b.label}</div>
-              <div style={{fontWeight:800,fontSize:18,color:t.ink,marginTop:3}}>{b.n.toLocaleString()}</div>
-              <div style={{fontFamily:MONO,fontSize:10,color:t.muted}}>{fmtMoney(b.amt)}</div>
-              <div style={{height:4,borderRadius:2,background:t.surf4,marginTop:6,overflow:"hidden"}}><div style={{height:"100%",width:`${(b.n/maxN)*100}%`,background:colors[i]}}/></div>
-            </div>
-          ))}
-        </div>
-        {aging.length===0 ? <EmptyNote t={t}>No outstanding payments</EmptyNote> : (
-          <div style={{maxHeight:320,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10}}>
-            <table style={{width:"100%",borderCollapse:"collapse",minWidth:620}}>
-              <thead><tr><th style={thS(t,true)}>{isAg?"Agency":"Partner"}</th><th style={thS(t,true)}>Project Title</th><th style={thS(t,true)}>PO / Invoice No.</th><th style={thS(t)}>Amount</th><th style={thS(t)}>Days</th></tr></thead>
-              <tbody>{aging.slice(0,200).map((a,i)=>(
-                <tr key={i}>
-                  <td style={tdS(t,true)} title={a.name}>{a.name}</td>
-                  <td style={tdS(t,true)} title={a.title}>{a.title}</td>
-                  <td style={tdS(t,true)}><span style={{fontFamily:MONO,fontSize:10.5,marginRight:6}}>{a.ref||"—"}</span><FlowBadge flow={a.flow} t={t}/></td>
-                  <td style={{...tdS(t),fontFamily:MONO}}>{fmtMoney(a.amt)}</td>
-                  <td style={{...tdS(t),fontFamily:MONO,fontWeight:700,color:a.days==null?t.muted:a.days>30?t.bad:a.days>14?t.warnDark:t.goodDark}}>{a.days==null?"—":`${a.days}d`}</td>
-                </tr>
-              ))}</tbody>
-            </table>
-          </div>
-        )}
-        {aging.length>200&&<div style={{fontFamily:MONO,fontSize:10,color:t.muted,marginTop:6}}>Showing the 200 oldest of {aging.length.toLocaleString()} — use filters or the Raw Data tab for the rest.</div>}
-      </div>
-    </Card>
-  );
+// Rupiah: ringkas (juta/miliar) untuk kartu, penuh untuk tabel
+function fmtRp(n) {
+  n = Number(n) || 0;
+  const a = Math.abs(n), f = (v,d=1) => v.toFixed(d).replace(".", ",");
+  if (a>=1e12) return "Rp "+f(n/1e12)+" T";
+  if (a>=1e9)  return "Rp "+f(n/1e9)+" M";
+  if (a>=1e6)  return "Rp "+f(n/1e6,0)+" jt";
+  return "Rp "+Math.round(n).toLocaleString("id-ID");
+}
+const fmtRpFull = (n) => "Rp "+Math.round(Number(n)||0).toLocaleString("id-ID");
+const pctClr = (p, t) => p>=80 ? { c:t.goodDark, bg:t.goodBg, bd:t.goodBd, dot:t.good } : p>=50 ? { c:t.warnDark, bg:t.warnBg, bd:t.warnBd, dot:t.warn } : { c:t.badDark, bg:t.badBg, bd:t.badBd, dot:t.bad };
+
+function computeInsights(rows, isAg) {
+  const today = dayStart(new Date());
+  const wk0 = new Date(today.getTime() - ((today.getDay()+6)%7)*DAY); // Senin minggu ini
+  const wk1 = new Date(wk0.getTime()+7*DAY), wk2 = new Date(wk0.getTime()+14*DAY);
+  const k = { total:0, n:rows.length, paid:0, paidN:0, out:0, outN:0, notSub:0, notSubAmt:0, cycSum:0, cycN:0 };
+  const out = [], due = { this:[], next:[] };
+  const newFlow = () => ({ n:0, amt:0, out:0, cycSum:0, cycN:0, slaN:0, slaOk:0 });
+  const fl = { [FLOW_PO]:newFlow(), [FLOW_DI]:newFlow() };
+  const owners = {};
+  rows.forEach(r=>{
+    const amt = gnum(r,["amount"]), st = rowStatus(r), flow = rowFlow(r), name = ownerName(r) || "—";
+    const invV = gcell(r,H_INV), clrV = gcell(r,H_CLR);
+    const paid = isPaidStatus(st), proc = isProcessStatus(st);
+    const f = fl[flow] || fl[FLOW_PO];
+    k.total += amt; f.n++; f.amt += amt;
+    if (paid) { k.paid += amt; k.paidN++; }
+    if (proc) { k.out += amt; k.outN++; f.out += amt; }
+    if (isNotSubStatus(st)) { k.notSub++; k.notSubAmt += amt; }
+    const cyc = workDaysBetween(invV, clrV);
+    if (cyc!=null) { k.cycSum += cyc; k.cycN++; f.cycSum += cyc; f.cycN++; }
+    SLA_COMPLIANCE.forEach(s=>{ const wd = workDaysBetween(gcell(r,s.from), gcell(r,s.to)); if (wd==null) return; f.slaN++; if (wd<=s.sla[flow]) f.slaOk++; });
+    if (!owners[name]) owners[name] = { name, total:0, paid:0, out:0, n:0 };
+    const o = owners[name]; o.total += amt; o.n++; if (paid) o.paid += amt; if (proc) o.out += amt;
+    if (!proc && (paid || clrV)) return;
+    const invD = toDate(invV), estD = toDate(gcell(r,H_EST));
+    const days = invD ? Math.max(0, Math.round((today - dayStart(invD))/DAY)) : null;
+    const item = { name, title:gstr(r,["project title"])||"—", ref:refNo(r), flow, amt, days, est:estD?dayStart(estD):null, status:st };
+    if (proc) { item.bucket = days==null ? "nod" : days<=14 ? "b0" : days<=30 ? "b15" : "b30"; out.push(item); }
+    if (item.est && !paid && !clrV) { if (item.est>=wk0 && item.est<wk1) due.this.push(item); else if (item.est>=wk1 && item.est<wk2) due.next.push(item); }
+  });
+  out.sort((a,b)=>(b.days??-1)-(a.days??-1));
+  due.this.sort((a,b)=>a.est-b.est); due.next.sort((a,b)=>a.est-b.est);
+  return { k, out, due, fl, owners:Object.values(owners), wk0, wk1, wk2, accrual: isAg ? computeAccrual(rows) : null };
 }
 
-function UpcomingCard({ ins, isAg, t }) {
-  const { up, wk0, wk1, wk2 } = ins;
-  const [sel, setSel] = useState("this");
-  const slot = up[sel];
-  const range = (a,b) => `${fmtDate(a)} – ${fmtDate(new Date(b.getTime()-DAY))}`;
+/* ── KPI: 4 kartu (nominal besar + jumlah kecil) ── */
+function KpiCards({ ins, partnerCount, monthsCount, isAg, w, t }) {
+  const { k } = ins;
+  const cards = [
+    { l:"Total Payout",          v:k.total,     n:k.n,      ac:C.yellow,  s:"records" },
+    { l:"Paid",                  v:k.paid,      n:k.paidN,  ac:C.teal,    s:`paid · ${pct(k.paid,k.total)}% of amount` },
+    { l:"Outstanding",           v:k.out,       n:k.outN,   ac:C.magenta, s:"in Payment Process" },
+    { l:"Invoice Not Submitted", v:k.notSubAmt, n:k.notSub, ac:C.red,     s:"waiting for invoice" },
+  ];
   return (
-    <Card t={t} pad={false}>
-      <CardHead title="Upcoming Payments" accent={C.teal} sub="Estimation Date this week & next week · unpaid, not yet cleared" t={t}/>
-      <div style={{padding:20}}>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
-          {[{k:"this",l:"This week",r:range(wk0,wk1)},{k:"next",l:"Next week",r:range(wk1,wk2)}].map(x=>{ const on=sel===x.k; return (
-            <button key={x.k} type="button" onClick={()=>setSel(x.k)} aria-pressed={on}
-              style={{textAlign:"left",fontFamily:"inherit",cursor:"pointer",background:on?`${C.teal}14`:t.surf2,border:`1px solid ${on?C.teal:t.line}`,borderRadius:12,padding:"10px 12px",color:t.ink}}>
-              <div style={{fontFamily:MONO,fontSize:9.5,letterSpacing:"0.1em",textTransform:"uppercase",color:on?C.tealD:t.muted}}>{x.l}</div>
-              <div style={{fontWeight:800,fontSize:18,marginTop:3}}>{up[x.k].n.toLocaleString()} <span style={{fontSize:12,fontWeight:600,color:t.muted}}>payments</span></div>
-              <div style={{fontFamily:MONO,fontSize:10,color:t.muted}}>{fmtMoney(up[x.k].amt)} · {x.r}</div>
-            </button>
-          ); })}
-        </div>
-        {slot.rows.length===0 ? <EmptyNote t={t}>No payments estimated for this period</EmptyNote> : (
-          <div style={{maxHeight:320,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10}}>
-            <table style={{width:"100%",borderCollapse:"collapse",minWidth:620}}>
-              <thead><tr><th style={thS(t,true)}>Est. Date</th><th style={thS(t,true)}>{isAg?"Agency":"Partner"}</th><th style={thS(t,true)}>Project Title</th><th style={thS(t,true)}>PO / Invoice No.</th><th style={thS(t)}>Amount</th></tr></thead>
-              <tbody>{slot.rows.slice(0,200).map((a,i)=>(
-                <tr key={i}>
-                  <td style={{...tdS(t,true),fontFamily:MONO}}>{fmtDate(a.est)}</td>
-                  <td style={tdS(t,true)} title={a.name}>{a.name}</td>
-                  <td style={tdS(t,true)} title={a.title}>{a.title}</td>
-                  <td style={tdS(t,true)}><span style={{fontFamily:MONO,fontSize:10.5,marginRight:6}}>{a.ref||"—"}</span><FlowBadge flow={a.flow} t={t}/></td>
-                  <td style={{...tdS(t),fontFamily:MONO}}>{fmtMoney(a.amt)}</td>
-                </tr>
-              ))}</tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </Card>
-  );
-}
-
-function SlaComplianceCard({ ins, flowSel, t }) {
-  const flows = flowSel==="all" ? [FLOW_PO, FLOW_DI] : [flowSel];
-  return (
-    <Card t={t} pad={false}>
-      <CardHead title="SLA Compliance" accent={C.red} sub="% of records completed within SLA (working days) · per flow" t={t}/>
-      <div style={{padding:20,display:"flex",flexDirection:"column",gap:10}}>
-        {ins.slaC.map(s=>(
-          <div key={s.key} style={{background:t.surf2,border:`1px solid ${t.line}`,borderRadius:12,padding:"11px 14px"}}>
-            <div style={{fontWeight:700,fontSize:13,color:t.ink,marginBottom:8}}>{s.label}</div>
-            <div style={{display:"grid",gridTemplateColumns:`repeat(${flows.length},1fr)`,gap:10}}>
-              {flows.map(f=>{ const c=s[f]; const p=pct(c.ok,c.n); const clr=!c.n?t.muted:p>=80?t.good:p>=50?t.warn:t.bad; return (
-                <div key={f}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:6,marginBottom:5,flexWrap:"wrap"}}>
-                    <span style={{display:"inline-flex",alignItems:"center",gap:6}}><FlowBadge flow={f} t={t}/><span style={{fontFamily:MONO,fontSize:10,color:t.muted}}>≤ {s.sla[f]} WD</span></span>
-                    <span style={{fontFamily:MONO,fontWeight:700,fontSize:14,color:clr}}>{c.n?`${p}%`:"—"}</span>
-                  </div>
-                  <div style={{height:7,borderRadius:4,background:t.surf4,overflow:"hidden"}}><div style={{height:"100%",width:`${c.n?p:0}%`,background:clr,borderRadius:4,transition:"width .4s"}}/></div>
-                  <div style={{fontFamily:MONO,fontSize:10,color:t.muted,marginTop:4}}>{c.ok.toLocaleString()} / {c.n.toLocaleString()} on time</div>
-                </div>
-              ); })}
-            </div>
+    <div style={{marginBottom:14}}>
+      <div style={{display:"grid",gridTemplateColumns:w>=900?"repeat(4,1fr)":"repeat(2,1fr)",gap:12}}>
+        {cards.map(c=>(
+          <div key={c.l} style={{background:t.surf,border:`1px solid ${t.line}`,borderTop:`3px solid ${c.ac}`,borderRadius:16,padding:w<480?"12px 13px":"14px 16px",boxShadow:t.shadow1,minWidth:0}}>
+            <div style={{fontFamily:MONO,fontSize:9.5,letterSpacing:"0.1em",textTransform:"uppercase",color:t.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.l}</div>
+            <div style={{fontWeight:800,fontSize:w<480?19:24,letterSpacing:"-0.03em",color:t.ink,lineHeight:1.15,marginTop:6}} title={fmtRpFull(c.v)}>{fmtRp(c.v)}</div>
+            <div style={{fontSize:12,color:t.muted,marginTop:3}}><strong style={{color:t.ink2}}>{c.n.toLocaleString()}</strong> {c.s}</div>
           </div>
         ))}
       </div>
-    </Card>
-  );
-}
-
-function FlowCompareCard({ ins, t }) {
-  const rows = [FLOW_PO, FLOW_DI].map(f=>({ f, ...ins.fl[f] }));
-  const totN = rows.reduce((a,r)=>a+r.n,0) || 1, totA = rows.reduce((a,r)=>a+r.amt,0) || 1;
-  return (
-    <Card t={t} pad={false}>
-      <CardHead title="PO vs Direct Invoice" accent={C.yellow} sub="Count, amount & cycle time per flow" t={t}/>
-      <div style={{padding:20,display:"flex",flexDirection:"column",gap:10}}>
-        {rows.map(r=>(
-          <div key={r.f} style={{background:t.surf2,border:`1px solid ${t.line}`,borderRadius:12,padding:"11px 14px"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,gap:8,flexWrap:"wrap"}}>
-              <span style={{display:"inline-flex",alignItems:"center",gap:8,fontWeight:700,fontSize:13,color:t.ink}}><FlowBadge flow={r.f} t={t}/>{r.f===FLOW_PO?"PO flow":"Direct Invoice flow"}</span>
-              <span style={{fontFamily:MONO,fontSize:10,color:t.muted}}>{pct(r.n,totN)}% of records · {pct(r.amt,totA)}% of amount</span>
-            </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
-              {[{l:"Records",v:r.n.toLocaleString()},{l:"Amount",v:fmtMoney(r.amt)},{l:"Outstanding",v:fmtMoney(r.out)},{l:"Avg Inv → Clr",v:r.cycN?`${(r.cycSum/r.cycN).toFixed(1)} WD`:"—"}].map(x=>(
-                <div key={x.l} style={{minWidth:0}}>
-                  <div style={{fontFamily:MONO,fontSize:9,letterSpacing:"0.08em",textTransform:"uppercase",color:t.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{x.l}</div>
-                  <div style={{fontWeight:700,fontSize:13.5,color:t.ink,fontFamily:MONO,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{x.v}</div>
-                </div>
-              ))}
-            </div>
-            <div style={{height:5,borderRadius:3,background:t.surf4,overflow:"hidden",marginTop:8}}><div style={{height:"100%",width:`${pct(r.amt,totA)}%`,background:r.f===FLOW_PO?C.teal:C.yellow}}/></div>
-          </div>
-        ))}
+      <div style={{fontFamily:MONO,fontSize:10.5,color:t.muted,marginTop:8,display:"flex",gap:12,flexWrap:"wrap"}}>
+        <span>Avg days to clear: <strong style={{color:t.ink}}>{k.cycN?`${(k.cycSum/k.cycN).toFixed(1)} WD`:"—"}</strong> (Invoice → Bank Cleared)</span>
+        <span>{partnerCount.toLocaleString()} {isAg?"agencies":"partners"} · {monthsCount} month{monthsCount!==1?"s":""}</span>
       </div>
-    </Card>
+    </div>
   );
 }
 
-function OwnerSummaryCard({ ins, isAg, t }) {
-  const [sort, setSort] = useState({ col:"total", dir:"desc" });
-  const cols = [{k:"name",l:isAg?"Agency":"Partner",left:true},{k:"total",l:"Total"},{k:"paid",l:"Paid"},{k:"out",l:"Outstanding"},{k:"n",l:"# Programs"}];
-  const list = useMemo(()=>{
-    const arr=[...ins.owners]; const {col,dir}=sort; const m=dir==="asc"?1:-1;
-    arr.sort((a,b)=>col==="name"?m*a.name.localeCompare(b.name):m*(a[col]-b[col]));
-    return arr;
-  },[ins.owners,sort]);
+/* ── SLA strip: rata-rata hari kerja vs target + % tepat waktu per step ── */
+function SlaStrip({ steps, showFlow, bnExp, setBnExp, t }) {
   return (
-    <Card t={t} pad={false} style={{marginBottom:14}}>
-      <CardHead title={isAg?"Per Agency Summary":"Per Partner Summary"} accent={C.magenta} sub={`${list.length.toLocaleString()} ${isAg?"agencies":"partners"} · click a column to sort`} t={t}/>
-      {list.length===0 ? <EmptyNote t={t}>No data available</EmptyNote> : (
-        <div style={{maxHeight:420,overflow:"auto"}}>
-          <table style={{width:"100%",borderCollapse:"collapse",minWidth:560}}>
-            <thead><tr>{cols.map(c=>{ const on=sort.col===c.k; return (
-              <th key={c.k} onClick={()=>setSort(s=>({col:c.k,dir:s.col===c.k&&s.dir==="desc"?"asc":"desc"}))} aria-sort={on?(sort.dir==="asc"?"ascending":"descending"):"none"}
-                style={{...thS(t,c.left),cursor:"pointer",color:on?C.teal:t.muted,fontWeight:on?700:500}}>{c.l}{on?(sort.dir==="asc"?" ▲":" ▼"):""}</th>
-            ); })}</tr></thead>
-            <tbody>{list.map((o,i)=>(
-              <tr key={o.name} style={{background:i%2===1?t.rowStripe:"transparent"}}>
-                <td style={{...tdS(t,true),fontWeight:600,color:t.ink}} title={o.name}>{o.name}</td>
-                <td style={{...tdS(t),fontFamily:MONO}}>{fmtMoney(o.total)}</td>
-                <td style={{...tdS(t),fontFamily:MONO,color:t.goodDark}}>{fmtMoney(o.paid)}</td>
-                <td style={{...tdS(t),fontFamily:MONO,color:o.out?t.warnDark:t.muted}}>{fmtMoney(o.out)}</td>
-                <td style={{...tdS(t),fontFamily:MONO}}>{o.n.toLocaleString()}</td>
-              </tr>
-            ))}</tbody>
-          </table>
-        </div>
-      )}
-    </Card>
+    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+      {steps.map(r=>{
+        const p = pct(r.ok, r.n), pc = pctClr(p, t), open = bnExp===r.key, can = r.n>0;
+        return (
+          <div key={r.key} style={{border:`1px solid ${open?C.magenta:t.line}`,borderRadius:10,background:t.surf2}}>
+            <div {...(can?kbd(()=>setBnExp(e=>e===r.key?null:r.key)):{})} onClick={can?()=>setBnExp(e=>e===r.key?null:r.key):undefined} aria-expanded={open}
+              style={{display:"grid",gridTemplateColumns:"1fr auto auto",alignItems:"center",gap:10,padding:"8px 11px",cursor:can?"pointer":"default"}}>
+              <div style={{minWidth:0,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                <span style={{fontWeight:600,fontSize:12.5,color:t.ink}}>{r.label}</span>
+                {showFlow&&<FlowBadge flow={r.flow} t={t}/>}
+              </div>
+              <span style={{fontFamily:MONO,fontSize:11.5,color:t.ink2,whiteSpace:"nowrap"}} title="Average working days vs SLA target">
+                {r.n?<><strong style={{color:r.avg<=r.sla?t.goodDark:t.badDark}}>{r.avg.toFixed(1)}</strong> / {r.sla} WD</>:"—"}
+              </span>
+              <span style={{display:"inline-flex",alignItems:"center",gap:5,minWidth:78,justifyContent:"center",padding:"3px 8px",borderRadius:99,fontFamily:MONO,fontSize:10.5,fontWeight:700,background:r.n?pc.bg:t.surf3,color:r.n?pc.c:t.muted,border:`1px solid ${r.n?pc.bd:t.line}`,whiteSpace:"nowrap"}} title={`${r.ok} of ${r.n} on time`}>
+                {r.n?<><span style={{width:6,height:6,borderRadius:"50%",background:pc.dot}}/>{p}% on time</>:"no data"}
+              </span>
+            </div>
+            {open&&r.details.length>0&&(
+              <div style={{borderTop:`1px solid ${t.line}`,maxHeight:220,overflowY:"auto",background:t.surf}}>
+                <div style={{padding:"6px 12px",fontFamily:MONO,fontSize:9.5,color:t.bad,textTransform:"uppercase",letterSpacing:"0.08em"}}>Longest {Math.min(r.details.length,20)} of {r.n}</div>
+                {r.details.slice(0,20).map((d,j)=><BnDetailRow key={j} d={d} t={t}/>)}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
-function AccrualCard({ acc, w, t }) {
-  const { months, list, tot } = acc;
-  const narrow = w<700;
-  return (
-    <Card t={t} pad={false} style={{marginBottom:14}}>
-      <CardHead title="Accrual Agency" accent={C.yellow}
-        sub={`Actual per Agency × Program Type × month · empty months estimated with the average of filled months (italic) · not accrued: SALARYUUCK, THR, INCENTIVE MEUGANG · excludes ADHITAMA MITRA NUSANTARA`} t={t}/>
-      {list.length===0||months.length===0 ? <EmptyNote t={t}>No agency data for the current filters</EmptyNote> : (
-        <div style={{maxHeight:480,overflow:"auto"}}>
-          <table style={{width:"100%",borderCollapse:"collapse",minWidth:narrow?Math.max(640,300+months.length*110):undefined}}>
-            <thead><tr>
-              <th style={thS(t,true)}>Agency</th><th style={thS(t,true)}>Program Type</th>
-              {months.map(m=><th key={m} style={thS(t)}>{ymLabel(m)}</th>)}
-              <th style={thS(t)}>Actual</th><th style={thS(t)}>Estimated</th>
-            </tr></thead>
-            <tbody>{list.map((g,i)=>(
-              <tr key={g.agency+"\x00"+g.prog} style={{background:i%2===1?t.rowStripe:"transparent"}}>
-                <td style={{...tdS(t,true),fontWeight:600,color:t.ink}} title={g.agency}>{g.agency}</td>
-                <td style={tdS(t,true)} title={g.prog}>{g.prog}{g.noAccrue&&<span style={{marginLeft:6,fontFamily:MONO,fontSize:9,color:t.muted}}>(no accrual)</span>}</td>
-                {months.map(m=>{ const c=g.cells[m]; return <td key={m} style={{...tdS(t),fontFamily:MONO,fontStyle:c?.est?"italic":"normal",color:c?.est?t.muted:t.ink2}}>{c?fmtMoney(c.v):"—"}</td>; })}
-                <td style={{...tdS(t),fontFamily:MONO,fontWeight:600,color:t.ink}}>{fmtMoney(g.act)}</td>
-                <td style={{...tdS(t),fontFamily:MONO,fontStyle:"italic",color:t.muted}}>{g.est?fmtMoney(g.est):"—"}</td>
-              </tr>
-            ))}</tbody>
-            <tfoot><tr>
-              <td colSpan={2} style={{...tdS(t,true),background:"#1E2128",color:"#fff",fontWeight:800,borderTop:`2px solid ${C.teal}`,position:"sticky",bottom:0}}>TOTAL (actual + estimated)</td>
-              {months.map(m=><td key={m} style={{...tdS(t),background:"#1E2128",color:"#fff",fontFamily:MONO,fontWeight:700,borderTop:`2px solid ${C.teal}`,position:"sticky",bottom:0}} title={`Actual ${fmtMoney(tot[m].act,false)} · Estimated ${fmtMoney(tot[m].est,false)}`}>{fmtMoney(tot[m].act+tot[m].est)}</td>)}
-              <td style={{...tdS(t),background:"#1E2128",color:"#fff",fontFamily:MONO,fontWeight:700,borderTop:`2px solid ${C.teal}`,position:"sticky",bottom:0}}>{fmtMoney(list.reduce((a,g)=>a+g.act,0))}</td>
-              <td style={{...tdS(t),background:"#1E2128",color:"#E8E8EE",fontFamily:MONO,fontStyle:"italic",borderTop:`2px solid ${C.teal}`,position:"sticky",bottom:0}}>{fmtMoney(list.reduce((a,g)=>a+g.est,0))}</td>
-            </tr></tfoot>
-          </table>
-        </div>
-      )}
-    </Card>
-  );
-}
-
-function InsightSections({ ins, isAg, flowSel, w, t }) {
-  const two = w>=1000 ? "1fr 1fr" : "1fr";
+function DashTab(props) {
+  const { t, w, grand, grandPartnerCount, filtAgg, filtRaw, src, flowSel, funnelStages, bnResults, funnelExp, setFunnelExp, bnExp, setBnExp } = props;
+  const isAg = src==="agency";
+  const ins = useMemo(()=>computeInsights(filtRaw, isAg),[filtRaw,isAg]);
+  const monthsCount = useMemo(()=>unique(filtAgg.map(r=>r.month)).length,[filtAgg]);
+  const flowLbl = flowSel===FLOW_PO?"PO flow":flowSel===FLOW_DI?"Direct Invoice flow":"All flows · starts at Invoice Submitted";
   return (
     <>
-      <div style={{display:"grid",gridTemplateColumns:two,gap:14,marginBottom:14}}>
-        <AgingCard ins={ins} isAg={isAg} t={t}/>
-        <UpcomingCard ins={ins} isAg={isAg} t={t}/>
+      <KpiCards ins={ins} partnerCount={grandPartnerCount} monthsCount={monthsCount} isAg={isAg} w={w} t={t}/>
+      <div style={{display:"grid",gridTemplateColumns:w>=1000?"1fr 1fr":"1fr",gap:14,marginBottom:14}}>
+        <Card t={t} pad={false}>
+          <CardHead title="Payment Progress" accent={C.teal} sub={`${flowLbl} · click "pending" to see records`} t={t}/>
+          <div style={{padding:18,display:"flex",gap:18,alignItems:"flex-start",flexWrap:"wrap"}}>
+            {w>=480&&<div style={{flexShrink:0}}>
+              {(()=>{
+                const W=150,H=Math.max(110,funnelStages.length*40),pad=4,sH=(H-pad*2)/funnelStages.length,maxV=grand.n||1;
+                return <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{display:"block"}} role="img" aria-label="Payment funnel">{funnelStages.map((s,i)=>{ const w1=(s.val/maxV)*(W-10); const nv=funnelStages[i+1]?funnelStages[i+1].val:s.val; const w2=(nv/maxV)*(W-10); const x1a=(W-w1)/2,x1b=x1a+w1,x2a=(W-w2)/2,x2b=x2a+w2,y1=pad+i*sH,y2=y1+sH-1; const darkTxt=s.color===C.yellow; return <g key={s.key}><path d={`M${x1a},${y1} L${x1b},${y1} L${x2b},${y2} L${x2a},${y2} Z`} fill={s.color} opacity={.95}/><text x={W/2} y={y1+sH/2+4} textAnchor="middle" fill={darkTxt?"#1a1a1a":"#fff"} fontSize={10.5} fontWeight="700" fontFamily="inherit">{pct(s.val,grand.n)}%</text></g>; })}</svg>;
+              })()}
+            </div>}
+            <div style={{flex:1,minWidth:200}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:t.muted,padding:"0 8px 6px"}}><span>Total records</span><strong style={{fontFamily:MONO,color:t.ink}}>{grand.n.toLocaleString()}</strong></div>
+              {funnelStages.map((s,i)=>{ const prev=i>0?funnelStages[i-1]:null; const drop=(prev?prev.val:grand.n)-s.val; return <FunnelRowItem key={s.key} s={s} prevKey={prev?prev.key:null} drop={drop} isExp={funnelExp===s.key} filtRaw={filtRaw} grand={grand} onToggle={()=>setFunnelExp(k=>k===s.key?null:s.key)} t={t}/>; })}
+            </div>
+          </div>
+        </Card>
+        <Card t={t} pad={false}>
+          <CardHead title="SLA by Step" accent={C.red} sub="Avg working days vs target · % on time · click a step for the longest cases" t={t}/>
+          <div style={{padding:18}}>
+            {filtRaw.length===0?<EmptyNote t={t}>No data available</EmptyNote>:<SlaStrip steps={bnResults} showFlow={flowSel==="all"} bnExp={bnExp} setBnExp={setBnExp} t={t}/>}
+            <div style={{display:"flex",gap:12,marginTop:10,flexWrap:"wrap",fontFamily:MONO,fontSize:9.5,color:t.muted}}>
+              {[{c:t.good,l:"≥80% on time"},{c:t.warn,l:"50–79%"},{c:t.bad,l:"<50%"}].map(x=><span key={x.l} style={{display:"inline-flex",alignItems:"center",gap:5}}><span style={{width:8,height:8,borderRadius:2,background:x.c}}/>{x.l}</span>)}
+            </div>
+          </div>
+        </Card>
       </div>
-      <div style={{display:"grid",gridTemplateColumns:two,gap:14,marginBottom:14}}>
-        <SlaComplianceCard ins={ins} flowSel={flowSel} t={t}/>
-        <FlowCompareCard ins={ins} t={t}/>
-      </div>
-      <OwnerSummaryCard ins={ins} isAg={isAg} t={t}/>
-      {isAg&&ins.accrual&&<AccrualCard acc={ins.accrual} w={w} t={t}/>}
+      <DetailsTabs {...props} ins={ins} isAg={isAg}/>
     </>
   );
 }
 
-function SummaryTable({ t, w, filtAgg, grand, grandPartnerCount, sortedMonths, collapsed, setCollapsed, tblSort, setTblSort, isAg, exportSummary }) {
-  const COLS = [
-    {k:"month",l:"Month",left:true},
-    {k:"entity",l:"Entity",left:true},
-    {k:"ptype",l:isAg?"Agency":"Partner Type",left:true},
-    {k:"prog",l:"Program",left:true},
-    {k:"flow",l:"Flow",left:true},
-    {k:"n",l:"#Rec"},
-    {k:"po",l:"PO"},
-    ...(!isAg?[{k:"surat",l:"Surat Pemberitahuan"}]:[]),
-    {k:"inv",l:"Invoice"},
-    {k:"clv",l:"CLV"},
-    {k:"clr",l:"Clearing"},
-    {k:"pInv",l:"% Inv"},
-    {k:"pClv",l:"% CLV"},
-    {k:"pClr",l:"% Clr"},
+/* ── Area detail bertab (default: Outstanding) ── */
+function DetailsTabs(props) {
+  const { t, w, ins, isAg, flowSel } = props;
+  const [tab, setTab] = useState("out");
+  const tabs = [
+    { id:"out",  label:"Outstanding", count:ins.out.length },
+    { id:"own",  label:isAg?"Agencies":"Partners", count:ins.owners.length },
+    { id:"mon",  label:"Monthly" },
+    { id:"flow", label:"Flow Comparison" },
+    ...(isAg?[{ id:"acc", label:"Accrual" }]:[]),
   ];
-  const colCount = COLS.length;
-  // Label mengikuti keadaan nyata: semua terbuka → "Collapse all", selain itu → "Expand all"
-  const allExpanded = sortedMonths.length>0 && sortedMonths.every(m=>!collapsed[m]);
-  const toggleAll = () => { const next={}; if(allExpanded) sortedMonths.forEach(m=>{next[m]=true;}); setCollapsed(next); };
-  const invPct = pct(grand.inv,grand.n), clvPct = pct(grand.clv,grand.n), clrPct = pct(grand.clr,grand.n);
-  const narrow = w<700;
-
+  const cur = tabs.some(x=>x.id===tab) ? tab : "out";
   return (
     <Card t={t} pad={false} style={{marginBottom:14}}>
-      <CardHead title="Monthly Summary" accent={C.teal}
-        sub={`${filtAgg.length} groups · ${sortedMonths.length} months · click month row to expand/collapse`}
-        t={t}
-        right={
-          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-            <Btn t={t} variant="ghost" sm onClick={toggleAll}>{allExpanded?"Collapse all":"Expand all"}</Btn>
-            <Btn t={t} variant="outline" sm onClick={()=>exportSummary("csv")}>CSV</Btn>
-          </div>
-        }/>
-      {narrow&&(
-        <div style={{padding:"7px 16px",fontFamily:MONO,fontSize:10,color:t.muted,background:t.surf2,borderBottom:`1px solid ${t.line}`,display:"flex",alignItems:"center",gap:6}}>
-          <span style={{fontSize:13}}>↔</span> Scroll horizontally to view all columns
+      <div style={{display:"flex",gap:22,padding:"0 20px",borderBottom:`1px solid ${t.line}`,background:t.surf2,overflowX:"auto"}} role="tablist">
+        {tabs.map(x=><TabBtn key={x.id} label={x.label} count={x.count} active={cur===x.id} onClick={()=>setTab(x.id)} t={t}/>)}
+      </div>
+      {cur==="out"  && <OutstandingTab ins={ins} isAg={isAg} w={w} t={t}/>}
+      {cur==="own"  && <PartnersTab ins={ins} isAg={isAg} w={w} t={t}/>}
+      {cur==="mon"  && <MonthlyTab {...props}/>}
+      {cur==="flow" && <FlowCompareTab ins={ins} flowSel={flowSel} t={t}/>}
+      {cur==="acc"  && isAg && <AccrualTab acc={ins.accrual} w={w} t={t}/>}
+    </Card>
+  );
+}
+
+function Chip({ active, onClick, children, t, tone }) {
+  const ac = tone || C.teal;
+  return <button type="button" onClick={onClick} aria-pressed={active} style={{fontFamily:"inherit",fontSize:12,fontWeight:600,padding:"5px 12px",borderRadius:99,cursor:"pointer",whiteSpace:"nowrap",border:`1px solid ${active?ac:t.line2}`,background:active?ac:t.surf,color:active?"#fff":t.ink2,transition:"all .15s"}}>{children}</button>;
+}
+
+function OutstandingTab({ ins, isAg, w, t }) {
+  const [view, setView] = useState("all"); // all | b0 | b15 | b30 | nod | this | next
+  const cnt = (b) => ins.out.filter(x=>x.bucket===b).length;
+  const rows = useMemo(()=>{
+    if (view==="this" || view==="next") return ins.due[view];
+    return view==="all" ? ins.out : ins.out.filter(x=>x.bucket===view);
+  },[ins,view]);
+  const amt = rows.reduce((a,r)=>a+r.amt,0);
+  const phone = w<640;
+  const isDue = view==="this" || view==="next";
+  const dayClr = (d) => d==null ? t.muted : d>30 ? t.bad : d>14 ? t.warnDark : t.goodDark;
+  return (
+    <div style={{padding:18}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:12}}>
+        <Chip t={t} active={view==="all"} onClick={()=>setView("all")}>All outstanding · {ins.out.length}</Chip>
+        <Chip t={t} active={view==="b0"} onClick={()=>setView("b0")}>0–14 days · {cnt("b0")}</Chip>
+        <Chip t={t} active={view==="b15"} onClick={()=>setView("b15")} tone={C.yellowD}>15–30 days · {cnt("b15")}</Chip>
+        <Chip t={t} active={view==="b30"} onClick={()=>setView("b30")} tone={C.red}>&gt;30 days · {cnt("b30")}</Chip>
+        {cnt("nod")>0&&<Chip t={t} active={view==="nod"} onClick={()=>setView("nod")} tone={C.grey}>No invoice date · {cnt("nod")}</Chip>}
+        <span style={{flex:"1 1 0"}}/>
+        <Chip t={t} active={view==="this"} onClick={()=>setView("this")} tone={C.magenta}>Due this week · {ins.due.this.length}</Chip>
+        <Chip t={t} active={view==="next"} onClick={()=>setView("next")} tone={C.magenta}>Due next week · {ins.due.next.length}</Chip>
+      </div>
+      <div style={{fontSize:12,color:t.muted,marginBottom:8}}>
+        {isDue
+          ? <>Unpaid records with Est. Pay Date {view==="this"?"this week":"next week"} ({fmtDate(view==="this"?ins.wk0:ins.wk1)} – {fmtDate(new Date((view==="this"?ins.wk1:ins.wk2).getTime()-DAY))})</>
+          : <>Status Payment Process · days since Invoice Submission · oldest first</>}
+        {" · "}<strong style={{color:t.ink}}>{rows.length.toLocaleString()}</strong> records · <strong style={{color:t.ink}}>{fmtRpFull(amt)}</strong>
+      </div>
+      {rows.length===0 ? <EmptyNote t={t}>{isDue?"No payments due in this period":"No outstanding payments"}</EmptyNote> : (
+        <div style={{maxHeight:420,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10}}>
+          <table style={{width:"100%",borderCollapse:"collapse"}}>
+            <thead><tr>
+              <th style={thS(t,true)}>{isAg?"Agency":"Partner"}</th>
+              {!phone&&<th style={thS(t,true)}>Project</th>}
+              {!phone&&<th style={thS(t,true)}>Ref No</th>}
+              <th style={thS(t)}>Amount</th>
+              <th style={thS(t)}>Days</th>
+              {!phone&&<th style={thS(t)}>Est. Pay Date</th>}
+            </tr></thead>
+            <tbody>{rows.slice(0,300).map((a,i)=>(
+              <tr key={i} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+                <td style={{...tdS(t,true),maxWidth:phone?150:180,color:t.ink,fontWeight:600}} title={`${a.name} · ${a.ref||"no ref"}`}>{a.name}</td>
+                {!phone&&<td style={{...tdS(t,true),maxWidth:w<1100?160:240}} title={a.title}>{a.title}</td>}
+                {!phone&&<td style={tdS(t,true)} title={a.flow}><span style={{fontFamily:MONO,fontSize:10.5,marginRight:6}}>{a.ref||"—"}</span><FlowBadge flow={a.flow} t={t}/></td>}
+                <td style={{...tdS(t),fontFamily:MONO}}>{fmtRpFull(a.amt)}</td>
+                <td style={{...tdS(t),fontFamily:MONO,fontWeight:700,color:dayClr(a.days)}}>{a.days==null?"—":a.days}</td>
+                {!phone&&<td style={{...tdS(t),fontFamily:MONO}}>{a.est?fmtDate(a.est):"—"}</td>}
+              </tr>
+            ))}</tbody>
+          </table>
         </div>
       )}
-      <div style={{overflowX:"auto"}}>
-        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:narrow?720:undefined}}>
-          <thead><tr>{COLS.map(c=><ThCell key={c.k} col={c} sortState={tblSort} setSort={setTblSort} t={t}/>)}</tr></thead>
+      {rows.length>300&&<div style={{fontFamily:MONO,fontSize:10,color:t.muted,marginTop:6}}>Showing 300 of {rows.length.toLocaleString()} — narrow the filters or use Raw Data for the rest.</div>}
+    </div>
+  );
+}
+
+function SortTh({ col, sort, setSort, left, children, t }) {
+  const on = sort.col===col;
+  return <th onClick={()=>setSort(s=>({col,dir:s.col===col&&s.dir==="desc"?"asc":"desc"}))} aria-sort={on?(sort.dir==="asc"?"ascending":"descending"):"none"} style={{...thS(t,left),cursor:"pointer",color:on?C.teal:t.muted,fontWeight:on?700:500}}>{children}{on?(sort.dir==="asc"?" ▲":" ▼"):""}</th>;
+}
+
+function PartnersTab({ ins, isAg, w, t }) {
+  const [sort, setSort] = useState({ col:"total", dir:"desc" });
+  const list = useMemo(()=>{
+    const arr = ins.owners.map(o=>({ ...o, pPaid: o.total ? o.paid/o.total*100 : 0 }));
+    const { col, dir } = sort, m = dir==="asc" ? 1 : -1;
+    arr.sort((a,b)=>col==="name" ? m*a.name.localeCompare(b.name) : m*(a[col]-b[col]));
+    return arr;
+  },[ins.owners,sort]);
+  const phone = w<640;
+  if (!list.length) return <EmptyNote t={t}>No data available</EmptyNote>;
+  return (
+    <div style={{maxHeight:460,overflow:"auto"}}>
+      <table style={{width:"100%",borderCollapse:"collapse"}}>
+        <thead><tr>
+          <SortTh col="name" left sort={sort} setSort={setSort} t={t}>{isAg?"Agency":"Partner"}</SortTh>
+          <SortTh col="total" sort={sort} setSort={setSort} t={t}>Total</SortTh>
+          {!phone&&<SortTh col="paid" sort={sort} setSort={setSort} t={t}>Paid</SortTh>}
+          <SortTh col="out" sort={sort} setSort={setSort} t={t}>Outstanding</SortTh>
+          <SortTh col="pPaid" sort={sort} setSort={setSort} t={t}>% Paid</SortTh>
+        </tr></thead>
+        <tbody>{list.map((o,i)=>{ const p=Math.round(o.pPaid); return (
+          <tr key={o.name} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+            <td style={{...tdS(t,true),fontWeight:600,color:t.ink,maxWidth:phone?140:320}} title={o.name}>{o.name}</td>
+            <td style={{...tdS(t),fontFamily:MONO}}>{fmtRpFull(o.total)}</td>
+            {!phone&&<td style={{...tdS(t),fontFamily:MONO}}>{fmtRpFull(o.paid)}</td>}
+            <td style={{...tdS(t),fontFamily:MONO,color:o.out?t.warnDark:t.muted}}>{fmtRpFull(o.out)}</td>
+            <td style={tdS(t)}><PctBadge val={p} t={t}/></td>
+          </tr>
+        ); })}</tbody>
+      </table>
+    </div>
+  );
+}
+
+function FlowCompareTab({ ins, flowSel, t }) {
+  const cols = [FLOW_PO, FLOW_DI];
+  const f = ins.fl;
+  const rows = [
+    { l:"Records",             v:(x)=>x.n.toLocaleString() },
+    { l:"Amount",              v:(x)=>fmtRpFull(x.amt) },
+    { l:"Avg days to clear",   v:(x)=>x.cycN?`${(x.cycSum/x.cycN).toFixed(1)} WD`:"—" },
+    { l:"% on time (SLA)",     v:(x)=>x.slaN?<PctBadge val={pct(x.slaOk,x.slaN)} t={t}/>:"—" },
+  ];
+  return (
+    <div style={{padding:18}}>
+      {flowSel!=="all"&&<div style={{fontSize:12,color:t.muted,marginBottom:10}}>Flow filter is on — set it to <strong style={{color:t.ink}}>All Flows</strong> to compare both side by side.</div>}
+      <div style={{overflowX:"auto",border:`1px solid ${t.line}`,borderRadius:10,maxWidth:640}}>
+        <table style={{width:"100%",borderCollapse:"collapse"}}>
+          <thead><tr><th style={thS(t,true)}>Metric</th>{cols.map(c=><th key={c} style={thS(t)}><FlowBadge flow={c} t={t}/></th>)}</tr></thead>
+          <tbody>{rows.map(r=>(
+            <tr key={r.l}><td style={{...tdS(t,true),fontWeight:600,color:t.ink}}>{r.l}</td>{cols.map(c=><td key={c} style={{...tdS(t),fontFamily:MONO}}>{r.v(f[c])}</td>)}</tr>
+          ))}</tbody>
+        </table>
+      </div>
+      <div style={{fontFamily:MONO,fontSize:10,color:t.muted,marginTop:8}}>Avg days = Invoice Submission → Bank Cleared (working days). On time: PO 2 + 3 WD · Direct Invoice 4 + 5 WD.</div>
+    </div>
+  );
+}
+
+function AccrualTab({ acc, w, t }) {
+  const [allMonths, setAllMonths] = useState(false);
+  if (!acc || !acc.list.length || !acc.months.length) return <EmptyNote t={t}>No agency data for the current filters</EmptyNote>;
+  const months = allMonths ? acc.months : acc.months.slice(-4);
+  const rowTotal = (g) => months.reduce((a,m)=>a+(g.cells[m]?.v||0),0);
+  const phone = w<640;
+  return (
+    <div style={{padding:18}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:10}}>
+        <div style={{fontSize:12,color:t.muted,maxWidth:"70ch",lineHeight:1.5}}>Actual amount per agency and program type. Empty months are <em>estimated</em> (italic) with the average of filled months. Not accrued: SALARYUUCK, THR, INCENTIVE MEUGANG. Excludes ADHITAMA MITRA NUSANTARA.</div>
+        {acc.months.length>4&&<Chip t={t} active={allMonths} onClick={()=>setAllMonths(v=>!v)}>{allMonths?"Last 4 months":`All ${acc.months.length} months`}</Chip>}
+      </div>
+      <div style={{maxHeight:460,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10}}>
+        <table style={{width:"100%",borderCollapse:"collapse",minWidth:phone?Math.max(480,220+months.length*110):undefined}}>
+          <thead><tr>
+            <th style={thS(t,true)}>Agency · Program</th>
+            {months.map(m=><th key={m} style={thS(t)}>{ymLabel(m)}</th>)}
+            <th style={thS(t)}>Total</th>
+          </tr></thead>
+          <tbody>{acc.list.map((g,i)=>(
+            <tr key={g.agency+"\x00"+g.prog} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+              <td style={{...tdS(t,true),maxWidth:280}} title={`${g.agency} · ${g.prog}`}><strong style={{color:t.ink}}>{g.agency}</strong><span style={{color:t.muted}}> · {g.prog}</span>{g.noAccrue&&<span style={{marginLeft:6,fontFamily:MONO,fontSize:9,color:t.muted}}>(no accrual)</span>}</td>
+              {months.map(m=>{ const c=g.cells[m]; return <td key={m} style={{...tdS(t),fontFamily:MONO,fontStyle:c?.est?"italic":"normal",color:c?.est?t.muted:t.ink2}}>{c?fmtRpFull(c.v):"—"}</td>; })}
+              <td style={{...tdS(t),fontFamily:MONO,fontWeight:700,color:t.ink}}>{fmtRpFull(rowTotal(g))}</td>
+            </tr>
+          ))}</tbody>
+          <tfoot><tr>
+            {(()=>{ const ft={...tdS(t),background:"#1E2128",color:"#fff",fontFamily:MONO,fontWeight:700,borderTop:`2px solid ${C.teal}`,position:"sticky",bottom:0}; return <>
+              <td style={{...ft,textAlign:"left",fontFamily:"inherit",fontWeight:800}}>TOTAL</td>
+              {months.map(m=><td key={m} style={ft} title={`Actual ${fmtRpFull(acc.tot[m].act)} · Estimated ${fmtRpFull(acc.tot[m].est)}`}>{fmtRpFull(acc.tot[m].act+acc.tot[m].est)}</td>)}
+              <td style={ft}>{fmtRpFull(months.reduce((a,m)=>a+acc.tot[m].act+acc.tot[m].est,0))}</td>
+            </>; })()}
+          </tr></tfoot>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ── Monthly: tren + heatmap + ringkasan per bulan (≤ 6 kolom) ── */
+function MonthlyTab(props) {
+  const { t, w, filtAgg, grand, sortedMonths, collapsed, setCollapsed, tblSort, setTblSort, trendSeries, heatData, heatMetric, setHeatMetric, exportSummary, isAg } = props;
+  const phone = w<640;
+  const series = useMemo(()=>trendSeries.map(s=>({...s,month:fmtMonthYear(s.month)})),[trendSeries]);
+  const allExpanded = sortedMonths.length>0 && sortedMonths.every(m=>!collapsed[m]);
+  const toggleAll = () => { const next={}; if(allExpanded) sortedMonths.forEach(m=>{next[m]=true;}); setCollapsed(next); };
+  const byMonth = useMemo(()=>{ const m={}; filtAgg.forEach(r=>{ (m[r.month]=m[r.month]||[]).push(r); }); return m; },[filtAgg]);
+  const pcell = (v,n) => n?<PctBadge val={pct(v,n)} t={t}/>:"—";
+  return (
+    <div style={{padding:18}}>
+      <div style={{display:"grid",gridTemplateColumns:w>=1000?"1fr 1fr":"1fr",gap:14,marginBottom:16}}>
+        <div>
+          <div style={{fontWeight:700,fontSize:13,color:t.ink,marginBottom:8}}>% Invoiced &amp; % Cleared per month</div>
+          <BarChart series={series} t={t}/>
+          <div style={{display:"flex",gap:14,justifyContent:"center",marginTop:6,fontSize:11.5,color:t.ink}}>
+            <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,background:C.yellow,borderRadius:3}}/>% Invoice</span>
+            <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,background:C.teal,borderRadius:3}}/>% Cleared</span>
+          </div>
+        </div>
+        <div style={{minWidth:0}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
+            <span style={{fontWeight:700,fontSize:13,color:t.ink}}>Month × {isAg?"Agency":"Partner Type"}</span>
+            <div style={{display:"flex",gap:5}}>{[{k:"inv",l:"Invoice",ac:C.yellow,dark:true},{k:"clv",l:"CLV",ac:C.tealD},{k:"clr",l:"Cleared",ac:C.teal}].map(m=><HeatBtn key={m.k} m={m} active={heatMetric===m.k} onClick={()=>setHeatMetric(m.k)} t={t}/>)}</div>
+          </div>
+          <div style={{overflowX:"auto"}}>
+            <table style={{borderCollapse:"separate",borderSpacing:3,fontSize:12,width:"100%"}}>
+              <thead><tr><th style={{fontFamily:MONO,fontSize:9.5,color:t.muted,textAlign:"left",padding:"4px 6px",fontWeight:500}}>MONTH</th>{heatData.ptypes.map(p=><th key={p} style={{fontFamily:MONO,fontSize:9.5,color:t.muted,padding:"4px 6px",fontWeight:500,whiteSpace:"nowrap"}}>{p}</th>)}</tr></thead>
+              <tbody>{heatData.months.map(m=><tr key={m}><td style={{fontFamily:MONO,fontSize:11,fontWeight:600,color:t.ink,padding:"3px 6px",whiteSpace:"nowrap"}}>{fmtMonthYear(m)}</td>{heatData.ptypes.map(p=>{ const c=heatData.cells[m+"\x00"+p]; if(!c)return <td key={p}><div style={{borderRadius:8,padding:"9px 5px",textAlign:"center",background:t.surf3,color:t.muted2,fontFamily:MONO,fontSize:11}}>—</div></td>; const v=c[heatMetric]||0,pp=pct(v,c.n),bg=heatClr(pp),light=bg===C.yellow; return <td key={p} title={`${fmtMonthYear(m)} · ${p}: ${v}/${c.n} (${pp}%)`}><HeatCell bg={bg} light={light} pp={pp} v={v} n={c.n}/></td>; })}</tr>)}</tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
+        <span style={{fontWeight:700,fontSize:13,color:t.ink}}>Monthly summary <span style={{fontWeight:400,fontSize:12,color:t.muted}}>· click a month to expand</span></span>
+        <div style={{display:"flex",gap:8}}>
+          <Btn t={t} variant="ghost" sm onClick={toggleAll}>{allExpanded?"Collapse all":"Expand all"}</Btn>
+          <Btn t={t} variant="outline" sm onClick={()=>exportSummary("csv")}>CSV</Btn>
+          <Btn t={t} variant="primary" sm onClick={()=>exportSummary("xlsx")}>Excel</Btn>
+        </div>
+      </div>
+      <div style={{overflowX:"auto",border:`1px solid ${t.line}`,borderRadius:10}}>
+        <table style={{width:"100%",borderCollapse:"collapse"}}>
+          <thead><tr>
+            <SortTh col="month" left sort={tblSort} setSort={setTblSort} t={t}>Month / Group</SortTh>
+            {!phone&&<th style={thS(t,true)}>Flow</th>}
+            <th style={thS(t)}>Records</th>
+            <th style={thS(t)}>% Invoice</th>
+            {!phone&&<th style={thS(t)}>% CLV</th>}
+            <th style={thS(t)}>% Cleared</th>
+          </tr></thead>
           <tbody>
             {sortedMonths.map(m=>{
-              const rows=filtAgg.filter(r=>r.month===m);
-              const mT=sumRows(rows);
-              const isCol=!!collapsed[m];
+              const rows=byMonth[m]||[], mT=sumRows(rows), isCol=!!collapsed[m];
               return (
-                <React.Fragment key={`grp-${m}`}>
-                  <MonthTotalRow m={m} mT={mT} isAg={isAg} isCol={isCol} colCount={colCount} onToggle={()=>setCollapsed(c=>({...c,[m]:!c[m]}))} t={t}/>
-                  {!isCol && rows.map((r,j)=><SummaryDataRow key={`${m}-${j}`} r={r} j={j} isAg={isAg} t={t}/>)}
+                <React.Fragment key={m}>
+                  <tr {...kbd(()=>setCollapsed(c=>({...c,[m]:!c[m]})))} onClick={()=>setCollapsed(c=>({...c,[m]:!c[m]}))} aria-expanded={!isCol} style={{background:t.monthBg,cursor:"pointer"}}>
+                    <td style={{...tdS(t,true),fontWeight:700,color:t.ink}}><span style={{display:"inline-block",width:14,color:t.muted,transform:isCol?"rotate(-90deg)":"none",transition:"transform .15s"}}>▼</span>{fmtMonthYear(m)}</td>
+                    {!phone&&<td style={tdS(t,true)}/>}
+                    <td style={{...tdS(t),fontFamily:MONO,fontWeight:700,color:t.ink}}>{mT.n.toLocaleString()}</td>
+                    <td style={tdS(t)}>{pcell(mT.inv,mT.n)}</td>
+                    {!phone&&<td style={tdS(t)}>{pcell(mT.clv,mT.n)}</td>}
+                    <td style={tdS(t)}>{pcell(mT.clr,mT.n)}</td>
+                  </tr>
+                  {!isCol&&rows.map((r,j)=>(
+                    <tr key={j}>
+                      <td style={{...tdS(t,true),paddingLeft:28,maxWidth:phone?180:380}} title={`${r.entity} · ${r.ptype} · ${r.prog}`}><strong style={{color:t.ink}}>{r.ptype||"—"}</strong><span style={{color:t.muted}}> · {r.prog||"—"}{r.entity?` · ${r.entity}`:""}</span></td>
+                      {!phone&&<td style={tdS(t,true)}><FlowBadge flow={r.flow} t={t}/></td>}
+                      <td style={{...tdS(t),fontFamily:MONO}}>{r.n}</td>
+                      <td style={tdS(t)}>{pcell(r.inv,r.n)}</td>
+                      {!phone&&<td style={tdS(t)}>{pcell(r.clv,r.n)}</td>}
+                      <td style={tdS(t)}>{pcell(r.clr,r.n)}</td>
+                    </tr>
+                  ))}
                 </React.Fragment>
               );
             })}
-            {sortedMonths.length===0&&(
-              <tr><td colSpan={colCount} style={{padding:"28px",textAlign:"center",color:t.muted,fontFamily:MONO,fontSize:12}}>No data matches the current filters</td></tr>
-            )}
+            {sortedMonths.length===0&&<tr><td colSpan={6}><EmptyNote t={t}>No data matches the current filters</EmptyNote></td></tr>}
           </tbody>
-          {/* ───────────────────────────────────────────────────────────────────
-             GRAND TOTAL footer row — uniform charcoal background, white text,
-             thin teal accent line, teal pills. Sticky so it stays visible
-             while scrolling.
-             ─────────────────────────────────────────────────────────────────── */}
-          <tfoot>
-            <tr style={{position:"sticky",bottom:0,zIndex:3}}>
-              {/* GRAND TOTAL label */}
-              <td colSpan={5} style={{
-                background:"#1E2128", padding:"14px 12px",
-                borderTop:`2px solid ${C.teal}`, whiteSpace:"nowrap",
-              }}>
-                <span style={{display:"inline-flex",alignItems:"center",gap:9}}>
-                  <span style={{width:11,height:11,borderRadius:3,background:C.teal,display:"inline-block",flexShrink:0}}/>
-                  <span style={{fontWeight:900,fontSize:15,letterSpacing:"-0.01em",color:"#FFFFFF"}}>GRAND TOTAL</span>
-                  <span style={{fontFamily:MONO,fontWeight:600,fontSize:11,color:"#E8E8EE",letterSpacing:"0.04em"}}>
-                    {grandPartnerCount} {isAg?"agenc":"partner"}{grandPartnerCount!==1?(isAg?"ies":"s"):(isAg?"y":"")} · {fmtMoney(grand.amt)}
-                  </span>
-                </span>
-              </td>
-              {/* count cells — uniform charcoal background, bright white numerals */}
-              {[grand.n,grand.po,...(!isAg?[grand.surat]:[]),grand.inv,grand.clv,grand.clr].map((v,i)=>(
-                <td key={i} style={{
-                  background:"#1E2128",
-                  textAlign:"center", padding:"12px 9px",
-                  borderTop:`2px solid ${C.teal}`,
-                }}>
-                  <span style={{
-                    display:"inline-block",
-                    fontFamily:MONO, fontWeight:900, fontSize:19,
-                    letterSpacing:"-0.02em", color:"#FFFFFF",
-                  }}>{v.toLocaleString()}</span>
-                </td>
-              ))}
-              {/* percentage badges — standardized solid teal pill, white text */}
-              {[invPct, clvPct, clrPct].map((val,i)=>(
-                <td key={i} style={{background:"#1E2128",textAlign:"center",padding:"12px 9px",borderTop:`2px solid ${C.teal}`}}>
-                  <span style={{
-                    display:"inline-flex", alignItems:"center", gap:6,
-                    padding:"5px 12px", borderRadius:99,
-                    background:C.tealD, color:"#FFFFFF",
-                    fontFamily:MONO, fontWeight:900, fontSize:12,
-                    letterSpacing:"0.02em",
-                  }}>
-                    <span style={{width:7,height:7,borderRadius:"50%",background:"#FFFFFF",opacity:0.75,flexShrink:0}}/>
-                    {val}%
-                  </span>
-                </td>
-              ))}
-            </tr>
-          </tfoot>
+          <tfoot><tr>
+            {(()=>{ const ft={...tdS(t),background:"#1E2128",color:"#fff",fontFamily:MONO,fontWeight:800,borderTop:`2px solid ${C.teal}`,position:"sticky",bottom:0}; const pf=(v)=><span style={{padding:"3px 10px",borderRadius:99,background:C.tealD}}>{pct(v,grand.n)}%</span>; return <>
+              <td style={{...ft,textAlign:"left",fontFamily:"inherit"}}>TOTAL · {fmtRp(grand.amt)}</td>
+              {!phone&&<td style={ft}/>}
+              <td style={ft}>{grand.n.toLocaleString()}</td>
+              <td style={ft}>{pf(grand.inv)}</td>
+              {!phone&&<td style={ft}>{pf(grand.clv)}</td>}
+              <td style={ft}>{pf(grand.clr)}</td>
+            </>; })()}
+          </tr></tfoot>
         </table>
       </div>
-    </Card>
+    </div>
   );
 }
 
