@@ -5195,7 +5195,19 @@ function ArDsoHoaPanel({ t, d, profile, entryDate, arMonth, dseMeta, kind }) {
 
       <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: FONT }}>
+          {/* UPDATE (permintaan user - "mengapa ukuran text nya sangat
+              besar gunakan ukuran yang normal saja, lakukan hal yang sama
+              persis seperti di level dse"): tabel roster DSE (lihat
+              <table> di tab AR/Riwayat, fontSize:12.5) nentuin base
+              font-size di <table>-nya sendiri yg DIWARISI turun ke semua
+              <td> ArPiutangInput (Total Piutang/Dibayar/Sisa/dst - sel2
+              itu sendiri TIDAK punya fontSize eksplisit, sengaja
+              ngandelin inherit). <table> di panel ini ga punya fontSize
+              sama sekali -> fallback ke default browser (jauh lebih
+              besar drpd 12.5px DSE) - makanya angka "Rp 0" dst keliatan
+              raksasa. Fix: samain fontSize:12.5 di <table>-nya, SAMA
+              PERSIS kayak DSE. */}
+          <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: FONT, fontSize: 12.5 }}>
             <thead>
               <tr>
                 <th style={{ ...th, textAlign: "center", width: 40 }}>#</th>
