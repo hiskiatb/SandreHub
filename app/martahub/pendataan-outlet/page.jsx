@@ -25,7 +25,8 @@ import { readWorkbook, deriveTable } from "../../../lib/martaSiteImport";
 import { passesRow, optionsFor, FilterTh, FilterMenu } from "../../dashboard/components/MFTS_TableFilter";
 import {
   aoCreateExportJob, aoCreateZipJob, aoDeleteSubmissions, aoGetExportDownloadUrl, aoGetExportJob,
-  aoGetExportPartUrls, aoGetRadiusSetting, aoImportOutletMaster, aoInvokeExportJob, aoInvokeZipJob, aoListOutlets,
+  aoGetExportPartUrls, aoGetRadiusSetting, aoImportOutletMaster, aoInvokeExportJob, aoListOutlets,
+  aoRunZipJob,
   aoListPhotos, aoListReferencePhotos, aoListSubmissions, aoPublicUrl, aoSetRadiusSetting,
   aoUpdateReferencePhotoLabel, aoUploadReferencePhoto,
 } from "../../../lib/ao";
@@ -426,16 +427,58 @@ function SubmissionBody() {
   // ASLI (signed URL storage, bukan blob JS) di-auto-klik di bawah -> itu
   // masuk ke tab Downloads bawaan browser dgn progress asli, bukan
   // progress bar custom di halaman.
+  // v2 (lihat HISTORY panjang di edge function ao-export-zip): job ZIP TIDAK
+  // lagi fire-and-forget + polling terpisah spt job .xlsx di bawah -
+  // aoRunZipJob() yang memanggil ulang edge function-nya berkali-kali
+  // (tiap panggilan cuma kerja sepotong kecil & time-boxed di server) sampai
+  // selesai, krn 1 invocation besar sequential dulu selalu kena matikan
+  // paksa oleh batas eksekusi Edge Function sebelum sempat kelar utk
+  // dataset besar (3000+ foto). onProgress di bawah dipanggil stlh tiap
+  // potongan - auto-klik signed URL bagian baru (download asli di tab
+  // Downloads browser, bukan blob JS) persis spt sebelumnya.
+  const downloadZipRef = useRef({ downloadedPaths: new Set() });
   const downloadZip = async () => {
+    downloadZipRef.current = { downloadedPaths: new Set() };
     try {
       const jobId = await aoCreateZipJob({ dateFrom: dateFrom || null, dateTo: dateTo || null });
-      setZipJob({ id: jobId, status: "pending", parts: [], downloadedPaths: new Set() });
+      setZipJob({ id: jobId, status: "pending", parts: [] });
       setJob({ kind: "zip-job", label: "Menyiapkan job download...", pct: 0 });
-      aoInvokeZipJob(jobId).catch((e) => {
-        setZipJob((cur) => (cur && cur.id === jobId ? { ...cur, status: "error", errorMessage: String(e?.message || e) } : cur));
+
+      const finalRow = await aoRunZipJob(jobId, async (row) => {
+        const parts = await aoGetExportPartUrls(row.file_parts);
+        for (const part of parts) {
+          if (downloadZipRef.current.downloadedPaths.has(part.path)) continue;
+          downloadZipRef.current.downloadedPaths.add(part.path);
+          const a = document.createElement("a");
+          a.href = part.url;
+          a.download = "";
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        }
+        if (row.status === "done" || row.status === "error") {
+          setJob(null);
+          setZipJob({ id: row.id, status: row.status, parts, totalPhotos: row.total_rows, errorMessage: row.error_message });
+          return;
+        }
+        const total = row.total_rows || 0;
+        const pct = total > 0 ? Math.round((row.processed_rows / total) * 95) : 0;
+        setZipJob({ id: row.id, status: row.status, parts, totalPhotos: total });
+        setJob({
+          kind: "zip-job",
+          label: total > 0
+            ? `Memproses foto ${row.processed_rows}/${total} (server)${parts.length ? ` - ${parts.length} bagian terkirim ke Downloads` : ""}...`
+            : "Menghitung jumlah foto...",
+          pct,
+        });
       });
+      if (finalRow.status === "error") {
+        console.error("[downloadZip] job gagal:", finalRow.error_message);
+      }
     } catch (e) {
-      alert(`Gagal membuat job download ZIP: ${e?.message || e}`);
+      console.error("[downloadZip] gagal:", e);
+      setJob(null);
+      alert("Gagal membuat download ZIP." + (e?.message ? `\n\n${e.message}` : ""));
     }
   };
 
@@ -632,54 +675,9 @@ function SubmissionBody() {
     return () => { cancelled = true; clearInterval(id); };
   }, [exportJob?.id, exportJob?.status]);
 
-  // Polling job ZIP background (tiap 2.5s) - sama pola persis dgn polling
-  // exportJob di atas. Begitu ada bagian baru yg siap, link-nya (signed
-  // URL, file ASLI di storage) langsung di-"klik" otomatis sekali - itu yg
-  // bikin pengalamannya "klik sekali, masuk ke tab Downloads" spt web pada
-  // umumnya, bukan nunggu semua bagian lalu user klik manual satu-satu
-  // (tombol manual di banner bawah tetap ada sbg cadangan/re-download).
-  useEffect(() => {
-    if (!zipJob?.id || zipJob.status === "done" || zipJob.status === "error") return;
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const row = await aoGetExportJob(zipJob.id);
-        if (cancelled) return;
-        const parts = await aoGetExportPartUrls(row.file_parts);
-        if (cancelled) return;
-        setZipJob((cur) => {
-          const downloadedPaths = cur?.downloadedPaths || new Set();
-          for (const part of parts) {
-            if (downloadedPaths.has(part.path)) continue;
-            downloadedPaths.add(part.path);
-            const a = document.createElement("a");
-            a.href = part.url;
-            a.download = "";
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-          }
-          if (row.status === "done") { setJob(null); return { id: row.id, status: "done", parts, totalPhotos: row.total_rows, downloadedPaths }; }
-          if (row.status === "error") { setJob(null); return { id: row.id, status: "error", errorMessage: row.error_message, parts, downloadedPaths }; }
-          const total = row.total_rows || 0;
-          const pct = total > 0 ? Math.round((row.processed_rows / total) * 95) : 0;
-          setJob({
-            kind: "zip-job",
-            label: total > 0
-              ? `Memproses foto ${row.processed_rows}/${total} (server)${parts.length ? ` - ${parts.length} bagian terkirim ke Downloads` : ""}...`
-              : "Menghitung jumlah foto...",
-            pct,
-          });
-          return { id: row.id, status: row.status, parts, totalPhotos: total, downloadedPaths };
-        });
-      } catch {
-        // koneksi gagal sesaat - dicoba lagi di tick berikutnya, jangan hentikan polling
-      }
-    };
-    tick();
-    const id = setInterval(tick, 2500);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [zipJob?.id, zipJob?.status]);
+  // (Tidak ada lagi polling useEffect terpisah utk zipJob - aoRunZipJob()
+  // di downloadZip() di atas sudah memanggil ulang edge function-nya
+  // sendiri sampai selesai, lihat komentar HISTORY di sana.)
 
   return (
     <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 14, overflow: "hidden" }}>
