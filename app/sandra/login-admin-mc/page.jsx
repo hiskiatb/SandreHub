@@ -68,8 +68,17 @@ function AdminMcLoginInner() {
         return;
       }
       setMcName(lookup.mc || "");
-      const { error: otpErr } = await supabase.auth.signInWithOtp({ email: cleanEmail, options: { shouldCreateUser: true } });
-      if (otpErr) { setErrMsg(otpErr.message || "Gagal mengirim kode OTP."); return; }
+      // Dikirim lewat /api/send-otp (Resend, template SandraHub) - BUKAN
+      // supabase.auth.signInWithOtp lagi, karena itu mengirim email "Magic
+      // Link" bawaan Supabase (tidak branded, dan tidak menampilkan kode
+      // OTP sama sekali, padahal UI di bawah minta user mengetik kode).
+      const otpRes = await fetch("/api/send-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: cleanEmail }),
+      });
+      const otpJson = await otpRes.json();
+      if (!otpRes.ok || !otpJson.success) { setErrMsg(otpJson.error || "Gagal mengirim kode OTP."); return; }
       setStage("otp");
     } catch {
       setErrMsg("Terjadi gangguan pada sistem.");
@@ -85,9 +94,25 @@ function AdminMcLoginInner() {
     setLoading(true);
     try {
       const cleanEmail = email.trim().toLowerCase();
-      const { error: verifyErr } = await supabase.auth.verifyOtp({ email: cleanEmail, token: cleanOtp, type: "email" });
+      // Verifikasi OTP custom (tabel email_otps, sama isinya dgn yang dikirim
+      // /api/send-otp di atas) lewat endpoint server-side khusus login Admin
+      // MC - BUKAN /api/verify-otp (itu endpoint registrasi, bikin auth user
+      // + profile baru). Endpoint ini mengembalikan token_hash dari Admin API
+      // generateLink (magiclink), ditukar jadi sesi asli lewat verifyOtp di
+      // bawah - pola yang sama persis dgn /marta/login (OTP login).
+      const verifyRes = await fetch("/api/sandra/verify-admin-mc-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: cleanEmail, otp: cleanOtp }),
+      });
+      const verifyJson = await verifyRes.json();
+      if (!verifyRes.ok || !verifyJson.success) {
+        setErrMsg(verifyJson.error || "Kode OTP salah atau sudah tidak berlaku.");
+        return;
+      }
+      const { error: verifyErr } = await supabase.auth.verifyOtp({ token_hash: verifyJson.token_hash, type: "magiclink" });
       if (verifyErr) {
-        setErrMsg(verifyErr.message?.toLowerCase().includes("expired") ? "Kode OTP sudah kedaluwarsa. Kirim ulang." : "Kode OTP salah atau sudah tidak berlaku.");
+        setErrMsg("Gagal membuat sesi login. Coba lagi.");
         return;
       }
       await supabase.rpc("mf_dse_admin_mc_login_apply").catch(() => {});
@@ -104,8 +129,13 @@ function AdminMcLoginInner() {
     setErrMsg("");
     setLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithOtp({ email: email.trim().toLowerCase(), options: { shouldCreateUser: true } });
-      if (error) setErrMsg(error.message || "Gagal mengirim ulang kode OTP.");
+      const res = await fetch("/api/send-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim().toLowerCase() }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) setErrMsg(json.error || "Gagal mengirim ulang kode OTP.");
     } finally {
       setLoading(false);
     }
