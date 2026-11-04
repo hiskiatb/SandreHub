@@ -5227,7 +5227,16 @@ function ArDsoHoaPanel({ t, d, profile, entryDate, arMonth, dseMeta, kind }) {
                 <th style={{ ...th, textAlign: "right" }}>Sisa Piutang</th>
                 <th style={th}>Status</th>
                 <th style={th}>Jatuh Tempo</th>
-                <th style={th}>Aksi</th>
+                {/* UPDATE (permintaan user - "yang di freeze itu termasuk
+                    header kolomnya perbaiki"): td "Aksi" (tombol "Edit AR",
+                    lihat ArPiutangInput non-inline) sudah sticky right:0 -
+                    tapi header-nya sendiri ketinggalan, jadi pas scroll
+                    horizontal tombol Edit AR ttp nempel kanan tapi label
+                    kolomnya ikut kescroll & ga sejajar lagi. th ini
+                    sekarang sticky juga (right:0, zIndex di atas td-nya,
+                    boxShadow SAMA PERSIS pola td) biar header & isi kolom
+                    sama2 freeze, konsisten. */}
+                <th style={{ ...th, position: "sticky", right: 0, zIndex: 3, background: t.sub, boxShadow: "-6px 0 8px -6px rgba(0,0,0,0.18)" }}>Aksi</th>
               </tr>
             </thead>
             <tbody>
