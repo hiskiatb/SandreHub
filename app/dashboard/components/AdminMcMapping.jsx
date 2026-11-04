@@ -380,14 +380,42 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
     return Array.from(byMc.values()).sort((a, b) => (a.mc || "").localeCompare(b.mc || ""));
   }, [rows, dseRefMap]);
 
-  const filtered = displayRows.filter((r) => {
-    if (!search) return true;
-    const s = search.toLowerCase();
-    const emails = emailsByMc.get(r.mc?.toLowerCase()) || [];
-    return r.mc?.toLowerCase().includes(s) || r.full_name?.toLowerCase().includes(s)
-      || r.region?.toLowerCase().includes(s) || r.branch?.toLowerCase().includes(s) || r.circle?.toLowerCase().includes(s)
-      || emails.some((e) => e.email?.toLowerCase().includes(s) || e.label?.toLowerCase().includes(s));
-  });
+  // UPDATE (permintaan user - "coba kelompokkan / rapatkan urutan yang
+  // dalam satu email memiliki email yang sama"): 1 email boleh dipasang
+  // ke BANYAK MC sekaligus (lihat komentar UPDATE 8 di atas) - tapi
+  // selama ini baris2-nya tersebar sesuai urutan alfabet MC, jadi MC2
+  // yang dipegang admin yang SAMA keliatan nyebar/ga nyambung di tabel.
+  // Sekarang baris dikelompokkan per email (gabungan semua alamat email
+  // yang terpasang di MC itu, diurutkan & digabung jadi 1 key per MC) -
+  // grup diurutkan alfabet per key-nya supaya konsisten/predictable,
+  // MC TANPA email sama sekali ditaruh di paling akhir (bukan baris
+  // "kosong" nyelip di antara grup2 email), & di dalam 1 grup tetap
+  // diurutkan alfabet per nama MC (stabil, sama kayak urutan lama).
+  const emailGroupKey = (mc) => {
+    const emails = emailsByMc.get(mc?.toLowerCase()) || [];
+    const active = emails.filter((e) => e.active !== false);
+    if (active.length === 0) return null;
+    return active.map((e) => e.email?.toLowerCase() || "").sort().join(",");
+  };
+
+  const filtered = displayRows
+    .filter((r) => {
+      if (!search) return true;
+      const s = search.toLowerCase();
+      const emails = emailsByMc.get(r.mc?.toLowerCase()) || [];
+      return r.mc?.toLowerCase().includes(s) || r.full_name?.toLowerCase().includes(s)
+        || r.region?.toLowerCase().includes(s) || r.branch?.toLowerCase().includes(s) || r.circle?.toLowerCase().includes(s)
+        || emails.some((e) => e.email?.toLowerCase().includes(s) || e.label?.toLowerCase().includes(s));
+    })
+    .slice()
+    .sort((a, b) => {
+      const ka = emailGroupKey(a.mc);
+      const kb = emailGroupKey(b.mc);
+      if (ka === null && kb === null) return (a.mc || "").localeCompare(b.mc || "");
+      if (ka === null) return 1; // MC tanpa email -> selalu di akhir
+      if (kb === null) return -1;
+      return ka.localeCompare(kb) || (a.mc || "").localeCompare(b.mc || "");
+    });
 
   // ── Download Data (export + dipakai juga sbg template upload massal
   // utk MASTER MC — Circle/Region/Branch/Nama Admin saja; email tidak lagi
