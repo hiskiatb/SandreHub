@@ -33,19 +33,45 @@ const kbd = (fn) => ({
   onKeyDown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fn(); } },
 });
 
+// Hint kolom. Prefix "=" → hanya exact match (hindari "invoice" ikut cocok ke "Invoice Number").
+const H_INV   = ["invoice submission","invoice submission date","inv submission","=invoice"];
+const H_CLV   = ["clv date","=clv"];
+const H_CLR   = ["clearing date","=clearing","clearing bank"];
+const H_SURAT = ["surat pemberitahuan date","surat pemberitahuan","=surat"];
+const H_EST   = ["estimation date","estimasi"];
+const H_STAT  = ["=status","=payment status","status"];
+
+// Flow sejak Coupa go-live 11 Oct 2026: PO (Req → PO → Invoice) atau Direct Invoice (tanpa Req/PO).
+const FLOW_PO = "PO", FLOW_DI = "Direct Invoice";
+
 const SLA_P = [
-  { key:"reva_po",   label:"Reva → PO",                sla:2, from:["reva date","reva"],                 to:["po date","po number"] },
-  { key:"po_surat",  label:"PO → Surat Pemberitahuan",       sla:1, from:["po date"],                         to:["surat pemberitahuan date","surat pemberitahuan","surat"] },
-  { key:"surat_inv", label:"Surat Pemberitahuan → Invoice",  sla:2, from:["surat pemberitahuan date","surat"], to:["invoice submission","invoice"] },
-  { key:"inv_clv",   label:"Invoice → CLV",             sla:2, from:["invoice submission","invoice"],     to:["clv date","clv"] },
-  { key:"clv_clear", label:"CLV → Bank Clearing",       sla:3, from:["clv date","clv"],                   to:["clearing date","clearing"] },
+  { key:"reva_po",   flow:FLOW_PO, label:"Reva → PO",                sla:2, from:["reva date","reva"],                 to:["po date","=po number"] },
+  { key:"po_surat",  flow:FLOW_PO, label:"PO → Surat Pemberitahuan",       sla:1, from:["po date"],                         to:H_SURAT },
+  { key:"surat_inv", flow:FLOW_PO, label:"Surat Pemberitahuan → Invoice",  sla:2, from:["surat pemberitahuan date","=surat"], to:H_INV },
+  { key:"inv_clv",   flow:FLOW_PO, label:"Invoice → CLV",             sla:2, from:H_INV,     to:H_CLV },
+  { key:"clv_clear", flow:FLOW_PO, label:"CLV → Bank Clearing",       sla:3, from:H_CLV,     to:H_CLR },
 ];
 const SLA_A = [
-  { key:"req_po",    label:"Req → PO",                  sla:2, from:["req date","reva date"],             to:["po date","po number"] },
-  { key:"po_inv",    label:"PO → Invoice",               sla:2, from:["po date"],                         to:["invoice submission","invoice"] },
-  { key:"inv_clv",   label:"Invoice → CLV",              sla:2, from:["invoice submission","invoice"],    to:["clv date","clv"] },
-  { key:"clv_clear", label:"CLV → Bank Clearing",        sla:3, from:["clv date","clv"],                  to:["clearing date","clearing"] },
+  { key:"req_po",    flow:FLOW_PO, label:"Req → PO",                  sla:2, from:["req date","reva date"],             to:["po date","=po number"] },
+  { key:"po_inv",    flow:FLOW_PO, label:"PO → Invoice",               sla:2, from:["po date"],                         to:H_INV },
+  { key:"inv_clv",   flow:FLOW_PO, label:"Invoice → CLV",              sla:2, from:H_INV,    to:H_CLV },
+  { key:"clv_clear", flow:FLOW_PO, label:"CLV → Bank Clearing",        sla:3, from:H_CLV,    to:H_CLR },
 ];
+// Direct Invoice (MOM Coupa): Invoice → AP Verified (Clv Date) 4 WD, AP Verified → Bank Clearing 5 WD
+const SLA_DI = [
+  { key:"di_inv_ap",   flow:FLOW_DI, label:"Invoice → AP Verified",       sla:4, from:H_INV, to:H_CLV },
+  { key:"di_ap_clear", flow:FLOW_DI, label:"AP Verified → Bank Clearing", sla:5, from:H_CLV, to:H_CLR },
+];
+const slaStepsFor = (isAg, flow) => {
+  const po = isAg ? SLA_A : SLA_P;
+  if (flow===FLOW_PO) return po;
+  if (flow===FLOW_DI) return SLA_DI;
+  return [...po, ...SLA_DI];
+};
+
+// Accrual Agency: kategori yang tidak di-accrue & agency yang dikecualikan
+const ACCRUAL_SKIP_PROG   = ["SALARYUUCK","THR","INCENTIVEMEUGANG"];
+const ACCRUAL_SKIP_AGENCY = ["ADHITAMA MITRA NUSANTARA"];
 
 function unique(arr) { return [...new Set(arr.filter(v => v != null && v !== ""))]; }
 
@@ -129,24 +155,116 @@ function daysBetween(a, b) {
   return Math.round((d2-d1)/86400000);
 }
 
+// Hari kerja (Senin–Jumat) dari a (eksklusif) s.d. b (inklusif). Negatif → null.
+function workDaysBetween(a, b) {
+  const d1=toDate(a), d2=toDate(b);
+  if (!d1||!d2) return null;
+  const s=new Date(d1.getFullYear(),d1.getMonth(),d1.getDate()), e=new Date(d2.getFullYear(),d2.getMonth(),d2.getDate());
+  const total=Math.round((e-s)/86400000);
+  if (total<0) return null;
+  const weeks=Math.floor(total/7);
+  let wd=weeks*5;
+  for (let i=1, dow=s.getDay(); i<=total%7; i++) { const x=(dow+i)%7; if (x!==0&&x!==6) wd++; }
+  return wd;
+}
+
+const normKey = (s) => String(s).toLowerCase().replace(/\s+/g," ").trim();
+// Cache resolusi kolom per (header set, hints) — findCol dipanggil per baris × per hint.
+const _colCache = new Map();
 function findCol(row, hints) {
   if (!row) return null;
   const ks = Object.keys(row);
-  for (const h of hints) {
-    const hh = h.toLowerCase().replace(/\s+/g," ").trim();
-    for (const k of ks) if (k.toLowerCase().replace(/\s+/g," ").trim()===hh) return k;
+  const ck = ks.join("\x01")+"\x03"+hints.join("\x02");
+  const hit = _colCache.get(ck);
+  if (hit!==undefined) return hit;
+  let res = null;
+  const nks = ks.map(normKey);
+  outer: for (const h of hints) {
+    const hh = normKey(h.startsWith("=") ? h.slice(1) : h);
+    for (let i=0;i<ks.length;i++) if (nks[i]===hh) { res=ks[i]; break outer; }
   }
-  for (const h of hints) {
-    const hh = h.toLowerCase().replace(/\s+/g," ").trim();
-    for (const k of ks) if (k.toLowerCase().replace(/\s+/g," ").trim().includes(hh)) return k;
+  if (!res) outer2: for (const h of hints) {
+    if (h.startsWith("=")) continue;
+    const hh = normKey(h);
+    for (let i=0;i<ks.length;i++) if (nks[i].includes(hh)) { res=ks[i]; break outer2; }
   }
-  return null;
+  if (_colCache.size>2000) _colCache.clear();
+  _colCache.set(ck,res);
+  return res;
 }
 
 const gcell = (row,hints,fb="") => { const k=findCol(row,hints); return k&&row[k]!=null ? row[k] : fb; };
 const gnum  = (row,hints)       => { const v=gcell(row,hints,0); if(typeof v==="number")return v; const n=parseFloat(String(v).replace(/[^\d.-]/g,"")); return isNaN(n)?0:n; };
 const gstr  = (row,hints)       => String(gcell(row,hints,"")||"").trim();
 const pct   = (a,b)             => b ? Math.round((a/b)*100) : 0;
+
+// ── Status: label lama Agency disamakan ke label baru ──
+const STATUS_ALIAS = {
+  "on process payment":"Payment Process", "payment process":"Payment Process", "on payment process":"Payment Process",
+  "awaiting inv submission":"Invoice Not Submitted", "awaiting invoice submission":"Invoice Not Submitted", "invoice not submitted":"Invoice Not Submitted",
+};
+function normalizeStatus(v) {
+  const s = String(v ?? "").trim();
+  if (!s) return s;
+  const k = s.toLowerCase().replace(/\s+/g," ");
+  if (STATUS_ALIAS[k]) return STATUS_ALIAS[k];
+  if (/^paid\b/.test(k)) return "PAID";
+  return s;
+}
+const isPaidStatus    = (s) => s==="PAID";
+const isProcessStatus = (s) => s==="Payment Process";
+const isNotSubStatus  = (s) => s==="Invoice Not Submitted";
+
+function normalizeFlow(v) {
+  const s = String(v ?? "").trim().toLowerCase();
+  if (!s) return "";
+  if (s.includes("direct") || s.startsWith("inv") || s==="di" || s.includes("non po") || s.includes("non-po")) return FLOW_DI;
+  if (s.startsWith("po")) return FLOW_PO;
+  return "";
+}
+
+/*
+  Lengkapi tiap baris dengan Flow, PO Number, Invoice Number & status ternormalisasi.
+  • File baru : kolom "Flow", "PO Number", "Invoice Number" terpisah.
+  • File lama : satu kolom "PO Number / Inv Number" + "Ref Type" (PO/Invoice);
+                tanpa Ref Type → nomor diawali "481" = PO, selain itu Direct Invoice.
+  Field turunan disimpan di _flow/_po/_inv/_status; kolom "Flow" & "Invoice Number"
+  ditambahkan bila belum ada supaya tampil di Raw Data & export.
+*/
+function enrichRow(r) {
+  const o = { ...r };
+  const ks = Object.keys(r);
+  const flowK  = findCol(r,["=flow","=payment flow","=flow type"]);
+  const refK   = findCol(r,["=ref type","=reference type"]);
+  const combK  = ks.find(k=>{ const n=normKey(k); return n.includes("po") && n.includes("inv") && (n.includes("/")||n.includes("number")) && !n.includes("date") && !n.includes("submission"); }) || null;
+  const poK    = findCol(r,["=po number","=po #","=no po","=po no","=po"]);
+  const invK   = findCol(r,["=invoice number","=inv number","=invoice no","=invoice #","=no invoice","=inv no"]);
+  const statK  = findCol(r,H_STAT);
+  // Placeholder "0" / "-" = belum ada nomor
+  const num = (v) => { const s = String(v ?? "").trim(); return /^(0|-+|—|n\/?a)$/i.test(s) ? "" : s; };
+  let po  = poK  && poK!==combK  ? num(r[poK])  : "";
+  let inv = invK && invK!==combK ? num(r[invK]) : "";
+  let flow = flowK ? normalizeFlow(r[flowK]) : "";
+  const refFlow = refK ? normalizeFlow(r[refK]) : "";
+  if (combK) {
+    const val = num(r[combK]);
+    if (val) {
+      const f = refFlow || (val.startsWith("481") ? FLOW_PO : FLOW_DI);
+      if (f===FLOW_PO) { if (!po) po = val; } else if (!inv) inv = val;
+      if (!flow) flow = f;
+    }
+  }
+  if (!flow) flow = refFlow || (po ? FLOW_PO : inv ? FLOW_DI : FLOW_PO);
+  const status = statK ? normalizeStatus(r[statK]) : "";
+  if (statK) o[statK] = status;
+  if (flowK) o[flowK] = flow; else o["Flow"] = flow;
+  if (!invK) o["Invoice Number"] = inv || null;
+  o._flow = flow; o._po = po; o._inv = inv; o._status = status;
+  return o;
+}
+const refNo = (r) => r._po || r._inv || "";
+const rowStatus = (r) => r._status ?? normalizeStatus(gstr(r,H_STAT));
+const rowFlow   = (r) => r._flow || FLOW_PO;
 
 function sumRows(rows) {
   return rows.reduce((acc,r)=>({
@@ -187,16 +305,19 @@ function buildAgg(rows, src) {
     const entity= gstr(r,["entity"]);
     const ptype = ag ? gstr(r,["agency name"]) : gstr(r,["partner type","partnertype","partner_type"]);
     const prog  = gstr(r,["program type","programtype"]);
+    const flow  = rowFlow(r);
+    const isPO  = flow===FLOW_PO;
     if (!month) return;
-    const key = [month,entity,ptype,prog].join("\x00");
-    if (!groups[key]) groups[key]={ month,entity,ptype,prog,src,n:0,po:0,surat:0,inv:0,clv:0,clr:0,amt:0 };
+    const key = [month,entity,ptype,prog,flow].join("\x00");
+    if (!groups[key]) groups[key]={ month,entity,ptype,prog,flow,src,n:0,po:0,surat:0,inv:0,clv:0,clr:0,amt:0 };
     const g = groups[key];
     g.n++;
-    if (gcell(r,["po number","po #","no po","po date"])) g.po++;
-    if (!ag && gcell(r,["surat pemberitahuan date","surat pemberitahuan","surat"])) g.surat++;
-    if (gcell(r,["invoice submission","invoice"])) g.inv++;
-    if (gcell(r,["clv date","clv"])) g.clv++;
-    if (gcell(r,["clearing date","clearing"])) g.clr++;
+    // PO Issued & Surat Pemberitahuan hanya berlaku untuk Flow PO
+    if (isPO && (r._po || gcell(r,["po date"]))) g.po++;
+    if (isPO && !ag && gcell(r,H_SURAT)) g.surat++;
+    if (gcell(r,H_INV)) g.inv++;
+    if (gcell(r,H_CLV)) g.clv++;
+    if (gcell(r,H_CLR)) g.clr++;
     g.amt += gnum(r,["amount","nilai"]);
   });
   return Object.values(groups);
@@ -307,6 +428,19 @@ async function dbDelete() {
   catch { return false; }
 }
 
+// Workbook baru punya banyak sheet (Panduan, Temuan, Outstanding Payment, Accrual Summary,
+// Lists, Coupa_*, SAP…). Ambil sheet "Partner Prepaid"/"Agency Prepaid": exact → startsWith → includes.
+function pickSheet(names, src) {
+  const want = src==="agency" ? "agency prepaid" : "partner prepaid";
+  const n = names.map(s=>({ s, k:normKey(s) }));
+  const hit = n.find(x=>x.k===want)
+    || n.find(x=>x.k.startsWith(want))
+    || n.find(x=>x.k.startsWith(src))
+    || n.find(x=>x.k.includes(want))
+    || n.find(x=>x.k.includes(src) && !/coupa|sap|accrual|outstanding|summary|list|panduan|temuan/.test(x.k));
+  return hit ? hit.s : names[0];
+}
+
 async function readXLSX(file, src) {
   const XLSX = await getXLSX();
   return new Promise((resolve,reject)=>{
@@ -314,14 +448,12 @@ async function readXLSX(file, src) {
     rd.onload = e => {
       try {
         const wb  = XLSX.read(e.target.result,{type:"array",cellDates:true});
-        let sn    = wb.SheetNames[0];
-        const ms  = wb.SheetNames.find(n=>n.toLowerCase().includes(src));
-        if (ms) sn = ms;
+        const sn  = pickSheet(wb.SheetNames, src);
         const ws  = wb.Sheets[sn];
         const arr = XLSX.utils.sheet_to_json(ws,{header:1,defval:""});
         const hints = src==="agency"
-          ? ["agency name","program type","#req","amount","po number","status"]
-          : ["partner name","program type","#req","amount","po number","status","reva date"];
+          ? ["agency name","program type","#req","amount","po number","invoice number","flow","status"]
+          : ["partner name","program type","#req","amount","po number","invoice number","flow","status","reva date"];
         let hdr = 0;
         for (let i=0;i<Math.min(arr.length,12);i++) {
           const row = arr[i].map(c=>String(c).toLowerCase()).join(" ");
@@ -669,13 +801,16 @@ export default function PayoutTracker({
 
   const [showAllCols, setShowAllCols] = useState(false);
 
+  // Data lama di DB tetap jalan: Flow/Invoice Number/status diturunkan saat load.
+  const enrichedRaw = useMemo(() => allRaw.map(enrichRow), [allRaw]);
+
   const { partnerRaw, agencyRaw } = useMemo(() => {
-    const pAll = allRaw.filter(r => r._source === "partner" || !r._source);
-    const aAll = allRaw.filter(r => r._source === "agency");
+    const pAll = enrichedRaw.filter(r => r._source === "partner" || !r._source);
+    const aAll = enrichedRaw.filter(r => r._source === "agency");
     const pR = applySidebarFilter(pAll, partnerName, filterMpxType, effectiveRegion, masterData, "partner");
     const aR = applySidebarFilter(aAll, null, null, effectiveRegion, masterData, "agency");
     return { partnerRaw: pR, agencyRaw: aR };
-  }, [allRaw, partnerName, filterMpxType, effectiveRegion, masterData]);
+  }, [enrichedRaw, partnerName, filterMpxType, effectiveRegion, masterData]);
 
   const { partnerAgg, agencyAgg } = useMemo(() => {
     const { agg: pAgg } = parseRows(partnerRaw, "partner");
@@ -683,7 +818,7 @@ export default function PayoutTracker({
     return { partnerAgg: pAgg, agencyAgg: aAgg };
   }, [partnerRaw, agencyRaw]);
 
-  const [filters, setFilters]         = useState({ month:[], entity:[], ptype:[], prog:[], status:[], q:"" });
+  const [filters, setFilters]         = useState({ month:[], entity:[], ptype:[], prog:[], status:[], flow:"all", q:"" });
   const [searchInput, setSearchInput] = useState("");
   const [tblSort, setTblSort]         = useState({ col:"month", dir:"desc" });
   const [rawSort, setRawSort]         = useState({ col:null, dir:"asc" });
@@ -705,7 +840,8 @@ export default function PayoutTracker({
   const isAg   = src === "agency";
   const curRaw = isAg ? agencyRaw  : partnerRaw;
   const curAgg = isAg ? agencyAgg  : partnerAgg;
-  const slaSet = isAg ? SLA_A : SLA_P;
+  const flowSel = filters.flow==="PO" ? FLOW_PO : filters.flow==="DI" ? FLOW_DI : "all";
+  const slaSet = useMemo(()=>slaStepsFor(isAg, flowSel),[isAg,flowSel]);
 
   const showToast = useCallback((msg,type="")=>{
     clearTimeout(toastTmr.current);
@@ -807,12 +943,13 @@ export default function PayoutTracker({
       entities: unique(curAgg.map(r=>r.entity)).sort(),
       ptypes:   unique(curAgg.map(r=>r.ptype)).sort(),
       progs:    unique(curAgg.map(r=>r.prog)).sort(),
-      statuses: unique(curRaw.map(r=>gstr(r,["status","payment status"]))).sort(),
+      statuses: unique(curRaw.map(rowStatus)).sort(),
     };
   },[curAgg,curRaw]);
 
   const { filtAgg, filtRaw } = useMemo(()=>{
     const { month,entity,ptype,prog,status,q } = filters;
+    const flow = filters.flow==="PO" ? FLOW_PO : filters.flow==="DI" ? FLOW_DI : null;
     const ql = q.toLowerCase().trim();
     const toArr = v => Array.isArray(v) ? v : (v ? [v] : []);
     const monthSel=toArr(month), entSel=toArr(entity), ptypeSel=toArr(ptype), progSel=toArr(prog), statusSel=toArr(status);
@@ -820,15 +957,17 @@ export default function PayoutTracker({
       (monthSel.length===0||monthSel.includes(r.month))&&
       (entSel.length===0||entSel.includes(r.entity))&&
       (ptypeSel.length===0||ptypeSel.includes(r.ptype))&&
-      (progSel.length===0||progSel.includes(r.prog))
+      (progSel.length===0||progSel.includes(r.prog))&&
+      (!flow||r.flow===flow)
     );
     let raw = curRaw.filter(r=>{
+      if (flow && rowFlow(r)!==flow) return false;
       if (monthSel.length>0 && !monthSel.includes(gstr(r,["program date","month"]))) return false;
       if (entSel.length>0   && !entSel.includes(gstr(r,["entity"]))) return false;
       if (ptypeSel.length>0 && !ptypeSel.includes(gstr(r,["partner type","agency name"]))) return false;
       if (progSel.length>0  && !progSel.includes(gstr(r,["program type"]))) return false;
-      if (statusSel.length>0 && !statusSel.includes(gstr(r,["status","payment status"]))) return false;
-      if (ql) { const blob=[gstr(r,["partner name","agency name"]),gstr(r,["project title"]),gstr(r,["po number","po #"]),gstr(r,["#req id"])].join(" ").toLowerCase(); if (!blob.includes(ql)) return false; }
+      if (statusSel.length>0 && !statusSel.includes(rowStatus(r))) return false;
+      if (ql) { const blob=[gstr(r,["partner name","agency name"]),gstr(r,["project title"]),r._po,r._inv,gstr(r,["#req id"])].join(" ").toLowerCase(); if (!blob.includes(ql)) return false; }
       return true;
     });
     if (statusSel.length>0||ql) agg = buildAgg(raw, src);
@@ -843,9 +982,16 @@ export default function PayoutTracker({
 
   const funnelStages = useMemo(()=>{
     const g = grand;
-    if (isAg) return [{key:"po",label:"PO Issued",val:g.po,color:C.tealDp},{key:"inv",label:"Invoice Submitted",val:g.inv,color:C.teal},{key:"clv",label:"CLV",val:g.clv,color:C.yellow},{key:"clr",label:"Bank Cleared",val:g.clr,color:C.yellowD}];
-    return [{key:"po",label:"PO Issued",val:g.po,color:C.tealDp},{key:"surat",label:"Surat Pemberitahuan",val:g.surat,color:C.tealD},{key:"inv",label:"Invoice Submitted",val:g.inv,color:C.teal},{key:"clv",label:"CLV",val:g.clv,color:C.yellow},{key:"clr",label:"Bank Cleared",val:g.clr,color:C.yellowD}];
-  },[grand,isAg]);
+    const inv = {key:"inv",label:"Invoice Submitted",val:g.inv,color:C.teal};
+    const clr = {key:"clr",label:"Bank Cleared",val:g.clr,color:C.yellowD};
+    // Direct Invoice tidak punya Req/PO → mulai dari Invoice; "All" juga mulai dari Invoice agar sebanding.
+    if (flowSel===FLOW_DI) return [inv,{key:"clv",label:"AP Verified",val:g.clv,color:C.yellow},clr];
+    if (flowSel!==FLOW_PO) return [inv,{key:"clv",label:"CLV / AP Verified",val:g.clv,color:C.yellow},clr];
+    const po = {key:"po",label:"PO Issued",val:g.po,color:C.tealDp};
+    const clv = {key:"clv",label:"CLV",val:g.clv,color:C.yellow};
+    if (isAg) return [po,inv,clv,clr];
+    return [po,{key:"surat",label:"Surat Pemberitahuan",val:g.surat,color:C.tealD},inv,clv,clr];
+  },[grand,isAg,flowSel]);
 
   const trendSeries = useMemo(()=>{
     return unique(filtAgg.map(r=>r.month)).sort((a,b)=>monthKey(a)-monthKey(b)).map(m=>{
@@ -858,7 +1004,8 @@ export default function PayoutTracker({
     if (!filtRaw.length) return [];
     return slaSet.map(p=>{
       const details=[];
-      filtRaw.forEach(r=>{ const d=daysBetween(gcell(r,p.from),gcell(r,p.to)); if(d==null||d<0)return; details.push({days:d,po:gstr(r,["po number","po #"]),name:gstr(r,["partner name","agency name"]),title:gstr(r,["project title"])||"—",month:gstr(r,["program date","month"]),amt:gnum(r,["amount"])}); });
+      // Tiap step hanya menghitung baris dari flow-nya (step PO tidak ikut menghitung Direct Invoice, dan sebaliknya)
+      filtRaw.forEach(r=>{ if(p.flow&&rowFlow(r)!==p.flow)return; const d=workDaysBetween(gcell(r,p.from),gcell(r,p.to)); if(d==null)return; details.push({days:d,po:refNo(r),name:gstr(r,["partner name","agency name"]),title:gstr(r,["project title"])||"—",month:gstr(r,["program date","month"]),amt:gnum(r,["amount"])}); });
       const ds=details.map(d=>d.days);
       return {...p,avg:ds.length?ds.reduce((a,b)=>a+b,0)/ds.length:0,n:ds.length,details:details.sort((a,b)=>b.days-a.days)};
     });
@@ -867,14 +1014,14 @@ export default function PayoutTracker({
   const topPartners = useMemo(()=>{
     if (!filtRaw.length) return [];
     const agg={};
-    filtRaw.forEach(r=>{ const n=gstr(r,["partner name","agency name"]); if(!n)return; if(!agg[n])agg[n]={name:n,amt:0,n:0,clr:0,progs:[]}; agg[n].amt+=gnum(r,["amount"]); agg[n].n++; if(gcell(r,["clearing date","clearing"]))agg[n].clr++; agg[n].progs.push({po:gstr(r,["po number"]),title:gstr(r,["project title"])||"—",month:gstr(r,["program date","month"]),amt:gnum(r,["amount"]),cleared:!!gcell(r,["clearing date","clearing"])}); });
+    filtRaw.forEach(r=>{ const n=gstr(r,["partner name","agency name"]); if(!n)return; if(!agg[n])agg[n]={name:n,amt:0,n:0,clr:0,progs:[]}; agg[n].amt+=gnum(r,["amount"]); agg[n].n++; if(gcell(r,H_CLR))agg[n].clr++; agg[n].progs.push({po:refNo(r),title:gstr(r,["project title"])||"—",month:gstr(r,["program date","month"]),amt:gnum(r,["amount"]),cleared:!!gcell(r,H_CLR)}); });
     return Object.values(agg).sort((a,b)=>b.amt-a.amt).slice(0,10);
   },[filtRaw]);
 
   const donutPieces = useMemo(()=>{
-    const cm={"PAID H+3":C.teal,"Payment Process":C.tealD,"Invoice Not Submitted":C.yellow,"Awaiting Inv Submission":C.yellowD,"On Process Payment":C.magenta,"Unknown":C.grey};
+    const cm={"PAID":C.teal,"Payment Process":C.tealD,"Invoice Not Submitted":C.yellow,"Unknown":C.grey};
     const cnt={};
-    filtRaw.forEach(r=>{ const s=gstr(r,["status","payment status"])||"Unknown"; cnt[s]=(cnt[s]||0)+1; });
+    filtRaw.forEach(r=>{ const s=rowStatus(r)||"Unknown"; cnt[s]=(cnt[s]||0)+1; });
     return Object.entries(cnt).map(([label,v])=>({label,v,color:cm[label]||C.pink}));
   },[filtRaw]);
 
@@ -908,12 +1055,13 @@ export default function PayoutTracker({
     if (fmt==="xlsx") {
       const XLSX=await getXLSX();
       const wb=XLSX.utils.book_new();
-      const ws=XLSX.utils.json_to_sheet(filtAgg.map(r=>({"Program Date":fmtMonthYear(r.month),"Entity":r.entity,"Partner/Agency Type":r.ptype,"Program Type":r.prog,"#Records":r.n,"PO":r.po,"Surat Pemberitahuan":r.surat,"Invoice":r.inv,"CLV":r.clv,"Clearing":r.clr,"% Invoice":r.n?+(r.inv/r.n*100).toFixed(1):0,"% CLV":r.n?+(r.clv/r.n*100).toFixed(1):0,"% Clearing":r.n?+(r.clr/r.n*100).toFixed(1):0})));
+      const ws=XLSX.utils.json_to_sheet(filtAgg.map(r=>({"Program Date":fmtMonthYear(r.month),"Entity":r.entity,"Partner/Agency Type":r.ptype,"Program Type":r.prog,"Flow":r.flow,"#Records":r.n,"PO":r.po,"Surat Pemberitahuan":r.surat,"Invoice":r.inv,"CLV":r.clv,"Clearing":r.clr,"% Invoice":r.n?+(r.inv/r.n*100).toFixed(1):0,"% CLV":r.n?+(r.clv/r.n*100).toFixed(1):0,"% Clearing":r.n?+(r.clr/r.n*100).toFixed(1):0})));
       XLSX.utils.book_append_sheet(wb,ws,"Summary"); XLSX.writeFile(wb,`${pref}_summary_${stamp}.xlsx`);
       showToast("Filtered summary downloaded — Excel","success");
     } else {
-      const hdr="Program Date,Entity,Partner Type,Program Type,#Rec,PO,Surat Pemberitahuan,Invoice,CLV,Clearing,% Invoice,% CLV,% Clearing";
-      const body=filtAgg.map(r=>[fmtMonthYear(r.month),r.entity,r.ptype,r.prog,r.n,r.po,r.surat,r.inv,r.clv,r.clr,r.n?+(r.inv/r.n*100).toFixed(1):0,r.n?+(r.clv/r.n*100).toFixed(1):0,r.n?+(r.clr/r.n*100).toFixed(1):0].join(",")).join("\n");
+      const hdr="Program Date,Entity,Partner Type,Program Type,Flow,#Rec,PO,Surat Pemberitahuan,Invoice,CLV,Clearing,% Invoice,% CLV,% Clearing";
+      const csv=v=>{ const s=String(v??""); return /[",\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s; };
+      const body=filtAgg.map(r=>[fmtMonthYear(r.month),r.entity,r.ptype,r.prog,r.flow,r.n,r.po,r.surat,r.inv,r.clv,r.clr,r.n?+(r.inv/r.n*100).toFixed(1):0,r.n?+(r.clv/r.n*100).toFixed(1):0,r.n?+(r.clr/r.n*100).toFixed(1):0].map(csv).join(",")).join("\n");
       const a=document.createElement("a"); a.href="data:text/csv;charset=utf-8,\uFEFF"+encodeURIComponent(hdr+"\n"+body); a.download=`${pref}_${stamp}.csv`; a.click();
       showToast("Filtered summary downloaded — CSV","success");
     }
@@ -922,7 +1070,7 @@ export default function PayoutTracker({
   async function exportRaw() {
     if (!filtRaw.length) { showToast("No data available","error"); return; }
     const XLSX=await getXLSX();
-    const allKeys=Object.keys(filtRaw[0]).filter(k=>k!=="_source");
+    const allKeys=Object.keys(filtRaw[0]).filter(k=>!k.startsWith("_"));
     // urutan kolom mengikuti tampilan front-end (rawKeys), sisanya menyusul di belakang
     const seen=new Set(), keys=[];
     for (const k of rawKeys) if (allKeys.includes(k) && !seen.has(k)) { keys.push(k); seen.add(k); }
@@ -950,7 +1098,7 @@ export default function PayoutTracker({
     const q=(searchInput||"").toLowerCase().trim();
     if (!q||q.length<2||!curRaw.length) return {partners:[],pos:[],projects:[]};
     const pCnt={},poCnt={},prCnt={};
-    curRaw.forEach(r=>{ const n=gstr(r,["partner name","agency name"]); if(n)pCnt[n]=(pCnt[n]||0)+1; const po=gstr(r,["po number","po #"]); if(po)poCnt[po]=(poCnt[po]||0)+1; const pr=gstr(r,["project title"]); if(pr)prCnt[pr]=(prCnt[pr]||0)+1; });
+    curRaw.forEach(r=>{ const n=gstr(r,["partner name","agency name"]); if(n)pCnt[n]=(pCnt[n]||0)+1; [r._po,r._inv].forEach(po=>{ if(po)poCnt[po]=(poCnt[po]||0)+1; }); const pr=gstr(r,["project title"]); if(pr)prCnt[pr]=(prCnt[pr]||0)+1; });
     return {
       partners:Object.entries(pCnt).filter(([k])=>k.toLowerCase().includes(q)).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([k,v])=>({label:k,count:v,type:"partner"})),
       pos:     Object.entries(poCnt).filter(([k])=>k.toLowerCase().includes(q)).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,v])=>({label:k,count:v,type:"po"})),
@@ -968,18 +1116,20 @@ export default function PayoutTracker({
     ["Project Title","project title","ProjectTitle"],
     ["Partner Name","partner name","partner_name","partnerName","Agency Name","agency name"],
     ["Amount","amount","Nilai","nilai"],
+    ["Flow","flow"],
     ["PO Number","po number","PO #","po #","No PO","no po"],
+    ["Invoice Number","invoice number","Inv Number","inv number","Invoice No"],
     ["Invoice Submission","invoice submission","Invoice","invoice"],
     ["Clearing Bank","clearing date","Clearing Date","clearing","Clearing","Cleared Bank","cleared bank"],
     ["Estimation Date","estimation date","Estimasi","estimasi"],
     ["Status","status","Payment Status","payment status"],
   ];
 
-  const RAW_COL_ORDER = ["Program Date","program date","Entity","entity","Partner Type","partner type","partnertype","partner_type","Project Title","project title","#Req ID","#req id","req id","Partner Name","partner name","partner_name","Amount","amount","PO Number","po number","PO #","po #","Reva Date","reva date","PO Date","po date","Surat Pemberitahuan Date","surat pemberitahuan date","surat pemberitahuan","Invoice Submission","invoice submission","invoice","CLV Date","clv date","clv","Estimation Date","estimation date","Status","status","Payment Status","payment status"];
+  const RAW_COL_ORDER = ["Program Date","program date","Entity","entity","Partner Type","partner type","partnertype","partner_type","Project Title","project title","#Req ID","#req id","req id","Partner Name","partner name","partner_name","Amount","amount","Flow","PO Number","po number","PO #","po #","Invoice Number","Reva Date","reva date","PO Date","po date","Surat Pemberitahuan Date","surat pemberitahuan date","surat pemberitahuan","Invoice Submission","invoice submission","invoice","CLV Date","clv date","clv","Estimation Date","estimation date","Status","status","Payment Status","payment status"];
 
   const rawKeysAll = useMemo(()=>{
     if (!curRaw.length) return [];
-    const allKeys=Object.keys(curRaw[0]).filter(k=>k!=="_source");
+    const allKeys=Object.keys(curRaw[0]).filter(k=>!k.startsWith("_"));
     const seen=new Set(), ordered=[];
     for (const p of RAW_COL_ORDER) { const f=allKeys.find(k=>k.toLowerCase().trim()===p.toLowerCase().trim()); if(f&&!seen.has(f)){ordered.push(f);seen.add(f);} }
     for (const k of allKeys) { if(!seen.has(k))ordered.push(k); }
@@ -989,7 +1139,7 @@ export default function PayoutTracker({
 
   const rawKeysMain = useMemo(()=>{
     if (!curRaw.length) return [];
-    const allKeys=Object.keys(curRaw[0]).filter(k=>k!=="_source");
+    const allKeys=Object.keys(curRaw[0]).filter(k=>!k.startsWith("_"));
     const norm = s => s.toLowerCase().replace(/\s+/g," ").trim();
     const seen=new Set(), ordered=[];
     for (const group of MAIN_RAW_GROUPS) {
@@ -1039,7 +1189,7 @@ export default function PayoutTracker({
     dragOver,setDragOver,searchFocus,setSearchFocus,searchIdx,setSearchIdx,
     searchRef,searchSuggestions,allSuggestions,searchInput,setSearchInput,
     funnelExp,setFunnelExp,donutExp,setDonutExp,bnExp,setBnExp,tpExp,setTpExp,
-    src,setSrc,activeTab,setActiveTab,heatMetric,setHeatMetric,
+    src,setSrc,flowSel,activeTab,setActiveTab,heatMetric,setHeatMetric,
     curRaw,curAgg,filtAgg,filtRaw,grand,grandPartnerCount,
     funnelStages,trendSeries,donutPieces,heatData,bnResults,topPartners,sortedMonths,
     rawKeys,rawKeysAll,rawKeysMain,showAllCols,setShowAllCols,
@@ -1092,9 +1242,9 @@ function AdminScreen({ t, pubMeta, partnerFile, agencyFile, partnerRaw, agencyRa
           <span style={{fontFamily:MONO,fontSize:10,color:C.teal,letterSpacing:"0.1em"}}>Realtime</span>
         </div>
         <h1 style={{fontWeight:800,fontSize:"clamp(1.8rem,4vw,2.8rem)",letterSpacing:"-0.03em",color:t.ink,margin:"0 0 8px",lineHeight:1.05}}>Upload &amp; Publish Data</h1>
-        <p style={{color:t.muted,fontSize:14,maxWidth:"52ch",lineHeight:1.65,margin:0}}>Upload Partner Prepaid &amp; Agency Prepaid files, then publish. All viewers update automatically via realtime sync.</p>
+        <p style={{color:t.muted,fontSize:14,maxWidth:"52ch",lineHeight:1.65,margin:0}}>Upload Partner Prepaid &amp; Agency Prepaid files (the sheet named &ldquo;Partner Prepaid&rdquo; / &ldquo;Agency Prepaid&rdquo; is read; other sheets are ignored), then publish. All viewers update automatically via realtime sync.</p>
         <div style={{display:"flex",gap:8,marginTop:14,flexWrap:"wrap"}}>
-          {[{l:"Partner SLA 2/1/2/2/3 WD (Working Days)",c:C.teal},{l:"Agency SLA 2/2/2/3 WD (Working Days)",c:C.magenta}].map((b,i)=>(
+          {[{l:"Partner SLA 2/1/2/2/3 WD (Working Days)",c:C.teal},{l:"Agency SLA 2/2/2/3 WD (Working Days)",c:C.magenta},{l:"Direct Invoice SLA 4/5 WD (Working Days)",c:C.yellowD}].map((b,i)=>(
             <span key={i} style={{display:"inline-flex",alignItems:"center",padding:"5px 12px",borderRadius:99,background:`${b.c}18`,color:b.c,border:`1px solid ${b.c}40`,fontFamily:MONO,fontSize:10.5,fontWeight:600}}>{b.l}</span>
           ))}
         </div>
@@ -1180,6 +1330,18 @@ function SegBtn({s,active,disabled,count,label,onClick,t}) {
   return <button {...hE} onClick={onClick} disabled={disabled} style={{fontWeight:600,fontSize:12.5,padding:"8px 18px",borderRadius:10,border:0,background:active?ac:hov?t.surf3:"transparent",color:active?"#fff":hov?t.ink:t.muted,cursor:disabled?"default":"pointer",display:"inline-flex",alignItems:"center",gap:8,transition:"all .15s",whiteSpace:"nowrap",opacity:disabled?.38:1,pointerEvents:disabled?"none":"auto"}}>{label}<span style={{fontFamily:MONO,fontSize:10,padding:"2px 7px",borderRadius:99,background:active?"rgba(255,255,255,.22)":t.surf4,color:active?"#fff":t.ink2}}>{count}</span></button>;
 }
 
+function FlowToggle({value,onChange,t}) {
+  const items=[{v:"all",l:"All Flows"},{v:"PO",l:"PO"},{v:"DI",l:"Direct Invoice"}];
+  return (
+    <div role="group" aria-label="Flow" style={{display:"inline-flex",background:t.surf3,borderRadius:10,padding:3,gap:2,border:`1px solid ${value!=="all"?C.teal:t.line}`,flexShrink:0}}>
+      {items.map(it=>{ const on=value===it.v; return (
+        <button key={it.v} type="button" aria-pressed={on} onClick={()=>onChange(it.v)}
+          style={{fontFamily:"inherit",fontSize:11.5,fontWeight:600,padding:"5px 11px",borderRadius:8,border:0,cursor:"pointer",transition:"all .15s",whiteSpace:"nowrap",background:on?C.teal:"transparent",color:on?"#fff":t.muted}}>{it.l}</button>
+      ); })}
+    </div>
+  );
+}
+
 function TabBtn({label,count,active,onClick,t}) {
   const [hov,hE]=useHover();
   return (
@@ -1198,7 +1360,7 @@ function SugItem({s,active,iconLabel,accentColor,onPick,t}) {
 
 function DonutRow({p,total,isExp,onToggle,filtRaw,t}) {
   const [hov,hE]=useHover();
-  const recs=isExp?filtRaw.filter(r=>(gstr(r,["status","payment status"])||"Unknown")===p.label).slice(0,30):[];
+  const recs=isExp?filtRaw.filter(r=>(rowStatus(r)||"Unknown")===p.label).slice(0,30):[];
   return (
     <div>
       <div {...hE} {...kbd(onToggle)} onClick={onToggle} aria-expanded={isExp} style={{display:"grid",gridTemplateColumns:"1fr auto 20px",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:10,background:isExp?`${C.teal}12`:hov?t.surf3:t.surf2,border:`1px solid ${isExp?C.teal:hov?t.line2:t.line}`,cursor:"pointer",transition:"all .15s"}}>
@@ -1206,7 +1368,7 @@ function DonutRow({p,total,isExp,onToggle,filtRaw,t}) {
         <div style={{display:"flex",alignItems:"baseline",gap:5}}><span style={{fontFamily:MONO,fontWeight:600,fontSize:12,color:t.ink}}>{p.v.toLocaleString()}</span><span style={{fontFamily:MONO,fontSize:10,color:t.muted}}>({Math.round(p.v/(total||1)*100)}%)</span></div>
         <span style={{fontSize:9,color:isExp?C.teal:t.muted,display:"inline-block",transform:isExp?"rotate(180deg)":"none",transition:"transform .2s"}}>▼</span>
       </div>
-      {isExp&&recs.length>0&&<div style={{marginTop:4,background:t.surf2,border:`1px solid ${t.line}`,borderRadius:10,overflow:"hidden",maxHeight:200,overflowY:"auto"}}>{recs.map((r,j)=><DetailRow key={j} po={gstr(r,["po number","po #"])||"No PO"} name={gstr(r,["project title"])||gstr(r,["partner name","agency name"])||"—"} meta={fmtMoney(gnum(r,["amount"]))} t={t}/>)}</div>}
+      {isExp&&recs.length>0&&<div style={{marginTop:4,background:t.surf2,border:`1px solid ${t.line}`,borderRadius:10,overflow:"hidden",maxHeight:200,overflowY:"auto"}}>{recs.map((r,j)=><DetailRow key={j} po={refNo(r)||"No PO"} name={gstr(r,["project title"])||gstr(r,["partner name","agency name"])||"—"} meta={fmtMoney(gnum(r,["amount"]))} t={t}/>)}</div>}
       {isExp&&recs.length===0&&<div style={{marginTop:4,padding:"8px 12px",background:t.surf2,border:`1px solid ${t.line}`,borderRadius:10,fontSize:11.5,fontStyle:"italic",color:t.muted}}>No records match the current filters.</div>}
     </div>
   );
@@ -1227,7 +1389,7 @@ function HeatCell({bg,light,pp,v,n}) {
   return <div {...hE} style={{borderRadius:8,padding:"9px 5px",textAlign:"center",background:bg,color:light?"#1a1a1a":"#fff",cursor:"default",transition:"transform .12s",transform:hov?"scale(1.05)":"scale(1)",position:"relative",zIndex:hov?2:0}}><div style={{fontWeight:700,fontSize:12,fontFamily:MONO,lineHeight:1}}>{pp}%</div><div style={{fontSize:9,opacity:.9,marginTop:2,fontFamily:MONO}}>{v}/{n}</div></div>;
 }
 
-function BnRow({r,isExp,onToggle,t}) {
+function BnRow({r,showFlow,isExp,onToggle,t}) {
   const [hov,hE]=useHover();
   const s=r.avg<=r.sla?"ok":r.avg<=r.sla*1.5?"warn":"breach";
   const sc=s==="ok"?t.good:s==="warn"?t.warn:t.bad;
@@ -1238,7 +1400,7 @@ function BnRow({r,isExp,onToggle,t}) {
   return (
     <div {...hE} {...(clickable?kbd(onToggle):{})} onClick={clickable?onToggle:undefined} aria-expanded={isExp} style={{borderRadius:12,background:hov?t.surf3:t.surf2,border:`${isExp?"2":"1"}px solid ${isExp?C.magenta:hov?t.line2:t.line}`,padding:"11px 14px",transition:"all .15s",cursor:clickable?"pointer":"default"}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:8,flexWrap:"wrap"}}>
-        <div style={{fontWeight:700,fontSize:13,color:t.ink,display:"flex",alignItems:"center",gap:6}}>{r.label}{clickable&&<span style={{fontSize:9,color:isExp?C.magenta:t.muted,display:"inline-block",transform:isExp?"rotate(180deg)":"none",transition:"transform .2s"}}>▼</span>}</div>
+        <div style={{fontWeight:700,fontSize:13,color:t.ink,display:"flex",alignItems:"center",gap:6}}>{r.label}{showFlow&&r.flow&&<FlowBadge flow={r.flow} t={t}/>}{clickable&&<span style={{fontSize:9,color:isExp?C.magenta:t.muted,display:"inline-block",transform:isExp?"rotate(180deg)":"none",transition:"transform .2s"}}>▼</span>}</div>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           <span style={{fontFamily:MONO,fontSize:9.5,fontWeight:600,padding:"3px 8px",borderRadius:6,background:sb,color:sc,border:`1px solid ${sbd}`,textTransform:"uppercase",letterSpacing:"0.08em"}}>{s==="ok"?"WITHIN SLA":s==="warn"?"APPROACHING SLA":"OVERDUE"}</span>
           <span style={{fontFamily:MONO,fontWeight:700,fontSize:14}}><span style={{color:sc}}>{r.avg.toFixed(1)}d</span><span style={{fontSize:10,color:t.muted,fontWeight:400}}> / {r.sla} WD</span></span>
@@ -1309,6 +1471,7 @@ function SummaryDataRow({r,j,isAg,t}) {
       <td style={{padding:"8px 9px",textAlign:"left",fontSize:12,color:t.ink}}>{r.entity}</td>
       <td style={{padding:"8px 9px",textAlign:"left",fontSize:12,fontWeight:600,color:t.ink}}>{r.ptype}</td>
       <td style={{padding:"8px 9px",textAlign:"left",fontSize:12,color:t.muted}}>{r.prog}</td>
+      <td style={{padding:"8px 9px",textAlign:"left"}}><FlowBadge flow={r.flow} t={t}/></td>
       <td style={{textAlign:"center",padding:"8px 9px",color:t.ink}}>{r.n||""}</td>
       <td style={{textAlign:"center",padding:"8px 9px",color:t.ink}}>{r.po||""}</td>
       {!isAg&&<td style={{textAlign:"center",padding:"8px 9px",color:t.ink}}>{r.surat||""}</td>}
@@ -1338,10 +1501,17 @@ function RawDataRow({r,i,rawKeys,isLeftCol,fmtCellT,t,docs,segment}) {
   return <tr {...hE} style={{borderBottom:`1px solid ${t.line}`,background:hov?t.rowHover:i%2===1?t.rowStripe:"transparent",transition:"background .1s"}}>{rawKeys.map(k=><td key={k} title={String(r[k]||"")} style={{padding:"8px 9px",textAlign:isLeftCol(k)?"left":"center",maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{fmtCellT(r[k],k,t)}</td>)}<td style={{padding:"6px 9px",textAlign:"center",whiteSpace:"nowrap"}}><DocsCell refId={refKey(gstr(r,DOC_REF_COLUMN))} partnerName={gstr(r,["partner name","agency name"])} segment={segment} title={gstr(r,["project title"])} amountText={fmtMoney(gnum(r,["amount"]),false)} docs={docs} t={t}/></td></tr>;
 }
 
+// Milestone tercapai? (PO & Surat hanya relevan untuk Flow PO)
+const STAGE_HINTS = { surat:H_SURAT, inv:H_INV, clv:H_CLV, clr:H_CLR };
+function stageDone(r, key) {
+  if (key==="po") return rowFlow(r)===FLOW_PO && !!(r._po || gcell(r,["po date"]));
+  if (key==="surat" && rowFlow(r)!==FLOW_PO) return false;
+  return !!gcell(r, STAGE_HINTS[key]||[]);
+}
+
 function FunnelRowItem({s,prevKey,drop,isExp,filtRaw,grand,onToggle,t}) {
   const [hov,hE]=useHover();
-  const stH={po:["po number","po #","no po","po date"],surat:["surat pemberitahuan date","surat pemberitahuan","surat"],inv:["invoice submission","invoice"],clv:["clv date","clv"],clr:["clearing date","clearing"]};
-  const pending=isExp&&filtRaw.length?filtRaw.filter(r=>!gcell(r,stH[s.key]||[])&&(!prevKey||!!gcell(r,stH[prevKey]||[]))).map(r=>({po:gstr(r,["po number"]),name:gstr(r,["partner name","agency name"])||"—",month:gstr(r,["program date"]),amt:gnum(r,["amount"])})).sort((a,b)=>b.amt-a.amt):[];
+  const pending=isExp&&filtRaw.length?filtRaw.filter(r=>!stageDone(r,s.key)&&(!prevKey||stageDone(r,prevKey))).map(r=>({po:refNo(r),name:gstr(r,["partner name","agency name"])||"—",month:gstr(r,["program date"]),amt:gnum(r,["amount"])})).sort((a,b)=>b.amt-a.amt):[];
   return (
     <div style={{borderBottom:`1px solid ${t.line}`,paddingBottom:6,marginBottom:6}}>
       <div {...hE} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"5px 8px",borderRadius:8,background:hov?t.surf2:"transparent",transition:"background .1s"}}>
@@ -1522,15 +1692,17 @@ function DashScreen(props) {
   const segVisible = ((isSPM||isIOHAny)?["partner","agency"]:["partner"])
     .filter(s=>(s==="partner"?segPartnerCount:segAgencyCount)>0);
 
-  const resetFilters = () => { setFilters({month:[],entity:[],ptype:[],prog:[],status:[],q:""}); setSearchInput(""); };
+  const resetFilters = () => { setFilters({month:[],entity:[],ptype:[],prog:[],status:[],flow:"all",q:""}); setSearchInput(""); };
 
   const chipDefs = [["month","Month"],["entity","Entity"],["ptype",isAg?"Agency":"Partner"],["prog","Program"],["status","Status"]];
   const chips = [];
   chipDefs.forEach(([k,lbl])=>{ (Array.isArray(filters[k])?filters[k]:[]).forEach(v=>chips.push({k,v,lbl})); });
+  if (filters.flow && filters.flow!=="all") chips.push({k:"flow",v:filters.flow==="DI"?FLOW_DI:FLOW_PO,lbl:"Flow"});
   if (filters.q) chips.push({k:"q",v:filters.q,lbl:"Search"});
   const activeFilterCount = chips.length;
   const removeChip = (c) => {
     if (c.k==="q") { setFilters(f=>({...f,q:""})); setSearchInput(""); }
+    else if (c.k==="flow") setFilters(f=>({...f,flow:"all"}));
     else setFilters(f=>({...f,[c.k]:f[c.k].filter(x=>x!==c.v)}));
   };
 
@@ -1552,7 +1724,7 @@ function DashScreen(props) {
           <h1 style={{fontWeight:800,fontSize:"clamp(1.6rem,3.5vw,2.4rem)",letterSpacing:"-0.03em",color:t.ink,margin:"0 0 8px",lineHeight:1.04}}>
             Payout Tracker <em style={{fontStyle:"italic",color:C.magenta}}>Sumatera</em>
           </h1>
-          <p style={{color:t.muted,fontSize:14,margin:0,lineHeight:1.6}}>Milestone PO → Invoice → CLV → Bank Cleared · Partner &amp; Agency Prepaid</p>
+          <p style={{color:t.muted,fontSize:14,margin:0,lineHeight:1.6}}>PO flow: PO → Invoice → CLV → Bank Cleared · Direct Invoice: Invoice → AP Verified → Bank Cleared · Partner &amp; Agency Prepaid</p>
           {(regionFilter || filterMpxType) && (
             <div style={{display:"inline-flex",alignItems:"center",gap:8,marginTop:10,padding:"5px 12px",borderRadius:8,background:t.surf2,border:`1px solid ${t.line}`,fontSize:12,color:t.muted,flexWrap:"wrap"}}>
               <span style={{width:7,height:7,borderRadius:"50%",background:C.teal,flexShrink:0}}/>
@@ -1639,6 +1811,7 @@ function DashScreen(props) {
           </div>
           {(!isMobile||showFilters)&&(
             <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginTop:10}}>
+              <FlowToggle value={filters.flow||"all"} onChange={v=>setFilters(f=>({...f,flow:v}))} t={t}/>
               <MultiSel t={t} values={Array.isArray(filters.month)?filters.month:[]} options={opts.months.filter(Boolean)} placeholder="All Months" onChange={vals=>setFilters(f=>({...f,month:vals}))}/>
               <MultiSel t={t} values={Array.isArray(filters.entity)?filters.entity:[]} options={opts.entities.filter(Boolean)} placeholder="All Entities" onChange={vals=>setFilters(f=>({...f,entity:vals}))}/>
               <MultiSel t={t} values={Array.isArray(filters.ptype)?filters.ptype:[]} options={opts.ptypes.filter(Boolean)} placeholder={isAg?"All Agencies":"All Partners"} onChange={vals=>setFilters(f=>({...f,ptype:vals}))}/>
@@ -1646,7 +1819,7 @@ function DashScreen(props) {
               {curRaw.length>0&&<MultiSel t={t} values={Array.isArray(filters.status)?filters.status:[]} options={opts.statuses.filter(Boolean)} placeholder="All Statuses" onChange={vals=>setFilters(f=>({...f,status:vals}))}/>}
               <div ref={searchRef} style={{position:"relative",flex:"1 1 200px",minWidth:160}}>
                 <svg style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",pointerEvents:"none",color:t.muted}} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-                <input type="text" placeholder="Search partner, PO, or project…" value={searchInput}
+                <input type="text" placeholder="Search partner, PO / invoice no., or project…" value={searchInput}
                   onChange={e=>{setSearchInput(e.target.value);setSearchIdx(-1);}}
                   onFocus={()=>setSearchFocus(true)} onBlur={()=>setTimeout(()=>setSearchFocus(false),160)}
                   onKeyDown={e=>{
@@ -1660,7 +1833,7 @@ function DashScreen(props) {
                 {searchInput&&<button onClick={()=>{setSearchInput("");setFilters(f=>({...f,q:""}));}} aria-label="Clear search" style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",width:18,height:18,borderRadius:"50%",border:"none",background:t.surf4,color:t.muted,cursor:"pointer",fontSize:10,padding:0}}>✕</button>}
                 {searchFocus&&allSuggestions.length>0&&(
                   <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,right:0,zIndex:300,background:t.surf,border:`1px solid ${t.line2}`,borderRadius:14,boxShadow:t.shadow3,overflow:"hidden"}}>
-                    {[{g:searchSuggestions.partners,l:isAg?"Agency":"Partner",ic:C.teal,lbl:"P",off:0},{g:searchSuggestions.pos,l:"PO Number",ic:C.magenta,lbl:"PO",off:searchSuggestions.partners.length},{g:searchSuggestions.projects,l:"Project",ic:C.pink,lbl:"Pr",off:searchSuggestions.partners.length+searchSuggestions.pos.length}].filter(x=>x.g.length>0).map(({g,l,ic,lbl,off})=>(
+                    {[{g:searchSuggestions.partners,l:isAg?"Agency":"Partner",ic:C.teal,lbl:"P",off:0},{g:searchSuggestions.pos,l:"PO / Invoice Number",ic:C.magenta,lbl:"PO",off:searchSuggestions.partners.length},{g:searchSuggestions.projects,l:"Project",ic:C.pink,lbl:"Pr",off:searchSuggestions.partners.length+searchSuggestions.pos.length}].filter(x=>x.g.length>0).map(({g,l,ic,lbl,off})=>(
                       <div key={l}>
                         <div style={{padding:"5px 14px 4px",fontFamily:MONO,fontSize:9,textTransform:"uppercase",letterSpacing:"0.14em",color:t.muted,background:t.surf2,display:"flex",justifyContent:"space-between"}}><span>{l}</span><span style={{color:C.teal}}>{g.length}</span></div>
                         {g.map((s,i)=><SugItem key={i} s={s} active={searchIdx===off+i} iconLabel={lbl} accentColor={ic} t={t} onPick={()=>{setSearchInput(s.label);setFilters(f=>({...f,q:s.label}));setSearchFocus(false);setSearchIdx(-1);}}/>)}
@@ -1709,7 +1882,7 @@ function DashScreen(props) {
       )}
 
       <div style={{marginTop:28,paddingTop:18,borderTop:`1px solid ${t.line}`,textAlign:"center",fontFamily:MONO,fontSize:10,letterSpacing:"0.12em",textTransform:"uppercase",color:t.muted,lineHeight:1.6}}>
-        Partner &amp; Agency Payout Tracker · Sumatera · SAP &amp; Web Coupa · SLA {isAg?"2/2/2/3":"2/1/2/2/3"} WD (Working Days)
+        Partner &amp; Agency Payout Tracker · Sumatera · SAP &amp; Web Coupa · PO SLA {isAg?"2/2/2/3":"2/1/2/2/3"} WD · Direct Invoice SLA 4/5 WD (Working Days)
         {regionFilter&&<span style={{marginLeft:12,color:t.yellow}}>· {regionFilter}</span>}
       </div>
     </div>
@@ -1717,26 +1890,29 @@ function DashScreen(props) {
 }
 
 function DashTab(props) {
-  const { t, w, grand, grandPartnerCount, filtAgg, filtRaw, src, funnelStages, trendSeries, donutPieces, heatData, heatMetric, setHeatMetric, bnResults, topPartners, sortedMonths, collapsed, setCollapsed, tblSort, setTblSort, funnelExp, setFunnelExp, donutExp, setDonutExp, bnExp, setBnExp, tpExp, setTpExp, exportSummary } = props;
+  const { t, w, grand, grandPartnerCount, filtAgg, filtRaw, src, flowSel, funnelStages, trendSeries, donutPieces, heatData, heatMetric, setHeatMetric, bnResults, topPartners, sortedMonths, collapsed, setCollapsed, tblSort, setTblSort, funnelExp, setFunnelExp, donutExp, setDonutExp, bnExp, setBnExp, tpExp, setTpExp, exportSummary } = props;
   const isAg = src==="agency";
+  const ins = useMemo(()=>computeInsights(filtRaw, isAg),[filtRaw,isAg]);
   const noteItems = [
-    {l:"Data Source",   txt:`SAP & Web Coupa · ${isAg?"Agency SLA 2/2/2/3":"Partner SLA 2/1/2/2/3"} WD (Working Days)`, c:C.teal},
+    {l:"Data Source",   txt:`SAP & Web Coupa · PO flow ${isAg?"Agency SLA 2/2/2/3":"Partner SLA 2/1/2/2/3"} WD · Direct Invoice SLA 4/5 WD`, c:C.teal},
+    {l:"Flow",          txt:"Since Coupa go-live (11 Oct 2026) Requisition/PO is optional: Direct Invoice rows skip Req & PO", c:C.pink},
     {l:"Invoice Sub.",  txt:"Submitted to Coupa · AP verification",                                                        c:C.yellow},
-    {l:"CLV",           txt:"Cleared Voucher · Finance approved",                                                           c:C.magenta},
+    {l:"CLV / AP Verified", txt:"Cleared Voucher · Finance approved (Clv Date)",                                         c:C.magenta},
     {l:"Bank Cleared",  txt:"Fund transfer completed (3 WD)",                                                               c:C.tealD},
   ];
   return (
     <>
       {/* Grand Total Banner — hero summary */}
       <GrandTotalBanner grand={grand} partnerCount={grandPartnerCount} monthsCount={unique(filtAgg.map(r=>r.month)).length} groupCount={filtAgg.length} isAg={isAg} w={w} t={t}/>
+      <KpiRow ins={ins} w={w} t={t}/>
 
       <div style={{display:"grid",gridTemplateColumns:w>=1000?"1.05fr 1fr":"1fr",gap:14,marginBottom:14}}>
         <Card t={t} pad={false}>
-          <CardHead title="Completion Funnel" accent={C.teal} sub={`${isAg?"Agency milestones":"Partner milestones"} · click "pending" badge to view records`} t={t}/>
+          <CardHead title="Completion Funnel" accent={C.teal} sub={`${isAg?"Agency":"Partner"} milestones · ${flowSel===FLOW_PO?"PO flow":flowSel===FLOW_DI?"Direct Invoice flow":"all flows (from Invoice Submitted)"} · click "pending" badge to view records`} t={t}/>
           <div style={{padding:20,display:"flex",gap:18,alignItems:"flex-start",flexWrap:"wrap"}}>
             <div style={{flexShrink:0}}>
               {(()=>{
-                const W=190,H=isAg?175:215,pad=5,sH=(H-pad*2)/funnelStages.length;
+                const W=190,H=Math.max(110,funnelStages.length*43),pad=5,sH=(H-pad*2)/funnelStages.length;
                 const maxV=grand.n||1;
                 return <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{display:"block"}} role="img" aria-label="Milestone funnel">{funnelStages.map((s,i)=>{ const w1=(s.val/maxV)*(W-12); const nv=funnelStages[i+1]?funnelStages[i+1].val:s.val; const w2=(nv/maxV)*(W-12); const x1a=(W-w1)/2,x1b=x1a+w1,x2a=(W-w2)/2,x2b=x2a+w2,y1=pad+i*sH,y2=y1+sH-1; const darkTxt=s.color===C.yellow||s.color==="#FFCB05"; return <g key={s.key}><path d={`M${x1a},${y1} L${x1b},${y1} L${x2b},${y2} L${x2a},${y2} Z`} fill={s.color} opacity={.95}/><text x={W/2} y={y1+sH/2+4} textAnchor="middle" fill={darkTxt?"#1a1a1a":"#fff"} fontSize={10.5} fontWeight="700" fontFamily="inherit">{s.val.toLocaleString()}</text></g>; })}</svg>;
               })()}
@@ -1787,10 +1963,10 @@ function DashTab(props) {
       {filtRaw.length>0&&(
         <div style={{display:"grid",gridTemplateColumns:w>=1000?"1fr 1fr":"1fr",gap:14,marginBottom:14}}>
           <Card t={t} pad={false}>
-            <CardHead title="SLA Bottleneck Analysis" accent={C.red} sub={`${isAg?"Agency 2/2/2/3":"Partner 2/1/2/2/3"} WD (Working Days)`} t={t}/>
+            <CardHead title="SLA Bottleneck Analysis" accent={C.red} sub={`${flowSel===FLOW_DI?"":`PO ${isAg?"Agency 2/2/2/3":"Partner 2/1/2/2/3"}`}${flowSel==="all"?" · ":""}${flowSel===FLOW_PO?"":"Direct Invoice 4/5"} WD (Working Days) · each step counts its own flow only`} t={t}/>
             <div style={{padding:20}}>
               <div style={{fontFamily:MONO,fontSize:10,color:t.muted,padding:"6px 12px",background:t.surf2,borderRadius:9,marginBottom:14,borderLeft:`3px solid ${C.teal}`}}><strong style={{color:t.ink,fontSize:11}}>{unique(filtRaw.map(r=>gstr(r,["program date","month"]))).length} month{unique(filtRaw.map(r=>gstr(r,["program date","month"]))).length!==1?"s":""}</strong>{" · "}<strong style={{color:t.ink,fontSize:11}}>{filtRaw.length.toLocaleString()}</strong> records</div>
-              <div style={{display:"flex",flexDirection:"column",gap:9}}>{bnResults.map(r=><BnRow key={r.key} r={r} isExp={bnExp===r.key} onToggle={()=>r.n>0&&setBnExp(e=>e===r.key?null:r.key)} t={t}/>)}</div>
+              <div style={{display:"flex",flexDirection:"column",gap:9}}>{bnResults.map(r=><BnRow key={r.key} r={r} showFlow={flowSel==="all"} isExp={bnExp===r.key} onToggle={()=>r.n>0&&setBnExp(e=>e===r.key?null:r.key)} t={t}/>)}</div>
               <div style={{display:"flex",gap:12,marginTop:12,padding:"8px 12px",background:t.surf2,borderRadius:9,border:`1px solid ${t.line}`,flexWrap:"wrap",fontFamily:MONO,fontSize:10,color:t.muted,textTransform:"uppercase",letterSpacing:"0.06em"}}>{[{c:t.good,l:"Within SLA"},{c:t.warn,l:"Approaching SLA"},{c:t.bad,l:"Overdue"}].map(x=><span key={x.l} style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,borderRadius:3,background:x.c}}/>{x.l}</span>)}</div>
             </div>
           </Card>
@@ -1802,11 +1978,376 @@ function DashTab(props) {
           </Card>
         </div>
       )}
+      {filtRaw.length>0&&<InsightSections ins={ins} isAg={isAg} flowSel={flowSel} w={w} t={t}/>}
       <SummaryTable t={t} w={w} filtAgg={filtAgg} grand={grand} grandPartnerCount={grandPartnerCount} sortedMonths={sortedMonths} collapsed={collapsed} setCollapsed={setCollapsed} tblSort={tblSort} setTblSort={setTblSort} isAg={isAg} exportSummary={exportSummary}/>
       <Card t={t} pad={false} style={{marginBottom:14}}>
         <div style={{padding:"13px 20px",fontWeight:700,fontSize:13.5,letterSpacing:"-0.01em",borderBottom:`1px solid ${t.line}`,color:t.ink,background:t.surf2}}>Data References &amp; Remarks</div>
-        <div style={{display:"grid",gridTemplateColumns:w>=900?"repeat(4,1fr)":w>=600?"repeat(2,1fr)":"1fr",gap:12,padding:16}}>{noteItems.map((n,i)=><NoteCard key={i} n={n} t={t}/>)}</div>
+        <div style={{display:"grid",gridTemplateColumns:w>=900?"repeat(5,1fr)":w>=600?"repeat(2,1fr)":"1fr",gap:12,padding:16}}>{noteItems.map((n,i)=><NoteCard key={i} n={n} t={t}/>)}</div>
       </Card>
+    </>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   INSIGHTS — KPI, outstanding & aging, upcoming payments, SLA compliance,
+   PO vs Direct Invoice, per Partner/Agency, Accrual Agency.
+   Semua dihitung sekali dari filtRaw (sudah ikut filter Flow/Month/Entity/dst).
+   ───────────────────────────────────────────────────────────────────── */
+const DAY = 86400000;
+const dayStart = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+const ownerName = (r) => gstr(r,["partner name","agency name"]);
+const ymLabel = (mk) => { const ms=["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]; return mk ? `${ms[mk%100]||"?"} ${Math.floor(mk/100)}` : "—"; };
+function rowMonthKey(r) {
+  const v = gcell(r,["program date","month","bulan","periode"]);
+  const d = toRealDate(v);
+  return d ? d.getFullYear()*100 + d.getMonth() + 1 : monthKey(v);
+}
+// SLA compliance: step yang sama, target berbeda per flow (PO vs Direct Invoice)
+const SLA_COMPLIANCE = [
+  { key:"inv_ap", label:"Invoice → CLV / AP Verified",      from:H_INV, to:H_CLV, sla:{ [FLOW_PO]:2, [FLOW_DI]:4 } },
+  { key:"ap_clr", label:"CLV / AP Verified → Bank Clearing", from:H_CLV, to:H_CLR, sla:{ [FLOW_PO]:3, [FLOW_DI]:5 } },
+];
+const stripCat = (s) => String(s||"").toUpperCase().replace(/[^A-Z0-9]/g,"");
+
+function computeInsights(rows, isAg) {
+  const today = dayStart(new Date());
+  const wk0 = new Date(today.getTime() - ((today.getDay()+6)%7)*DAY); // Senin minggu ini
+  const wk1 = new Date(wk0.getTime()+7*DAY), wk2 = new Date(wk0.getTime()+14*DAY);
+  const k = { total:0, paid:0, out:0, outN:0, notSub:0, notSubAmt:0, cycSum:0, cycN:0, n:rows.length };
+  const buckets = [
+    { key:"b0",  label:"0–14 days",  n:0, amt:0 },
+    { key:"b15", label:"15–30 days", n:0, amt:0 },
+    { key:"b30", label:">30 days",   n:0, amt:0 },
+    { key:"nod", label:"No invoice date", n:0, amt:0 },
+  ];
+  const aging = [];
+  const up = { this:{ n:0, amt:0, rows:[] }, next:{ n:0, amt:0, rows:[] } };
+  const slaC = SLA_COMPLIANCE.map(s=>({ ...s, [FLOW_PO]:{n:0,ok:0}, [FLOW_DI]:{n:0,ok:0} }));
+  const fl = { [FLOW_PO]:{n:0,amt:0,paid:0,out:0,cycSum:0,cycN:0}, [FLOW_DI]:{n:0,amt:0,paid:0,out:0,cycSum:0,cycN:0} };
+  const owners = {};
+  rows.forEach(r=>{
+    const amt = gnum(r,["amount"]), st = rowStatus(r), flow = rowFlow(r), name = ownerName(r) || "—";
+    const invV = gcell(r,H_INV), clrV = gcell(r,H_CLR);
+    const paid = isPaidStatus(st), proc = isProcessStatus(st);
+    const f = fl[flow] || fl[FLOW_PO];
+    k.total += amt; f.n++; f.amt += amt;
+    if (paid) { k.paid += amt; f.paid += amt; }
+    if (proc) { k.out += amt; k.outN++; f.out += amt; }
+    if (isNotSubStatus(st)) { k.notSub++; k.notSubAmt += amt; }
+    const cyc = workDaysBetween(invV, clrV);
+    if (cyc!=null) { k.cycSum += cyc; k.cycN++; f.cycSum += cyc; f.cycN++; }
+    if (!owners[name]) owners[name] = { name, total:0, paid:0, out:0, n:0 };
+    const o = owners[name]; o.total += amt; o.n++; if (paid) o.paid += amt; if (proc) o.out += amt;
+    if (proc) {
+      const d = toDate(invV);
+      const days = d ? Math.max(0, Math.round((today - dayStart(d))/DAY)) : null;
+      const b = days==null ? buckets[3] : days<=14 ? buckets[0] : days<=30 ? buckets[1] : buckets[2];
+      b.n++; b.amt += amt;
+      aging.push({ name, title:gstr(r,["project title"])||"—", ref:refNo(r), flow, amt, days, inv:d });
+    }
+    if (!paid && !clrV) {
+      const est = toDate(gcell(r,H_EST));
+      if (est) {
+        const e = dayStart(est);
+        const slot = e>=wk0 && e<wk1 ? up.this : e>=wk1 && e<wk2 ? up.next : null;
+        if (slot) { slot.n++; slot.amt += amt; slot.rows.push({ name, title:gstr(r,["project title"])||"—", ref:refNo(r), flow, amt, est:e, status:st }); }
+      }
+    }
+    slaC.forEach(s=>{ const wd = workDaysBetween(gcell(r,s.from), gcell(r,s.to)); if (wd==null) return; const c = s[flow]; if (!c) return; c.n++; if (wd<=s.sla[flow]) c.ok++; });
+  });
+  aging.sort((a,b)=>(b.days??-1)-(a.days??-1));
+  up.this.rows.sort((a,b)=>a.est-b.est); up.next.rows.sort((a,b)=>a.est-b.est);
+  return { k, buckets, aging, up, slaC, fl, owners:Object.values(owners), wk0, wk1, wk2, accrual: isAg ? computeAccrual(rows) : null };
+}
+
+// Accrual Agency: actual per Agency × Program Type × bulan; bulan kosong = rata-rata bulan terisi
+// (kecuali kategori non-accrual), agency pengecualian di-skip.
+function computeAccrual(rows) {
+  const skipAg = ACCRUAL_SKIP_AGENCY.map(normalizeName);
+  const groups = {}; const monthSet = new Set();
+  rows.forEach(r=>{
+    const mk = rowMonthKey(r); if (!mk) return;
+    const ag = gstr(r,["agency name"]); if (!ag) return;
+    monthSet.add(mk);
+    const na = normalizeName(ag);
+    if (skipAg.some(x=>na.includes(x))) return;
+    const prog = gstr(r,["program type","programtype"]) || "—";
+    const key = ag+"\x00"+prog;
+    if (!groups[key]) groups[key] = { agency:ag, prog, act:{} };
+    groups[key].act[mk] = (groups[key].act[mk]||0) + gnum(r,["amount"]);
+  });
+  const months = [...monthSet].sort((a,b)=>a-b);
+  const tot = {}; months.forEach(m=>{ tot[m]={act:0,est:0}; });
+  const list = Object.values(groups).map(g=>{
+    const filled = Object.keys(g.act).map(Number);
+    const avg = filled.length ? filled.reduce((s,m)=>s+g.act[m],0)/filled.length : 0;
+    const noAccrue = ACCRUAL_SKIP_PROG.includes(stripCat(g.prog));
+    const cells = {}; let act=0, est=0;
+    months.forEach(m=>{
+      if (g.act[m]!=null) { cells[m]={v:g.act[m],est:false}; act+=g.act[m]; tot[m].act+=g.act[m]; }
+      else if (!noAccrue && avg) { cells[m]={v:avg,est:true}; est+=avg; tot[m].est+=avg; }
+    });
+    return { ...g, cells, act, est, noAccrue };
+  }).sort((a,b)=>a.agency.localeCompare(b.agency)||a.prog.localeCompare(b.prog));
+  return { months, list, tot };
+}
+
+function FlowBadge({ flow, t }) {
+  if (!flow) return null;
+  const di = flow===FLOW_DI;
+  return <span style={{display:"inline-flex",padding:"2px 7px",borderRadius:6,fontFamily:MONO,fontSize:9.5,fontWeight:600,letterSpacing:"0.04em",whiteSpace:"nowrap",background:di?`${C.yellow}22`:`${C.teal}18`,color:di?t.warnDark:t.goodDark,border:`1px solid ${di?`${C.yellow}55`:`${C.teal}40`}`}}>{di?"Direct Inv":"PO"}</span>;
+}
+
+function KpiTile({ label, value, sub, accent, t }) {
+  return (
+    <div style={{background:t.surf,border:`1px solid ${t.line}`,borderRadius:16,padding:"14px 16px",boxShadow:t.shadow1,minWidth:0,borderTop:`3px solid ${accent}`}}>
+      <div style={{fontFamily:MONO,fontSize:9.5,letterSpacing:"0.1em",textTransform:"uppercase",color:t.muted,marginBottom:6,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label}</div>
+      <div style={{fontWeight:800,fontSize:22,letterSpacing:"-0.03em",color:t.ink,lineHeight:1.1,wordBreak:"break-word"}}>{value}</div>
+      {sub&&<div style={{fontFamily:MONO,fontSize:10,color:t.muted,marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sub}</div>}
+    </div>
+  );
+}
+
+function KpiRow({ ins, w, t }) {
+  const { k } = ins;
+  const avg = k.cycN ? (k.cycSum/k.cycN).toFixed(1) : "—";
+  return (
+    <div style={{display:"grid",gridTemplateColumns:w>=1100?"repeat(5,1fr)":w>=640?"repeat(3,1fr)":"repeat(2,1fr)",gap:12,marginBottom:14}}>
+      <KpiTile t={t} label="Total Payout" value={fmtMoney(k.total)} sub={`${k.n.toLocaleString()} records`} accent={C.yellow}/>
+      <KpiTile t={t} label="Paid" value={fmtMoney(k.paid)} sub={`${pct(k.paid,k.total)}% of amount`} accent={C.teal}/>
+      <KpiTile t={t} label="Outstanding" value={fmtMoney(k.out)} sub={`${k.outN.toLocaleString()} in Payment Process`} accent={C.magenta}/>
+      <KpiTile t={t} label="Invoice Not Submitted" value={k.notSub.toLocaleString()} sub={fmtMoney(k.notSubAmt)} accent={C.red}/>
+      <KpiTile t={t} label="Avg Invoice → Clearing" value={avg==="—"?avg:`${avg} WD`} sub={`n=${k.cycN.toLocaleString()} cleared`} accent={C.tealDp}/>
+    </div>
+  );
+}
+
+const thS = (t, left) => ({position:"sticky",top:0,zIndex:1,fontFamily:MONO,fontSize:10,letterSpacing:"0.08em",textTransform:"uppercase",color:t.muted,fontWeight:500,background:t.surf2,padding:"8px 9px",textAlign:left?"left":"right",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap"});
+const tdS = (t, left) => ({padding:"7px 9px",textAlign:left?"left":"right",borderBottom:`1px solid ${t.line}`,fontSize:11.5,color:t.ink2,whiteSpace:"nowrap",maxWidth:left?240:undefined,overflow:"hidden",textOverflow:"ellipsis"});
+const EmptyNote = ({ t, children }) => <div style={{textAlign:"center",color:t.muted,padding:"1.5rem",fontFamily:MONO,fontSize:12}}>{children}</div>;
+
+function AgingCard({ ins, isAg, t }) {
+  const { buckets, aging } = ins;
+  const colors = [C.teal, C.yellow, C.red, C.grey];
+  const maxN = Math.max(1, ...buckets.map(b=>b.n));
+  return (
+    <Card t={t} pad={false}>
+      <CardHead title="Outstanding & Aging" accent={C.magenta} sub={`Status = Payment Process · aging = today − Invoice Submission · ${aging.length.toLocaleString()} records`} t={t}/>
+      <div style={{padding:20}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10,marginBottom:14}}>
+          {buckets.filter(b=>b.key!=="nod"||b.n>0).map((b,i)=>(
+            <div key={b.key} style={{background:t.surf2,border:`1px solid ${t.line}`,borderLeft:`3px solid ${colors[i]}`,borderRadius:12,padding:"10px 12px"}}>
+              <div style={{fontFamily:MONO,fontSize:9.5,letterSpacing:"0.1em",textTransform:"uppercase",color:t.muted}}>{b.label}</div>
+              <div style={{fontWeight:800,fontSize:18,color:t.ink,marginTop:3}}>{b.n.toLocaleString()}</div>
+              <div style={{fontFamily:MONO,fontSize:10,color:t.muted}}>{fmtMoney(b.amt)}</div>
+              <div style={{height:4,borderRadius:2,background:t.surf4,marginTop:6,overflow:"hidden"}}><div style={{height:"100%",width:`${(b.n/maxN)*100}%`,background:colors[i]}}/></div>
+            </div>
+          ))}
+        </div>
+        {aging.length===0 ? <EmptyNote t={t}>No outstanding payments</EmptyNote> : (
+          <div style={{maxHeight:320,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10}}>
+            <table style={{width:"100%",borderCollapse:"collapse",minWidth:620}}>
+              <thead><tr><th style={thS(t,true)}>{isAg?"Agency":"Partner"}</th><th style={thS(t,true)}>Project Title</th><th style={thS(t,true)}>PO / Invoice No.</th><th style={thS(t)}>Amount</th><th style={thS(t)}>Days</th></tr></thead>
+              <tbody>{aging.slice(0,200).map((a,i)=>(
+                <tr key={i}>
+                  <td style={tdS(t,true)} title={a.name}>{a.name}</td>
+                  <td style={tdS(t,true)} title={a.title}>{a.title}</td>
+                  <td style={tdS(t,true)}><span style={{fontFamily:MONO,fontSize:10.5,marginRight:6}}>{a.ref||"—"}</span><FlowBadge flow={a.flow} t={t}/></td>
+                  <td style={{...tdS(t),fontFamily:MONO}}>{fmtMoney(a.amt)}</td>
+                  <td style={{...tdS(t),fontFamily:MONO,fontWeight:700,color:a.days==null?t.muted:a.days>30?t.bad:a.days>14?t.warnDark:t.goodDark}}>{a.days==null?"—":`${a.days}d`}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+        {aging.length>200&&<div style={{fontFamily:MONO,fontSize:10,color:t.muted,marginTop:6}}>Showing the 200 oldest of {aging.length.toLocaleString()} — use filters or the Raw Data tab for the rest.</div>}
+      </div>
+    </Card>
+  );
+}
+
+function UpcomingCard({ ins, isAg, t }) {
+  const { up, wk0, wk1, wk2 } = ins;
+  const [sel, setSel] = useState("this");
+  const slot = up[sel];
+  const range = (a,b) => `${fmtDate(a)} – ${fmtDate(new Date(b.getTime()-DAY))}`;
+  return (
+    <Card t={t} pad={false}>
+      <CardHead title="Upcoming Payments" accent={C.teal} sub="Estimation Date this week & next week · unpaid, not yet cleared" t={t}/>
+      <div style={{padding:20}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+          {[{k:"this",l:"This week",r:range(wk0,wk1)},{k:"next",l:"Next week",r:range(wk1,wk2)}].map(x=>{ const on=sel===x.k; return (
+            <button key={x.k} type="button" onClick={()=>setSel(x.k)} aria-pressed={on}
+              style={{textAlign:"left",fontFamily:"inherit",cursor:"pointer",background:on?`${C.teal}14`:t.surf2,border:`1px solid ${on?C.teal:t.line}`,borderRadius:12,padding:"10px 12px",color:t.ink}}>
+              <div style={{fontFamily:MONO,fontSize:9.5,letterSpacing:"0.1em",textTransform:"uppercase",color:on?C.tealD:t.muted}}>{x.l}</div>
+              <div style={{fontWeight:800,fontSize:18,marginTop:3}}>{up[x.k].n.toLocaleString()} <span style={{fontSize:12,fontWeight:600,color:t.muted}}>payments</span></div>
+              <div style={{fontFamily:MONO,fontSize:10,color:t.muted}}>{fmtMoney(up[x.k].amt)} · {x.r}</div>
+            </button>
+          ); })}
+        </div>
+        {slot.rows.length===0 ? <EmptyNote t={t}>No payments estimated for this period</EmptyNote> : (
+          <div style={{maxHeight:320,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10}}>
+            <table style={{width:"100%",borderCollapse:"collapse",minWidth:620}}>
+              <thead><tr><th style={thS(t,true)}>Est. Date</th><th style={thS(t,true)}>{isAg?"Agency":"Partner"}</th><th style={thS(t,true)}>Project Title</th><th style={thS(t,true)}>PO / Invoice No.</th><th style={thS(t)}>Amount</th></tr></thead>
+              <tbody>{slot.rows.slice(0,200).map((a,i)=>(
+                <tr key={i}>
+                  <td style={{...tdS(t,true),fontFamily:MONO}}>{fmtDate(a.est)}</td>
+                  <td style={tdS(t,true)} title={a.name}>{a.name}</td>
+                  <td style={tdS(t,true)} title={a.title}>{a.title}</td>
+                  <td style={tdS(t,true)}><span style={{fontFamily:MONO,fontSize:10.5,marginRight:6}}>{a.ref||"—"}</span><FlowBadge flow={a.flow} t={t}/></td>
+                  <td style={{...tdS(t),fontFamily:MONO}}>{fmtMoney(a.amt)}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function SlaComplianceCard({ ins, flowSel, t }) {
+  const flows = flowSel==="all" ? [FLOW_PO, FLOW_DI] : [flowSel];
+  return (
+    <Card t={t} pad={false}>
+      <CardHead title="SLA Compliance" accent={C.red} sub="% of records completed within SLA (working days) · per flow" t={t}/>
+      <div style={{padding:20,display:"flex",flexDirection:"column",gap:10}}>
+        {ins.slaC.map(s=>(
+          <div key={s.key} style={{background:t.surf2,border:`1px solid ${t.line}`,borderRadius:12,padding:"11px 14px"}}>
+            <div style={{fontWeight:700,fontSize:13,color:t.ink,marginBottom:8}}>{s.label}</div>
+            <div style={{display:"grid",gridTemplateColumns:`repeat(${flows.length},1fr)`,gap:10}}>
+              {flows.map(f=>{ const c=s[f]; const p=pct(c.ok,c.n); const clr=!c.n?t.muted:p>=80?t.good:p>=50?t.warn:t.bad; return (
+                <div key={f}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:6,marginBottom:5,flexWrap:"wrap"}}>
+                    <span style={{display:"inline-flex",alignItems:"center",gap:6}}><FlowBadge flow={f} t={t}/><span style={{fontFamily:MONO,fontSize:10,color:t.muted}}>≤ {s.sla[f]} WD</span></span>
+                    <span style={{fontFamily:MONO,fontWeight:700,fontSize:14,color:clr}}>{c.n?`${p}%`:"—"}</span>
+                  </div>
+                  <div style={{height:7,borderRadius:4,background:t.surf4,overflow:"hidden"}}><div style={{height:"100%",width:`${c.n?p:0}%`,background:clr,borderRadius:4,transition:"width .4s"}}/></div>
+                  <div style={{fontFamily:MONO,fontSize:10,color:t.muted,marginTop:4}}>{c.ok.toLocaleString()} / {c.n.toLocaleString()} on time</div>
+                </div>
+              ); })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function FlowCompareCard({ ins, t }) {
+  const rows = [FLOW_PO, FLOW_DI].map(f=>({ f, ...ins.fl[f] }));
+  const totN = rows.reduce((a,r)=>a+r.n,0) || 1, totA = rows.reduce((a,r)=>a+r.amt,0) || 1;
+  return (
+    <Card t={t} pad={false}>
+      <CardHead title="PO vs Direct Invoice" accent={C.yellow} sub="Count, amount & cycle time per flow" t={t}/>
+      <div style={{padding:20,display:"flex",flexDirection:"column",gap:10}}>
+        {rows.map(r=>(
+          <div key={r.f} style={{background:t.surf2,border:`1px solid ${t.line}`,borderRadius:12,padding:"11px 14px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,gap:8,flexWrap:"wrap"}}>
+              <span style={{display:"inline-flex",alignItems:"center",gap:8,fontWeight:700,fontSize:13,color:t.ink}}><FlowBadge flow={r.f} t={t}/>{r.f===FLOW_PO?"PO flow":"Direct Invoice flow"}</span>
+              <span style={{fontFamily:MONO,fontSize:10,color:t.muted}}>{pct(r.n,totN)}% of records · {pct(r.amt,totA)}% of amount</span>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
+              {[{l:"Records",v:r.n.toLocaleString()},{l:"Amount",v:fmtMoney(r.amt)},{l:"Outstanding",v:fmtMoney(r.out)},{l:"Avg Inv → Clr",v:r.cycN?`${(r.cycSum/r.cycN).toFixed(1)} WD`:"—"}].map(x=>(
+                <div key={x.l} style={{minWidth:0}}>
+                  <div style={{fontFamily:MONO,fontSize:9,letterSpacing:"0.08em",textTransform:"uppercase",color:t.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{x.l}</div>
+                  <div style={{fontWeight:700,fontSize:13.5,color:t.ink,fontFamily:MONO,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{x.v}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{height:5,borderRadius:3,background:t.surf4,overflow:"hidden",marginTop:8}}><div style={{height:"100%",width:`${pct(r.amt,totA)}%`,background:r.f===FLOW_PO?C.teal:C.yellow}}/></div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function OwnerSummaryCard({ ins, isAg, t }) {
+  const [sort, setSort] = useState({ col:"total", dir:"desc" });
+  const cols = [{k:"name",l:isAg?"Agency":"Partner",left:true},{k:"total",l:"Total"},{k:"paid",l:"Paid"},{k:"out",l:"Outstanding"},{k:"n",l:"# Programs"}];
+  const list = useMemo(()=>{
+    const arr=[...ins.owners]; const {col,dir}=sort; const m=dir==="asc"?1:-1;
+    arr.sort((a,b)=>col==="name"?m*a.name.localeCompare(b.name):m*(a[col]-b[col]));
+    return arr;
+  },[ins.owners,sort]);
+  return (
+    <Card t={t} pad={false} style={{marginBottom:14}}>
+      <CardHead title={isAg?"Per Agency Summary":"Per Partner Summary"} accent={C.magenta} sub={`${list.length.toLocaleString()} ${isAg?"agencies":"partners"} · click a column to sort`} t={t}/>
+      {list.length===0 ? <EmptyNote t={t}>No data available</EmptyNote> : (
+        <div style={{maxHeight:420,overflow:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",minWidth:560}}>
+            <thead><tr>{cols.map(c=>{ const on=sort.col===c.k; return (
+              <th key={c.k} onClick={()=>setSort(s=>({col:c.k,dir:s.col===c.k&&s.dir==="desc"?"asc":"desc"}))} aria-sort={on?(sort.dir==="asc"?"ascending":"descending"):"none"}
+                style={{...thS(t,c.left),cursor:"pointer",color:on?C.teal:t.muted,fontWeight:on?700:500}}>{c.l}{on?(sort.dir==="asc"?" ▲":" ▼"):""}</th>
+            ); })}</tr></thead>
+            <tbody>{list.map((o,i)=>(
+              <tr key={o.name} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+                <td style={{...tdS(t,true),fontWeight:600,color:t.ink}} title={o.name}>{o.name}</td>
+                <td style={{...tdS(t),fontFamily:MONO}}>{fmtMoney(o.total)}</td>
+                <td style={{...tdS(t),fontFamily:MONO,color:t.goodDark}}>{fmtMoney(o.paid)}</td>
+                <td style={{...tdS(t),fontFamily:MONO,color:o.out?t.warnDark:t.muted}}>{fmtMoney(o.out)}</td>
+                <td style={{...tdS(t),fontFamily:MONO}}>{o.n.toLocaleString()}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function AccrualCard({ acc, w, t }) {
+  const { months, list, tot } = acc;
+  const narrow = w<700;
+  return (
+    <Card t={t} pad={false} style={{marginBottom:14}}>
+      <CardHead title="Accrual Agency" accent={C.yellow}
+        sub={`Actual per Agency × Program Type × month · empty months estimated with the average of filled months (italic) · not accrued: SALARYUUCK, THR, INCENTIVE MEUGANG · excludes ADHITAMA MITRA NUSANTARA`} t={t}/>
+      {list.length===0||months.length===0 ? <EmptyNote t={t}>No agency data for the current filters</EmptyNote> : (
+        <div style={{maxHeight:480,overflow:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",minWidth:narrow?Math.max(640,300+months.length*110):undefined}}>
+            <thead><tr>
+              <th style={thS(t,true)}>Agency</th><th style={thS(t,true)}>Program Type</th>
+              {months.map(m=><th key={m} style={thS(t)}>{ymLabel(m)}</th>)}
+              <th style={thS(t)}>Actual</th><th style={thS(t)}>Estimated</th>
+            </tr></thead>
+            <tbody>{list.map((g,i)=>(
+              <tr key={g.agency+"\x00"+g.prog} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+                <td style={{...tdS(t,true),fontWeight:600,color:t.ink}} title={g.agency}>{g.agency}</td>
+                <td style={tdS(t,true)} title={g.prog}>{g.prog}{g.noAccrue&&<span style={{marginLeft:6,fontFamily:MONO,fontSize:9,color:t.muted}}>(no accrual)</span>}</td>
+                {months.map(m=>{ const c=g.cells[m]; return <td key={m} style={{...tdS(t),fontFamily:MONO,fontStyle:c?.est?"italic":"normal",color:c?.est?t.muted:t.ink2}}>{c?fmtMoney(c.v):"—"}</td>; })}
+                <td style={{...tdS(t),fontFamily:MONO,fontWeight:600,color:t.ink}}>{fmtMoney(g.act)}</td>
+                <td style={{...tdS(t),fontFamily:MONO,fontStyle:"italic",color:t.muted}}>{g.est?fmtMoney(g.est):"—"}</td>
+              </tr>
+            ))}</tbody>
+            <tfoot><tr>
+              <td colSpan={2} style={{...tdS(t,true),background:"#1E2128",color:"#fff",fontWeight:800,borderTop:`2px solid ${C.teal}`,position:"sticky",bottom:0}}>TOTAL (actual + estimated)</td>
+              {months.map(m=><td key={m} style={{...tdS(t),background:"#1E2128",color:"#fff",fontFamily:MONO,fontWeight:700,borderTop:`2px solid ${C.teal}`,position:"sticky",bottom:0}} title={`Actual ${fmtMoney(tot[m].act,false)} · Estimated ${fmtMoney(tot[m].est,false)}`}>{fmtMoney(tot[m].act+tot[m].est)}</td>)}
+              <td style={{...tdS(t),background:"#1E2128",color:"#fff",fontFamily:MONO,fontWeight:700,borderTop:`2px solid ${C.teal}`,position:"sticky",bottom:0}}>{fmtMoney(list.reduce((a,g)=>a+g.act,0))}</td>
+              <td style={{...tdS(t),background:"#1E2128",color:"#E8E8EE",fontFamily:MONO,fontStyle:"italic",borderTop:`2px solid ${C.teal}`,position:"sticky",bottom:0}}>{fmtMoney(list.reduce((a,g)=>a+g.est,0))}</td>
+            </tr></tfoot>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function InsightSections({ ins, isAg, flowSel, w, t }) {
+  const two = w>=1000 ? "1fr 1fr" : "1fr";
+  return (
+    <>
+      <div style={{display:"grid",gridTemplateColumns:two,gap:14,marginBottom:14}}>
+        <AgingCard ins={ins} isAg={isAg} t={t}/>
+        <UpcomingCard ins={ins} isAg={isAg} t={t}/>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:two,gap:14,marginBottom:14}}>
+        <SlaComplianceCard ins={ins} flowSel={flowSel} t={t}/>
+        <FlowCompareCard ins={ins} t={t}/>
+      </div>
+      <OwnerSummaryCard ins={ins} isAg={isAg} t={t}/>
+      {isAg&&ins.accrual&&<AccrualCard acc={ins.accrual} w={w} t={t}/>}
     </>
   );
 }
@@ -1817,6 +2358,7 @@ function SummaryTable({ t, w, filtAgg, grand, grandPartnerCount, sortedMonths, c
     {k:"entity",l:"Entity",left:true},
     {k:"ptype",l:isAg?"Agency":"Partner Type",left:true},
     {k:"prog",l:"Program",left:true},
+    {k:"flow",l:"Flow",left:true},
     {k:"n",l:"#Rec"},
     {k:"po",l:"PO"},
     ...(!isAg?[{k:"surat",l:"Surat Pemberitahuan"}]:[]),
@@ -1877,7 +2419,7 @@ function SummaryTable({ t, w, filtAgg, grand, grandPartnerCount, sortedMonths, c
           <tfoot>
             <tr style={{position:"sticky",bottom:0,zIndex:3}}>
               {/* GRAND TOTAL label */}
-              <td colSpan={4} style={{
+              <td colSpan={5} style={{
                 background:"#1E2128", padding:"14px 12px",
                 borderTop:`2px solid ${C.teal}`, whiteSpace:"nowrap",
               }}>
@@ -1962,7 +2504,7 @@ function RawTab(props) {
       {!showAllCols&&(
         <div style={{padding:"7px 16px",fontSize:11,color:t.muted,background:t.infoBg,borderBottom:`1px solid ${t.infoBd}`,display:"flex",alignItems:"center",gap:7,lineHeight:1.4}}>
           <span style={{color:t.info,fontWeight:700,fontSize:13}}>ℹ</span>
-          This view shows only the 10 primary columns. The Excel export always includes <strong>all columns</strong> as a complete backup.
+          This view shows only the {rawKeysMain.length} primary columns. The Excel export always includes <strong>all columns</strong> as a complete backup.
         </div>
       )}
       {narrow&&(
