@@ -690,7 +690,13 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose, o
         // mf_dse_prod_ar (& metric lain di tanggal yg sama: AR/Catatan/
         // metric lain) TETAP ada, krn 1 baris = 1 hari gabungan semua jenis.
         const col = confirmTarget.kind === "sp" ? "nilai_sp" : confirmTarget.kind === "fwa" ? "nilai_fwa" : confirmTarget.kind === "voucher" ? "nilai_voucher" : "nilai_saldo";
-        const patch = { [col]: 0 };
+        // UPDATE (permintaan user - "harusnya kan bisa ditracking di
+        // databasenya ... email mana yang melakukan perubahan"): jalur
+        // reset-ke-0 ini (tombol Hapus di popup Riwayat) sebelumnya TIDAK
+        // ikut nulis uploaded_by sama sekali (beda dari handleSaveDse/
+        // handleUpload yg sudah nulis), jadi baris hasil reset ini selalu
+        // kehilangan jejak siapa yg melakukannya. Disamakan sekarang.
+        const patch = { [col]: 0, uploaded_by: profile?.id || null };
         const { error } = await supabase.from("mf_dse_prod_ar").update(patch).eq("dse_code", dseCode).eq("tanggal", confirmTarget.tanggal);
         if (error) throw error;
         setProdRows((rows) => rows.map((r) => (r.tanggal === confirmTarget.tanggal ? { ...r, ...patch } : r)));
@@ -717,7 +723,11 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose, o
     setEditDraft({ nilai: String(row[nilaiColOf(kind)] || 0) });
   };
   const saveEdit = async (row, kind) => {
-    const patch = { [nilaiColOf(kind)]: fRaw(editDraft.nilai) };
+    // UPDATE (permintaan user - lacak email yg melakukan perubahan):
+    // jalur edit-inline di popup Riwayat ini (update ATAU insert) dulu
+    // TIDAK pernah nulis uploaded_by - disamakan dgn handleSaveDse/
+    // handleUpload yg sudah nulis profile?.id.
+    const patch = { [nilaiColOf(kind)]: fRaw(editDraft.nilai), uploaded_by: profile?.id || null };
     setSavingTanggal(row.tanggal);
     try {
       const exists = row.__exists !== false;
@@ -5033,6 +5043,22 @@ export const CATEGORY_OPTIONS = [
   { k: "hoa", label: "HoA AR", shortLabel: "HoA", icon: Wallet, desc: "Piutang level HoA" },
 ];
 
+// FIX AKSES (audit user - "pastikan 100persen tidak ada bug" utk District
+// Admin & Admin Area): District Admin (finance_mpx) cuma berwenang atas DSE
+// Prod & AR + DSO/DSP AR ("district admin adalah orang yang mengisi AR DSE
+// dan juga AR DSO/DSP"), Admin Area (admin_area) cuma berwenang atas HoA AR
+// ("admin area adalah orang yang bertugas untuk mengisi AR HoA"). RLS tabel
+// sudah membatasi datanya masing2, tapi tab kategori di UI ini sebelumnya
+// ditampilkan SAMA ke semua role yg bisa masuk ke DSE_ProdAR (nunjukin tab
+// yg bakal kosong/ga bisa diapa2in, menyesatkan) - sekarang difilter sesuai
+// role. Email yang terdaftar ganda (District + Area) tetap dapat SEMUA tab
+// relevannya krn helper ini dipanggil per-role, bukan exclusive.
+export function getCategoryOptionsForRole(role) {
+  if (role === "admin_area") return CATEGORY_OPTIONS.filter((o) => o.k === "hoa");
+  if (role === "finance_mpx") return CATEGORY_OPTIONS.filter((o) => o.k !== "hoa");
+  return CATEGORY_OPTIONS; // SPM & role lain yg sudah lolos gate di page.jsx: semua kategori
+}
+
 
 // UPDATE (permintaan user - "selanjutnya sama dengan AR nya DSE gunakan
 // konsep yang sama persis untuk DSO/DSP AR dan juga HoA AR, dimana jika
@@ -5378,6 +5404,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
 
   const isSPM = profile?.role === "spm_sumatera";
   const isMPX = profile?.role === "finance_mpx";
+  const isAdminArea = profile?.role === "admin_area";
 
   // UPDATE (permintaan user - satu email Admin District sekarang bisa dipasang ke
   // lebih dari 1 District lewat mf_dse_admin_mc_mapping): dulu lockedMc cuma 1
@@ -5396,6 +5423,22 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   const myMcNames = useMemo(() => myMcs.map((r) => r.mc).filter(Boolean), [myMcs]);
   const lockedMc = isMPX ? (myMcNames[0] || profile?.partner_name || "") : "";
   const [mpxMcFilter, setMpxMcFilter] = useState(""); // Admin District dgn >1 District: pilih target import
+
+  // FIX AKSES (audit user - email Admin Area bisa dipasang ke >1 Branch
+  // lewat mf_dse_admin_area_mapping, sama persis pola District Admin di
+  // atas): daftar LENGKAP Branch/Area milik Admin Area yg login, lewat RPC
+  // mf_dse_admin_area_my_branches() (akses datanya sendiri sudah dijamin
+  // RLS mf_dse_admin_area_has_access di level tabel, ini cuma utk scoping
+  // dseMeta/tampilan di bawah).
+  const [myBranches, setMyBranches] = useState([]); // [{ branch, region, circle, full_name }]
+  useEffect(() => {
+    if (!isAdminArea) return;
+    (async () => {
+      const { data, error } = await supabase.rpc("mf_dse_admin_area_my_branches");
+      if (!error && Array.isArray(data)) setMyBranches(data);
+    })();
+  }, [isAdminArea]);
+  const myBranchNames = useMemo(() => myBranches.map((r) => r.branch).filter(Boolean), [myBranches]);
 
   const [width, setWidth] = useState(() => (typeof window !== "undefined" ? window.innerWidth : 1200));
   useEffect(() => {
@@ -5442,12 +5485,22 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, [categoryMenuOpen]);
-  const currentCategoryOpt = CATEGORY_OPTIONS.find((o) => o.k === category) || CATEGORY_OPTIONS[0];
+  // FIX AKSES (audit user - jangan biarkan Admin Area "nyangkut" di
+  // category default "dse" yg bukan wewenangnya & ga kebuka datanya -
+  // auto-pindah ke kategori pertama yg memang diizinkan utk role ini).
+  const myCategoryOptions = getCategoryOptionsForRole(profile?.role);
+  useEffect(() => {
+    if (myCategoryOptions.length && !myCategoryOptions.some((o) => o.k === category)) {
+      setCategory(myCategoryOptions[0].k);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.role, category]);
+  const currentCategoryOpt = myCategoryOptions.find((o) => o.k === category) || myCategoryOptions[0] || CATEGORY_OPTIONS[0];
   const mobileTitleLabel = currentCategoryOpt.label;
   const desktopTitleLabel = currentCategoryOpt.label;
   const categoryMenuPortal = categoryMenuOpen && categoryMenuPos && typeof document !== "undefined" && createPortal(
     <div ref={categoryMenuRef} style={{ position: "fixed", left: categoryMenuPos.left, top: categoryMenuPos.top, width: 272, background: t.card, border: `1px solid ${t.line}`, borderRadius: 12, boxShadow: "0 8px 24px rgba(0,0,0,0.16)", zIndex: 9999, overflow: "hidden", padding: 6 }}>
-      {CATEGORY_OPTIONS.map((opt) => {
+      {myCategoryOptions.map((opt) => {
         const Icon = opt.icon;
         const active = category === opt.k;
         return (
@@ -5862,15 +5915,22 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // District(s) miliknya sendiri (myMcNames dari RPC mf_dse_admin_mc_my_mcs,
   // sudah diambil di atas) - bukan semua District se-Sumatera kayak SPM.
   useEffect(() => {
-    if (!isSPM && !isMPX) return;
+    if (!isSPM && !isMPX && !isAdminArea) return;
     (async () => {
       if (isMPX && myMcNames.length === 0) { setDseMeta([]); return; }
+      // FIX AKSES (audit user - Admin Area sebelumnya ga ke-handle sama
+      // sekali di effect ini, jadi dseMeta SELALU [] utk admin_area -
+      // ArDsoHoaPanel kategori "hoa" (sumber datanya persis dseMeta ini)
+      // bakal kosong total walau RLS mf_dse_admin_area_has_access sudah
+      // benar & Admin Area-nya valid ke-assign ke Branch tertentu).
+      if (isAdminArea && myBranchNames.length === 0) { setDseMeta([]); return; }
       let q = supabase.from("mf_dse_database").select("region, branch, mdi, mc, hoa_name").eq("is_revoked", false).not("mc", "is", null);
       if (isMPX) q = q.in("mc", myMcNames);
+      if (isAdminArea) q = q.in("branch", myBranchNames);
       const { data } = await q;
       setDseMeta(data || []);
     })();
-  }, [isSPM, isMPX, myMcNames]);
+  }, [isSPM, isMPX, isAdminArea, myMcNames, myBranchNames]);
 
   // Urutan hierarki cascading: Partner -> Region -> Area -> District. Partner
   // DI ATAS Region (bukan di bawah) karena 1 Partner (mdi) bisa beroperasi

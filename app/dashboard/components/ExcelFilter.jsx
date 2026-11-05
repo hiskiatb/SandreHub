@@ -86,6 +86,27 @@ export default function ExcelFilter({
     setIsOpen(!isOpen);
   };
 
+  // UPDATE (fix: "tombol Apply hilang" - ternyata bukan hilang, tapi
+  // posisi popup cuma dihitung SEKALI pas toggleOpen() diklik, dan ga
+  // pernah dihitung ULANG kalau ukuran jendela/viewport berubah SESUDAH
+  // popup ini kebuka (mis. user buka DevTools, yg otomatis bikin lebar
+  // window Chrome menyempit) - popup ttp "nempel" di koordinat lama,
+  // jadi sebagian tombolnya (Apply) kebawa ke luar area yg skrg
+  // kelihatan, meski elemen-nya sendiri tetap ada & berfungsi normal.
+  // Reposisi otomatis (clamp ulang) tiap kali window di-resize SELAGI
+  // popup ini kebuka.
+  useEffect(() => {
+    if (!isOpen) return;
+    const reclamp = () => {
+      setPos((prev) => ({
+        x: Math.max(8, Math.min(prev.x, window.innerWidth - size.w - 8)),
+        y: Math.max(8, Math.min(prev.y, window.innerHeight - size.h - 8)),
+      }));
+    };
+    window.addEventListener("resize", reclamp);
+    return () => window.removeEventListener("resize", reclamp);
+  }, [isOpen, size.w, size.h]);
+
   // Logic Sinkronisasi untuk Chained Filter
   // Jika options dari parent berubah (karena filter di kolom lain), 
   // kita tetap mempertahankan pilihan yang masih valid di dalam options baru.

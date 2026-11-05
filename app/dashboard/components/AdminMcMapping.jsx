@@ -84,11 +84,9 @@ import supabase from "../../../lib/supabase";
 import * as XLSX from "xlsx";
 import {
   UserRoundCog, X, Check, AlertTriangle, Loader2, Search,
-  RefreshCw, Trash2, ToggleLeft, ToggleRight, Download, Upload,
+  RefreshCw, Trash2, ToggleLeft, ToggleRight, Upload,
   Mail, Plus, ChevronDown, ChevronUp, Pencil,
 } from "lucide-react";
-import PNL_ImportWizard from "./PNL_ImportWizard";
-import ExcelFilter from "./ExcelFilter";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif`;
 
@@ -122,15 +120,6 @@ function loginStatusBadge(ts, t) {
   if (online) return { label: "Sedang online", color: t.teal, dot: true, cat: "online" };
   return { label: `Terakhir aktif: ${formatLastActive(ts)}`, color: t.lo, dot: false, cat: "active" };
 }
-
-// Daftar kategori status login, dipakai juga sbg opsi <ExcelFilter> kolom
-// STATUS (permintaan user - "untuk status ini bisa difilter juga ya").
-const STATUS_CATEGORIES = [
-  { value: "online", label: "Sedang Online" },
-  { value: "active", label: "Pernah Login" },
-  { value: "never", label: "Belum Pernah Login" },
-  { value: "riwayat", label: "Riwayat (Historis)" },
-];
 
 function Toast({ msg, type, onClose }) {
   useEffect(() => { const t = setTimeout(onClose, 4500); return () => clearTimeout(t); }, [onClose]);
@@ -167,7 +156,7 @@ function splitEmailCell(raw) {
   return out;
 }
 
-export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
+export default function AdminMcMapping({ theme, asOfDate, asOfLabel, roleValue, roleOptions, onRoleChange }) {
   const d = theme === "dark";
   const t = {
     card: d ? "#1A1A1D" : "#FFFFFF", sub: d ? "#202024" : "#F5F5F7",
@@ -342,6 +331,60 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
     return data;
   }, [rows, dseRefMap]);
 
+  // UPDATE (permintaan user - "data circle dan MC itu sudah fixed, jadi
+  // kita tidak bisa menambahnya, kita harus tambahkan manual untuk mc
+  // baru, pilih branch yang sudah ada"): Circle/Region/Branch itu bukan
+  // data bebas (lihat komentar EDITABLE_FIELDS di atas - sumbernya
+  // Database DSE, dseRefMap). Tapi kalau ada MC yang BENERAN belum ada
+  // sama sekali di Database DSE (MC baru), sebelumnya TIDAK ADA cara
+  // menambahkannya ke tabel ini sama sekali (ensureMappingRow cuma bisa
+  // jalan utk MC yg SUDAH ada di dseRefMap). Form "Tambah MC Baru" ini
+  // mengisi celah itu: Circle/Region TETAP tidak diketik bebas - user
+  // cuma pilih Branch yg SUDAH ada (dari Database DSE), Circle/Region-nya
+  // otomatis ikut Branch itu (1 Branch = 1 Circle/Region yg sama,
+  // persis spt yg sudah berlaku di Database DSE) - cuma nama MC yang
+  // benar2 baru/manual.
+  const branchOptions = useMemo(() => {
+    const map = new Map();
+    dseRefMap.forEach((ref) => {
+      if (!ref.branch) return;
+      const key = ref.branch.toLowerCase();
+      if (!map.has(key)) map.set(key, { branch: ref.branch, region: ref.region, circle: ref.circle });
+    });
+    return Array.from(map.values()).sort((a, b) => a.branch.localeCompare(b.branch));
+  }, [dseRefMap]);
+
+  const [showAddMc, setShowAddMc] = useState(false);
+  const [newMcBranch, setNewMcBranch] = useState("");
+  const [newMcName, setNewMcName] = useState("");
+  const [addMcBusy, setAddMcBusy] = useState(false);
+  const handleAddNewMc = async () => {
+    const mc = newMcName.trim().toUpperCase();
+    if (!mc) { showToast("Nama MC wajib diisi.", "error"); return; }
+    if (!newMcBranch) { showToast("Pilih Branch dulu.", "error"); return; }
+    const mcKey = mc.toLowerCase();
+    if (rows.some((r) => r.mc?.toLowerCase() === mcKey) || dseRefMap.has(mcKey)) {
+      showToast(`MC "${mc}" sudah ada.`, "error");
+      return;
+    }
+    const ref = branchOptions.find((b) => b.branch === newMcBranch);
+    setAddMcBusy(true);
+    try {
+      const payload = { mc, active: true, circle: ref?.circle || null, region: ref?.region || null, branch: ref?.branch || null };
+      const { data, error } = await supabase.from("mf_dse_admin_mc_mapping").upsert(payload, { onConflict: "mc" }).select().single();
+      if (error) throw error;
+      setRows((prev) => [...prev, data].sort((a, b) => (a.mc || "").localeCompare(b.mc || "")));
+      showToast(`MC ${mc} ditambahkan.`, "ok");
+      setShowAddMc(false);
+      setNewMcBranch("");
+      setNewMcName("");
+    } catch (e) {
+      showToast(e.message || "Gagal menambahkan MC.", "error");
+    } finally {
+      setAddMcBusy(false);
+    }
+  };
+
   const handleCellBlur = async (mc, field, value) => {
     if (isHistorical) return;
     const key = mc.toLowerCase();
@@ -384,11 +427,16 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
   const addEmail = async (mc) => {
     const email = newEmail.trim().toLowerCase();
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showToast("Masukkan email yang valid.", "error"); return; }
+    // UPDATE (permintaan user - "nama admin ini tidak opsional
+    // perbaiki"): dulu nama admin boleh dikosongin (fallback ke
+    // full_name MC / "Admin N") - sekarang WAJIB diisi.
+    const label = newLabel.trim().toUpperCase();
+    if (!label) { showToast("Nama admin wajib diisi.", "error"); return; }
     setEmailBusy(true);
     try {
       const mapping = await ensureMappingRow(mc);
       const { data, error } = await supabase.from("mf_dse_admin_mc_emails")
-        .insert({ mapping_id: mapping.id, email, label: newLabel.trim().toUpperCase() || null, active: true })
+        .insert({ mapping_id: mapping.id, email, label, active: true })
         .select().single();
       if (error) {
         if (String(error.code) === "23505") throw new Error("Email ini sudah terpasang di MC ini.");
@@ -465,10 +513,15 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
     if (!editingEmailRow) return;
     const email = editDraftEmail.trim().toLowerCase();
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showToast("Masukkan email yang valid.", "error"); return; }
+    // UPDATE (permintaan user - "nama admin ini tidak opsional
+    // perbaiki"): dulu nama admin boleh dikosongin (fallback ke
+    // full_name MC / "Admin N") - sekarang WAJIB diisi.
+    const label = editDraftLabel.trim().toUpperCase();
+    if (!label) { showToast("Nama admin wajib diisi.", "error"); return; }
     setEditBusy(true);
     try {
       const { data, error } = await supabase.from("mf_dse_admin_mc_emails")
-        .update({ email, label: editDraftLabel.trim().toUpperCase() || null })
+        .update({ email, label })
         .eq("id", editingEmailRow.row.id).select().single();
       if (error) {
         if (String(error.code) === "23505") throw new Error("Email ini sudah terpasang di MC ini.");
@@ -538,112 +591,9 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
     return active.map((e) => e.email?.toLowerCase() || "").sort().join(",");
   };
 
-  // UPDATE (permintaan user - "gunakan konsep filter yang sudah ada untuk
-  // bisa filter kolom-kolom di user management ini"): dipakai <ExcelFilter>
-  // yg SAMA PERSIS komponennya dgn yg sudah ada di tabel roster DSE
-  // (DSE_ProdAR.jsx - Partner/Region/Area/District) - checklist per nilai
-  // unik, bukan bikin filter baru dari nol. Target kolom: Circle/Region/
-  // Branch/MC (persis analog Partner/Region/Area/District di sana) +
-  // status Aktif/Nonaktif MC.
-  const [colFilters, setColFilters] = useState({ circle: [], region: [], branch: [], mc: [], adminName: [], adminEmail: [], status: [], adminCount: [] });
-  const setColFilter = (key, val) => setColFilters((prev) => ({ ...prev, [key]: val }));
-  const resetColFilters = () => setColFilters({ circle: [], region: [], branch: [], mc: [], adminName: [], adminEmail: [], status: [], adminCount: [] });
-  const anyColFilterActive = Object.values(colFilters).some((v) => v.length > 0);
-  // UPDATE (fix: "semua filter belum bekerja dengan baik" - ExcelFilter.jsx
-  // SELALU manggil onSort(...) pas tombol Asc/Desc/Reset diklik (lihat
-  // ExcelFilter.jsx), tapi kolom2 di tabel ini belum ada yg nyambungin prop
-  // onSort/sortDir sama sekali -> klik Asc/Desc/Reset di POPUP MANAPUN
-  // crash ("onSort is not a function") dan bikin seluruh tabel "diem aja"
-  // pas diklik. Tambah 1 sortConfig {key,dir} dipakai semua kolom, persis
-  // pattern yg sudah ada di DSE_ProdAR.jsx.
-  const [sortConfig, setSortConfig] = useState({ key: null, dir: null });
-  const sortPropsFor = (key) => ({
-    sortDir: sortConfig.key === key ? sortConfig.dir : null,
-    onSort: (dir) => setSortConfig({ key, dir }),
-  });
-  // UPDATE (fix runtime error "o.label.toLowerCase" - ExcelFilter.jsx
-  // (komponen yg sama dipakai DSE_ProdAR.jsx) expect options berbentuk
-  // {value,label}, BUKAN array string polos - lihat uniqOpt() di
-  // DSE_ProdAR.jsx, dipakai persis sama di sini).
-  const uniqOpt = (vals) => Array.from(new Set(vals.filter(Boolean))).sort().map((v) => ({ value: v, label: v }));
-  // UPDATE (permintaan user - "dan juga nama admin dan email admin juga
-  // bisa difilter"): opsi utk 2 kolom ini diambil dari emailsByMc (per
-  // ADMIN, bukan per MC spt Circle/Region/Branch/MC) - 1 MC bisa punya
-  // banyak admin, jadi daftar nilai uniknya digabung dari SEMUA admin
-  // aktif di SEMUA MC (nama pakai fallback full_name MC-nya, sama persis
-  // logic yg dipakai nampilin nama admin di tabel).
-  const adminFilterOptions = useMemo(() => {
-    const names = new Set();
-    const emails = new Set();
-    displayRows.forEach((r) => {
-      const list = emailsByMc.get(r.mc?.toLowerCase()) || [];
-      const active = isHistorical ? list : list.filter((e) => e.active !== false);
-      active.forEach((e, i) => {
-        const nm = e.label || r.full_name || `Admin ${i + 1}`;
-        if (nm) names.add(nm);
-        if (e.email) emails.add(e.email);
-      });
-    });
-    return { names: Array.from(names).sort(), emails: Array.from(emails).sort() };
-  }, [displayRows, emailsByMc, isHistorical]);
-
-  // UPDATE (permintaan user - "ini juga bisa filter bisa menampilkan mc
-  // mana yang memiliki 0 admin, 1 admin, 2 admin, 3 admin, dst"): jumlah
-  // admin AKTIF riil per MC (bukan dibatasi 4 slot tampilan tabel) -
-  // dipakai sbg opsi <ExcelFilter> kolom "#", diurutkan NUMERIK (bukan
-  // string) biar "10 Admin" tidak nongol sebelum "2 Admin".
-  const adminCountPerMc = useMemo(() => {
-    const map = new Map();
-    displayRows.forEach((r) => {
-      const list = emailsByMc.get(r.mc?.toLowerCase()) || [];
-      const active = isHistorical ? list : list.filter((e) => e.active !== false);
-      map.set(r.mc, active.length);
-    });
-    return map;
-  }, [displayRows, emailsByMc, isHistorical]);
-  const adminCountOptions = useMemo(() => {
-    const counts = Array.from(new Set(displayRows.map((r) => adminCountPerMc.get(r.mc) ?? 0))).sort((a, b) => a - b);
-    return counts.map((n) => ({ value: n, label: `${n} Admin` }));
-  }, [displayRows, adminCountPerMc]);
-  const colOptions = useMemo(() => ({
-    circle: uniqOpt(displayRows.map((r) => r.circle)),
-    region: uniqOpt(displayRows.map((r) => r.region)),
-    branch: uniqOpt(displayRows.map((r) => r.branch)),
-    mc: uniqOpt(displayRows.map((r) => r.mc)),
-    adminName: uniqOpt(adminFilterOptions.names),
-    adminEmail: uniqOpt(adminFilterOptions.emails),
-    status: STATUS_CATEGORIES,
-    adminCount: adminCountOptions,
-  }), [displayRows, adminFilterOptions, adminCountOptions]);
 
   const filtered = displayRows
     .filter((r) => {
-      if (colFilters.circle.length && !colFilters.circle.includes(r.circle)) return false;
-      if (colFilters.region.length && !colFilters.region.includes(r.region)) return false;
-      if (colFilters.branch.length && !colFilters.branch.includes(r.branch)) return false;
-      if (colFilters.mc.length && !colFilters.mc.includes(r.mc)) return false;
-      if (colFilters.adminName.length || colFilters.adminEmail.length) {
-        const list = emailsByMc.get(r.mc?.toLowerCase()) || [];
-        const active = isHistorical ? list : list.filter((e) => e.active !== false);
-        if (colFilters.adminName.length) {
-          const ok = active.some((e, i) => colFilters.adminName.includes(e.label || r.full_name || `Admin ${i + 1}`));
-          if (!ok) return false;
-        }
-        if (colFilters.adminEmail.length) {
-          const ok = active.some((e) => colFilters.adminEmail.includes(e.email));
-          if (!ok) return false;
-        }
-      }
-      if (colFilters.adminCount.length && !colFilters.adminCount.includes(adminCountPerMc.get(r.mc) ?? 0)) return false;
-      if (colFilters.status.length) {
-        const list = emailsByMc.get(r.mc?.toLowerCase()) || [];
-        const active = isHistorical ? list : list.filter((e) => e.active !== false);
-        const ok = active.some((e) => {
-          const cat = isHistorical ? "riwayat" : loginStatusBadge(loginStatusByEmail.get((e.email || "").toLowerCase()), t).cat;
-          return colFilters.status.includes(cat);
-        });
-        if (!ok) return false;
-      }
       if (!search) return true;
       const s = search.toLowerCase();
       const emails = emailsByMc.get(r.mc?.toLowerCase()) || [];
@@ -653,47 +603,6 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
     })
     .slice()
     .sort((a, b) => {
-      // UPDATE (permintaan user - klik Asc/Desc di popup filter kolom kini
-      // beneran ngurutin tabel, bukan cuma crash): kalau user pilih sort
-      // eksplisit di salah satu kolom, itu MENANG dibanding urutan default
-      // (grouping per email yg sudah ada).
-      if (sortConfig.key && sortConfig.dir) {
-        const dir = sortConfig.dir === "asc" ? 1 : -1;
-        const adminLabelFor = (r) => {
-          const list = emailsByMc.get(r.mc?.toLowerCase()) || [];
-          const active = isHistorical ? list : list.filter((e) => e.active !== false);
-          const first = active[0];
-          return first ? (first.label || r.full_name || "") : "";
-        };
-        const adminEmailFor = (r) => {
-          const list = emailsByMc.get(r.mc?.toLowerCase()) || [];
-          const active = isHistorical ? list : list.filter((e) => e.active !== false);
-          return active[0]?.email || "";
-        };
-        const statusRankFor = (r) => {
-          const list = emailsByMc.get(r.mc?.toLowerCase()) || [];
-          const active = isHistorical ? list : list.filter((e) => e.active !== false);
-          if (isHistorical) return 3;
-          const cats = active.map((e) => loginStatusBadge(loginStatusByEmail.get((e.email || "").toLowerCase()), t).cat);
-          if (cats.includes("online")) return 0;
-          if (cats.includes("active")) return 1;
-          return 2;
-        };
-        let va, vb;
-        switch (sortConfig.key) {
-          case "circle": va = a.circle || ""; vb = b.circle || ""; break;
-          case "region": va = a.region || ""; vb = b.region || ""; break;
-          case "branch": va = a.branch || ""; vb = b.branch || ""; break;
-          case "mc": va = a.mc || ""; vb = b.mc || ""; break;
-          case "adminCount": va = adminCountPerMc.get(a.mc) ?? 0; vb = adminCountPerMc.get(b.mc) ?? 0; break;
-          case "adminName": va = adminLabelFor(a); vb = adminLabelFor(b); break;
-          case "adminEmail": va = adminEmailFor(a); vb = adminEmailFor(b); break;
-          case "status": va = statusRankFor(a); vb = statusRankFor(b); break;
-          default: va = ""; vb = "";
-        }
-        if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
-        return String(va).localeCompare(String(vb)) * dir;
-      }
       const ka = emailGroupKey(a.mc);
       const kb = emailGroupKey(b.mc);
       if (ka === null && kb === null) return (a.mc || "").localeCompare(b.mc || "");
@@ -702,43 +611,144 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
       return ka.localeCompare(kb) || (a.mc || "").localeCompare(b.mc || "");
     });
 
-  // ── Download Data (export + dipakai juga sbg template upload massal
-  // utk MASTER MC — Circle/Region/Branch/Nama Admin saja; email tidak lagi
-  // dipasang di sini sejak UPDATE 8, lihat handleDownloadEmails) ──────────
-  const handleDownload = () => {
-    const head = ["Circle", "Region", "Branch", "Micro Cluster", "Nama Admin", "Status"];
-    const body = displayRows.map((m) => [m.circle || "", m.region || "", m.branch || "", m.mc || "", m.full_name || "", m.active === false ? "Nonaktif" : "Aktif"]);
-    const ws = XLSX.utils.aoa_to_sheet([head, ...(body.length ? body : [["", "", "", "", "", ""]])]);
-    ws["!cols"] = [{ wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 20 }, { wch: 20 }, { wch: 10 }];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Mapping Admin MC");
-    XLSX.writeFile(wb, `Mapping_Admin_MC_${new Date().toISOString().slice(0, 10)}.xlsx`);
-    showToast(`Data diunduh — ${body.length} MC. File ini juga bisa dipakai sbg template upload.`, "ok");
-  };
-
   // ── Download/Upload Daftar Email (massal, terpisah dari master MC) —
-  // bentuknya SATU BARIS PER EMAIL (sama seperti sumber data riil: Micro
-  // Cluster, Nama Admin, Alamat Email), supaya 1 MC boleh muncul di banyak
-  // baris (1 per email) — ini yg bikin tidak terbatas 2 email/MC lagi. ───
-  const handleDownloadEmails = () => {
-    const head = ["Micro Cluster", "Nama Admin / Label", "Alamat Email", "Status"];
-    const body = [];
-    displayRows.forEach((m) => {
-      const emails = emailsByMc.get(m.mc?.toLowerCase()) || [];
-      if (emails.length === 0) { body.push([m.mc || "", "", "", ""]); return; }
-      emails.forEach((e) => body.push([m.mc || "", e.label || "", e.email || "", e.active === false ? "Nonaktif" : "Aktif"]));
+  // UPDATE (permintaan user - "ketika download bentuknya akan seperti ini
+  // juga"): bentuk file persis sama dgn tabel di layar - kolom Circle/
+  // Region/Branch/MC/#/Nama Admin/Email Admin, dan tiap MC (mode LIVE)
+  // selalu dapat 4 baris "slot" (terisi ATAU "Kosong"), sama persis
+  // logic MAX_SLOTS di tbody. Historis tetap apa adanya (tidak dipaksa 4).
+  // UPDATE 2 (permintaan user - "mc branch region circle itu di merge
+  // untuk exportan excelnya, dan border bordernya dibuat rapi"): pindah
+  // dari `xlsx` (SheetJS CE, tidak bisa styling/merge) ke `exceljs`
+  // (sudah jadi dependency proyek ini - lihat SDP_Export.jsx) supaya bisa
+  // merge cell Circle/Region/Branch/MC vertikal per-MC (persis rowSpan di
+  // tabel layar) + kasih border tipis rapi ke SEMUA sel, bukan cuma AOA
+  // polos tanpa style.
+  const handleDownloadEmails = async () => {
+    // UPDATE 3 (permintaan user - contoh screenshot header merah/kuning,
+    // autofilter, border tebal per blok MC): header pakai label
+    // Circle/Region/Area/District (konsisten dgn istilah yg sudah dipakai
+    // di DSE_ProdAR.jsx - branch="Area", mc="District"), fill merah utk
+    // Circle/Region/Area/District/#, kuning utk Nama Admin/Email Admin,
+    // teks putih tebal, + autoFilter. Border antar blok MC dibuat lebih
+    // tebal ("medium") persis seperti contoh, border dalam 1 blok tetap
+    // tipis.
+    const head = ["Circle", "Region", "Area", "District", "#", "Nama Admin", "Email Admin"];
+    const MAX_SLOTS = 4;
+    const mcBlocks = []; // { cells: [...], rowCount }
+    displayRows.forEach((r) => {
+      const key = r.mc?.toLowerCase();
+      const emails = emailsByMc.get(key) || [];
+      const rowEmails = isHistorical ? emails : emails.filter((e) => e.active !== false);
+      let slots;
+      if (isHistorical) {
+        slots = (rowEmails.length ? rowEmails : [null]).map((e) => ({ e, filled: !!e }));
+      } else {
+        const filledSlots = rowEmails.slice(0, MAX_SLOTS).map((e) => ({ e, filled: true }));
+        const emptySlots = Array.from({ length: Math.max(MAX_SLOTS - filledSlots.length, 0) }, () => ({ e: null, filled: false }));
+        slots = [...filledSlots, ...emptySlots];
+      }
+      mcBlocks.push({
+        rowCount: slots.length,
+        rows: slots.map((slot, i) => {
+          const { e, filled } = slot;
+          return [
+            r.circle || "",
+            r.region || "",
+            r.branch || "",
+            r.mc || "",
+            i + 1,
+            filled ? (e.label || r.full_name || `Admin ${i + 1}`) : "Kosong",
+            filled ? (e.email || "") : "—",
+          ];
+        }),
+      });
     });
-    const ws = XLSX.utils.aoa_to_sheet([head, ...(body.length ? body : [["", "", "", ""]])]);
-    ws["!cols"] = [{ wch: 22 }, { wch: 28 }, { wch: 30 }, { wch: 10 }];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Daftar Email Admin MC");
-    XLSX.writeFile(wb, `Daftar_Email_Admin_MC_${new Date().toISOString().slice(0, 10)}.xlsx`);
-    showToast(`Daftar email diunduh — ${body.length} baris. File ini juga bisa dipakai sbg template upload.`, "ok");
+    const totalRows = mcBlocks.reduce((n, b) => n + b.rowCount, 0);
+
+    const ExcelJS = (await import("exceljs")).default;
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Daftar Email Admin MC");
+    ws.columns = [
+      { width: 14 }, { width: 18 }, { width: 18 }, { width: 22 }, { width: 4 }, { width: 28 }, { width: 30 },
+    ];
+    const thinBorder = { top: { style: "thin" }, left: { style: "thin" }, bottom: { style: "thin" }, right: { style: "thin" } };
+    const RED = "FFC00000";
+    const GOLD = "FFE8A33D";
+    const headerRow = ws.addRow(head);
+    headerRow.eachCell((cell, colNumber) => {
+      cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      cell.border = { top: { style: "medium" }, left: { style: "medium" }, bottom: { style: "medium" }, right: { style: "medium" } };
+      cell.alignment = { vertical: "middle", horizontal: "center" };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: colNumber <= 5 ? RED : GOLD } };
+    });
+    headerRow.height = 22;
+    ws.views = [{ state: "frozen", ySplit: 1 }];
+    ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: 7 } };
+
+    if (totalRows === 0) {
+      const emptyRow = ws.addRow(["", "", "", "", "", "", ""]);
+      emptyRow.eachCell((cell) => { cell.border = thinBorder; });
+    } else {
+      mcBlocks.forEach((block) => {
+        const startRow = ws.rowCount + 1;
+        block.rows.forEach((r) => {
+          const row = ws.addRow(r);
+          row.eachCell((cell) => { cell.border = thinBorder; });
+        });
+        const endRow = ws.rowCount;
+        // UPDATE 3: border "medium" di tepi LUAR blok (atas blok ini &
+        // kiri/kanan kolom E-G, krn A-D sudah kena tepi lewat merge di
+        // bawah) - persis garis tebal pemisah antar-MC di contoh.
+        for (let col = 5; col <= 7; col++) {
+          const topCell = ws.getCell(startRow, col);
+          topCell.border = { ...topCell.border, top: { style: "medium" } };
+          const bottomCell = ws.getCell(endRow, col);
+          bottomCell.border = { ...bottomCell.border, bottom: { style: "medium" } };
+        }
+        if (endRow > startRow) {
+          // UPDATE 2: merge vertikal Circle/Region/Branch/MC (kolom A-D)
+          // sepanjang slot MC itu - persis rowSpan di tabel layar.
+          [1, 2, 3, 4].forEach((col) => {
+            ws.mergeCells(startRow, col, endRow, col);
+            const cell = ws.getCell(startRow, col);
+            cell.alignment = { vertical: "middle", horizontal: "left" };
+            cell.border = { top: { style: "medium" }, left: { style: "medium" }, bottom: { style: "medium" }, right: { style: "medium" } };
+          });
+        } else {
+          [1, 2, 3, 4].forEach((col) => {
+            const cell = ws.getCell(startRow, col);
+            cell.alignment = { vertical: "middle", horizontal: "left" };
+            cell.border = { top: { style: "medium" }, left: { style: "medium" }, bottom: { style: "medium" }, right: { style: "medium" } };
+          });
+        }
+      });
+    }
+
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Daftar_Email_Admin_MC_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast(`Daftar email diunduh — ${totalRows} baris.`, "ok");
   };
 
   const emailFileRef = useRef(null);
   const [importingEmails, setImportingEmails] = useState(false);
 
+  // UPDATE (permintaan user - "saat upload itu hanya bisa mc yang sudah
+  // ada, jika ada penulisan mc yang berbeda maka row tersebut gagal"):
+  // upload TIDAK BOLEH lagi membuat MC baru (ensureMappingRow dulu
+  // upsert bebas - kalau penulisan MC di file beda/typo dari MC yang
+  // sudah ada di sistem, malah bikin baris master baru yang salah).
+  // Sekarang nama MC di tiap baris file dicocokkan (case-insensitive) ke
+  // daftar MC yang SUDAH ADA (displayRows - gabungan Database DSE +
+  // mapping tersimpan) - kalau tidak ketemu persis, baris itu digagalkan
+  // (dihitung terpisah sbg mcNotFoundCount) dan TIDAK diproses sama
+  // sekali. MC baru tetap harus lewat "Tambah MC Baru" dulu.
   const handleUploadEmailsFile = async (file) => {
     if (!file) return;
     setImportingEmails(true);
@@ -755,11 +765,21 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
       if (idxMc === -1 || idxEmail === -1) {
         throw new Error('Kolom wajib tidak ditemukan. Pastikan ada kolom "Micro Cluster" dan "Alamat Email" (boleh berisi lebih dari 1 email dipisah koma).');
       }
-      let addedCount = 0, skippedCount = 0, mcTouched = 0;
+      const knownMcByKey = new Map();
+      displayRows.forEach((r) => { if (r.mc) knownMcByKey.set(r.mc.toLowerCase(), r.mc); });
+      let addedCount = 0, skippedCount = 0, mcNotFoundCount = 0, mcTouched = 0;
+      const notFoundSample = [];
       for (let i = 1; i < rowsRaw.length; i++) {
         const line = rowsRaw[i];
-        const mc = String(line[idxMc] || "").trim();
-        if (!mc) continue;
+        const mcRaw = String(line[idxMc] || "").trim();
+        if (!mcRaw) continue;
+        const mcKey = mcRaw.toLowerCase();
+        const mc = knownMcByKey.get(mcKey);
+        if (!mc) {
+          mcNotFoundCount++;
+          if (notFoundSample.length < 5) notFoundSample.push(mcRaw);
+          continue;
+        }
         const labelRaw = idxLabel >= 0 ? String(line[idxLabel] || "").trim() : "";
         const emailCell = String(line[idxEmail] || "").trim();
         if (!emailCell) continue;
@@ -777,7 +797,10 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
         }
       }
       await fetchRows();
-      showToast(`Upload selesai — ${addedCount} email diproses pada ${mcTouched} MC${skippedCount ? `, ${skippedCount} baris dilewati` : ""}.`, "ok");
+      const parts = [`${addedCount} email diproses pada ${mcTouched} MC`];
+      if (skippedCount) parts.push(`${skippedCount} baris dilewati`);
+      if (mcNotFoundCount) parts.push(`${mcNotFoundCount} baris gagal (MC "${notFoundSample.join(", ")}"${mcNotFoundCount > notFoundSample.length ? ", ..." : ""} tidak ditemukan)`);
+      showToast(`Upload selesai — ${parts.join(", ")}.`, mcNotFoundCount ? "warn" : "ok");
     } catch (e) {
       showToast(e.message || "Gagal mengupload daftar email.", "error");
     } finally {
@@ -788,9 +811,7 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
 
   // ── Upload Mapping MASTER (Circle/Region/Branch/Nama Admin) — tetap
   // lewat PNL_ImportWizard (upsert per MC), email TIDAK lagi lewat sini. ──
-  const [showWizard, setShowWizard] = useState(false);
-
-  const inputStyle = { width: "100%", height: 38, padding: "0 12px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13.5, fontFamily: FONT, outline: "none", boxSizing: "border-box" };
+const inputStyle = { width: "100%", height: 38, padding: "0 12px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13.5, fontFamily: FONT, outline: "none", boxSizing: "border-box" };
   const cellInputStyle = { width: "100%", height: 30, padding: "0 8px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12.5, fontFamily: FONT, outline: "none", boxSizing: "border-box" };
 
   const emailPanelRow = emailPanelMc ? displayRows.find((r) => r.mc?.toLowerCase() === emailPanelMc.toLowerCase()) : null;
@@ -802,53 +823,9 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
 
       <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden", marginBottom: 20 }}>
         <div style={{ padding: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <UserRoundCog size={20} color={t.teal} />
             <div style={{ fontSize: 19, fontWeight: 800 }}>Mapping & User Management</div>
-          </div>
-          {/* UPDATE (permintaan user - "buat bentuknya tabel"): tampilan
-              kartu per-MC dikembalikan ke bentuk TABEL seperti semula,
-              TAPI tetap menjaga keterbacaan utk MC yg punya banyak admin
-              (permintaan sebelumnya) - lewat rowSpan: kolom
-              Circle/Region/Branch/MC/Status/Aksi digabung 1 baris per MC,
-              sedangkan Nama Admin & Email Admin tetap 1 BARIS SENDIRI per
-              admin (bernomor), jadi "Nama Admin 1 / Email Admin 1, Nama
-              Admin 2 / Email Admin 2 dst" tetap jelas terpisah tanpa
-              numpuk dalam 1 sel. Toolbar tetap 2 kartu berlabel (Data MC
-              vs Daftar Email) dari redesign sebelumnya - itu bukan bagian
-              dari komplain "bentuk tabel", jadi dipertahankan. */}
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-            <div style={{ flex: "1 1 260px", minWidth: 260, borderRadius: 12, border: `1px solid ${t.line}`, background: t.sub, padding: 14 }}>
-              <div style={{ fontSize: 10.5, fontWeight: 800, color: t.mid, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>Data MC <span style={{ fontWeight: 600, textTransform: "none", letterSpacing: 0 }}>(Circle / Region / Branch / Nama Admin)</span></div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button onClick={handleDownload} style={{ display: "flex", alignItems: "center", gap: 7, height: 38, padding: "0 14px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.card, color: t.hi, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
-                  <Download size={14} /> Download Data MC
-                </button>
-                {!isHistorical && (
-                  <button onClick={() => setShowWizard(true)} style={{ display: "flex", alignItems: "center", gap: 7, height: 38, padding: "0 14px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.card, color: t.hi, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
-                    <Upload size={14} /> Upload Data MC
-                  </button>
-                )}
-              </div>
-            </div>
-            <div style={{ flex: "1 1 260px", minWidth: 260, borderRadius: 12, border: `1px solid ${t.tealBd}`, background: t.tealBg, padding: 14 }}>
-              <div style={{ fontSize: 10.5, fontWeight: 800, color: t.teal, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>Daftar Email Admin <span style={{ fontWeight: 600, textTransform: "none", letterSpacing: 0 }}>(login OTP, per MC)</span></div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button onClick={handleDownloadEmails} style={{ display: "flex", alignItems: "center", gap: 7, height: 38, padding: "0 14px", borderRadius: 9, border: `1px solid ${t.teal}`, background: t.card, color: t.teal, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
-                  <Mail size={14} /> Download Daftar Email
-                </button>
-                {!isHistorical && (
-                  <>
-                    <input ref={emailFileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }}
-                      onChange={(e) => handleUploadEmailsFile(e.target.files?.[0])} />
-                    <button onClick={() => emailFileRef.current?.click()} disabled={importingEmails}
-                      style={{ display: "flex", alignItems: "center", gap: 7, height: 38, padding: "0 14px", borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: importingEmails ? "not-allowed" : "pointer", opacity: importingEmails ? 0.7 : 1 }}>
-                      {importingEmails ? <Loader2 size={14} className="spin" /> : <Upload size={14} />} Upload Daftar Email
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
           </div>
         </div>
         {isHistorical && (
@@ -859,28 +836,9 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
             </div>
           </div>
         )}
-        {!isHistorical && (
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 16px", fontSize: 11.5, color: t.mid, borderTop: `1px solid ${t.line}` }}>
-            <Mail size={13} color={t.lo} style={{ flexShrink: 0, marginTop: 1 }} />
-            <span>1 MC boleh punya admin (email) sebanyak apapun — klik &ldquo;Kelola Email&rdquo; di baris MC, atau upload massal. Semua admin yang terpasang di 1 MC yang sama mengakses data District itu dengan persis sama (DSE, AR, dst) — tidak ada bedanya admin ke berapa yang login, semuanya setara.</span>
-          </div>
-        )}
       </div>
 
-      {showWizard && !isHistorical && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 9000, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "32px 16px", overflowY: "auto" }}
-          onClick={(e) => { if (e.target === e.currentTarget) { setShowWizard(false); fetchRows(); } }}>
-          <div style={{ width: "100%", maxWidth: 1040, background: d ? "#0E0E10" : "#F5F5F7", borderRadius: 18, boxShadow: "0 24px 60px rgba(0,0,0,0.45)", position: "relative", padding: 18 }}>
-            <button onClick={() => { setShowWizard(false); fetchRows(); }}
-              style={{ position: "absolute", top: 14, right: 14, zIndex: 10, width: 32, height: 32, borderRadius: 999, border: "none", background: d ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)", color: t.hi, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <X size={16} />
-            </button>
-            <PNL_ImportWizard theme={theme} supabase={supabase} formTypeProp="admin_mc_mapping" lockTarget />
-          </div>
-        </div>
-      )}
-
-      {/* ── Popover "Kelola Email" per MC ─────────────────────────────── */}
+{/* ── Popover "Kelola Email" per MC ─────────────────────────────── */}
       {emailPanelMc && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9100, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
           onClick={(e) => { if (e.target === e.currentTarget) setEmailPanelMc(null); }}>
@@ -915,7 +873,7 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
             <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
               <input value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="email@contoh.com"
                 onKeyDown={(e) => e.key === "Enter" && addEmail(emailPanelMc)} style={{ ...cellInputStyle, height: 36, flex: 1.4 }} />
-              <input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="Nama admin (opsional)"
+              <input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="Nama admin"
                 onKeyDown={(e) => e.key === "Enter" && addEmail(emailPanelMc)} style={{ ...cellInputStyle, height: 36, flex: 1 }} />
               <button onClick={() => addEmail(emailPanelMc)} disabled={emailBusy}
                 style={{ display: "flex", alignItems: "center", gap: 6, height: 36, padding: "0 12px", borderRadius: 7, border: "none", background: t.teal, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: emailBusy ? "not-allowed" : "pointer", flexShrink: 0 }}>
@@ -938,6 +896,51 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
         </div>
       )}
 
+      {/* ── Popover "Tambah MC Baru" - permintaan user "data circle dan mc
+          itu sudah fixed, jadi kita tidak bisa menambahnya, kita harus
+          tambahkan manual untuk mc baru, pilih branch yang sudah ada":
+          Circle/Region TETAP ikut Branch yg dipilih (bukan diketik bebas),
+          cuma nama MC yg manual/baru. */}
+      {showAddMc && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9100, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={(ev) => { if (ev.target === ev.currentTarget && !addMcBusy) setShowAddMc(false); }}>
+          <div style={{ width: "100%", maxWidth: 420, background: d ? "#15151A" : "#FFFFFF", borderRadius: 16, boxShadow: "0 24px 60px rgba(0,0,0,0.45)", padding: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+              <div style={{ fontSize: 16, fontWeight: 800 }}>Tambah MC Baru</div>
+              <button onClick={() => !addMcBusy && setShowAddMc(false)} style={{ width: 28, height: 28, borderRadius: 999, border: "none", background: d ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)", color: t.hi, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><X size={14} /></button>
+            </div>
+            <div style={{ fontSize: 12, color: t.mid, marginBottom: 14 }}>
+              Circle & Region sudah tetap (ikut Database DSE) — pilih Branch yang sudah ada, lalu isi nama MC baru.
+            </div>
+
+            <div style={{ fontSize: 10.5, color: t.lo, marginBottom: 5 }}>Branch</div>
+            <select value={newMcBranch} onChange={(ev) => setNewMcBranch(ev.target.value)}
+              style={{ ...cellInputStyle, height: 36, marginBottom: 10, cursor: "pointer" }}>
+              <option value="">— Pilih Branch —</option>
+              {branchOptions.map((b) => (
+                <option key={b.branch} value={b.branch}>{b.branch} ({b.region} · {b.circle})</option>
+              ))}
+            </select>
+
+            <div style={{ fontSize: 10.5, color: t.lo, marginBottom: 5 }}>Nama MC baru</div>
+            <input value={newMcName} onChange={(ev) => setNewMcName(ev.target.value)} placeholder="Contoh: MC-NAMA BARU"
+              style={{ ...cellInputStyle, height: 36, marginBottom: 16 }} />
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ flex: 1 }} />
+              <button onClick={() => !addMcBusy && setShowAddMc(false)} disabled={addMcBusy}
+                style={{ height: 36, padding: "0 12px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: "none", color: t.mid, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+                Batal
+              </button>
+              <button onClick={handleAddNewMc} disabled={addMcBusy}
+                style={{ display: "flex", alignItems: "center", gap: 6, height: 36, padding: "0 12px", borderRadius: 7, border: "none", background: t.teal, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: addMcBusy ? "not-allowed" : "pointer" }}>
+                {addMcBusy ? <Loader2 size={13} className="spin" /> : <Check size={13} />} Simpan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Popover "Edit" 1 admin (ganti dari tombol Hapus instan - permintaan
           user "ubah menjadi tombol edit, agar bisa ganti email atau hapus
           disitu") - bisa GANTI email/nama di sini, atau hapus dari sini juga. */}
@@ -956,8 +959,8 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
             <div style={{ fontSize: 10.5, color: t.lo, marginBottom: 5 }}>Email</div>
             <input value={editDraftEmail} onChange={(ev) => setEditDraftEmail(ev.target.value)} placeholder="email@contoh.com"
               style={{ ...cellInputStyle, height: 36, marginBottom: 10 }} />
-            <div style={{ fontSize: 10.5, color: t.lo, marginBottom: 5 }}>Nama admin (opsional)</div>
-            <input value={editDraftLabel} onChange={(ev) => setEditDraftLabel(ev.target.value)} placeholder="Nama admin (opsional)"
+            <div style={{ fontSize: 10.5, color: t.lo, marginBottom: 5 }}>Nama admin</div>
+            <input value={editDraftLabel} onChange={(ev) => setEditDraftLabel(ev.target.value)} placeholder="Nama admin"
               style={{ ...cellInputStyle, height: 36, marginBottom: 16 }} />
 
             <div style={{ display: "flex", gap: 8 }}>
@@ -980,14 +983,46 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
       )}
 
       <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden", marginBottom: 16 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 16 }}>
-          <div style={{ position: "relative", flex: 1 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 16, flexWrap: "wrap" }}>
+          {roleOptions && (
+            <div style={{ position: "relative", flexShrink: 0 }}>
+              <select value={roleValue} onChange={(e) => onRoleChange?.(e.target.value)}
+                style={{ appearance: "none", WebkitAppearance: "none", height: 38, padding: "0 32px 0 14px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>
+                {/* UPDATE (permintaan user - "yang segera hadir tidak
+                    perlu ditampilkan"): role yg belum ready (ready:false)
+                    disembunyikan dari dropdown, bukan cuma dilabeli. */}
+                {roleOptions.filter((r) => r.ready).map((r) => (
+                  <option key={r.k} value={r.k}>{r.label}</option>
+                ))}
+              </select>
+              <ChevronDown size={14} color={t.lo} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+            </div>
+          )}
+          <div style={{ position: "relative", flex: "1 1 220px", minWidth: 220 }}>
             <Search size={14} style={{ position: "absolute", left: 12, top: 12, color: t.lo }} />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari MC / circle / region / branch / nama admin / email…" style={{ ...inputStyle, paddingLeft: 34 }} />
           </div>
           <button onClick={fetchRows} title="Refresh" style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
             <RefreshCw size={14} className={fetching ? "spin" : ""} />
           </button>
+          {!isHistorical && (
+            <button onClick={() => setShowAddMc(true)} style={{ display: "flex", alignItems: "center", gap: 7, height: 38, padding: "0 14px", borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0 }}>
+              <Plus size={14} /> Tambah MC Baru
+            </button>
+          )}
+          <button onClick={handleDownloadEmails} style={{ display: "flex", alignItems: "center", gap: 7, height: 38, padding: "0 14px", borderRadius: 9, border: `1px solid ${t.teal}`, background: t.card, color: t.teal, fontSize: 12.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0 }}>
+            <Mail size={14} /> Download
+          </button>
+          {!isHistorical && (
+            <>
+              <input ref={emailFileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }}
+                onChange={(e) => handleUploadEmailsFile(e.target.files?.[0])} />
+              <button onClick={() => emailFileRef.current?.click()} disabled={importingEmails}
+                style={{ display: "flex", alignItems: "center", gap: 7, height: 38, padding: "0 14px", borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: importingEmails ? "not-allowed" : "pointer", opacity: importingEmails ? 0.7 : 1, whiteSpace: "nowrap", flexShrink: 0 }}>
+                {importingEmails ? <Loader2 size={14} className="spin" /> : <Upload size={14} />} Upload
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -1011,39 +1046,25 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
               <thead>
                 <tr style={{ background: t.sub, borderBottom: `1px solid ${t.line}` }}>
                   <th style={th}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>CIRCLE
-                      <ExcelFilter t={t} d={d} label="Circle" options={colOptions.circle} selected={colFilters.circle} onApply={(v) => setColFilter("circle", v)} onClear={() => setColFilter("circle", [])} {...sortPropsFor("circle")} />
-                    </div>
+                    CIRCLE
                   </th>
                   <th style={th}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>REGION
-                      <ExcelFilter t={t} d={d} label="Region" options={colOptions.region} selected={colFilters.region} onApply={(v) => setColFilter("region", v)} onClear={() => setColFilter("region", [])} {...sortPropsFor("region")} />
-                    </div>
+                    REGION
                   </th>
                   <th style={th}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>BRANCH
-                      <ExcelFilter t={t} d={d} label="Branch" options={colOptions.branch} selected={colFilters.branch} onApply={(v) => setColFilter("branch", v)} onClear={() => setColFilter("branch", [])} {...sortPropsFor("branch")} />
-                    </div>
+                    BRANCH
                   </th>
                   <th style={th}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>MC
-                      <ExcelFilter t={t} d={d} label="MC" options={colOptions.mc} selected={colFilters.mc} onApply={(v) => setColFilter("mc", v)} onClear={() => setColFilter("mc", [])} {...sortPropsFor("mc")} />
-                    </div>
+                    MC
                   </th>
                   <th style={th}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>#
-                      <ExcelFilter t={t} d={d} label="Jumlah Admin" options={colOptions.adminCount} selected={colFilters.adminCount} onApply={(v) => setColFilter("adminCount", v)} onClear={() => setColFilter("adminCount", [])} {...sortPropsFor("adminCount")} />
-                    </div>
+                    #
                   </th>
                   <th style={th}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>NAMA ADMIN
-                      <ExcelFilter t={t} d={d} label="Nama Admin" options={colOptions.adminName} selected={colFilters.adminName} onApply={(v) => setColFilter("adminName", v)} onClear={() => setColFilter("adminName", [])} {...sortPropsFor("adminName")} />
-                    </div>
+                    NAMA ADMIN
                   </th>
                   <th style={th}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>EMAIL ADMIN
-                      <ExcelFilter t={t} d={d} label="Email Admin" options={colOptions.adminEmail} selected={colFilters.adminEmail} onApply={(v) => setColFilter("adminEmail", v)} onClear={() => setColFilter("adminEmail", [])} {...sortPropsFor("adminEmail")} />
-                    </div>
+                    EMAIL ADMIN
                   </th>
                   {/* UPDATE (permintaan user - "untuk kolom edit/tambah ini nama
                       kolomnya itu AKSI, dan pisahkan dengan sangat baik dan ui
@@ -1051,14 +1072,10 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
                       divider (border kiri lebih tebal & background beda tipis)
                       spy jelas kepisah dari kolom data admin (Nama/Email) dan
                       dari kolom STATUS di sampingnya, bukan nyambung begitu
-                      saja. STATUS skrg juga punya <ExcelFilter> sendiri
-                      (checklist: Sedang Online / Pernah Login / Belum Pernah
-                      Login / Riwayat). */}
+                      saja. */}
                   <th style={{ ...th, borderLeft: `2px solid ${t.line}`, background: t.sub2 || t.sub }}>AKSI</th>
                   <th style={{ ...th, borderLeft: `2px solid ${t.line}` }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>STATUS
-                      <ExcelFilter t={t} d={d} label="Status" options={colOptions.status} selected={colFilters.status} onApply={(v) => setColFilter("status", v)} onClear={() => setColFilter("status", [])} {...sortPropsFor("status")} />
-                    </div>
+                    STATUS
                   </th>
                 </tr>
               </thead>
@@ -1084,16 +1101,14 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
                   // Historis (read-only, data masa lalu) TIDAK dipaksa 4 slot karena tidak bisa
                   // ditambah/dihapus - cukup tampilkan apa adanya.
                   const MAX_SLOTS = 4;
-                  let slots, span, hiddenCount;
+                  let slots, hiddenCount;
                   if (isHistorical) {
                     slots = (rowEmails.length ? rowEmails : [null]).map((e) => ({ e, filled: !!e }));
-                    span = slots.length;
                     hiddenCount = 0;
                   } else {
                     const filledSlots = rowEmails.slice(0, MAX_SLOTS).map((e) => ({ e, filled: true }));
                     const emptySlots = Array.from({ length: Math.max(MAX_SLOTS - filledSlots.length, 0) }, () => ({ e: null, filled: false }));
                     slots = [...filledSlots, ...emptySlots];
-                    span = MAX_SLOTS;
                     hiddenCount = Math.max(rowEmails.length - MAX_SLOTS, 0);
                   }
                   const rowsOut = [];
@@ -1102,23 +1117,25 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
                     const { e, filled } = slot;
                     rowsOut.push(
                       <tr key={`${r.mc}-slot-${i}`} style={{ borderBottom: `1px solid ${t.line}` }}>
-                        {i === 0 && (
-                          <>
-                            <td rowSpan={span} style={mcCellStyle}>{r.circle || "—"}</td>
-                            <td rowSpan={span} style={mcCellStyle}>{r.region || "—"}</td>
-                            <td rowSpan={span} style={mcCellStyle}>{r.branch || "—"}</td>
-                            <td rowSpan={span} style={{ ...mcCellStyle, fontWeight: 800, color: t.hi }}>
-                              {r.mc}
-                              {isVirtual && <div title="MC ini belum punya mapping"><span style={{ display: "inline-block", marginTop: 4, fontSize: 9.5, fontWeight: 700, color: t.amber, background: t.amberBg, borderRadius: 6, padding: "1px 6px" }}>Baru</span></div>}
-                            </td>
-                          </>
-                        )}
-                        <td style={slotCellStyle}>
-                          {filled ? (
-                            <div style={{ width: 20, height: 20, borderRadius: 999, background: t.tealBg, color: t.teal, fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</div>
-                          ) : (
-                            <div style={{ width: 20, height: 20, borderRadius: 999, border: `1px dashed ${t.inputBd}`, color: t.lo, fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</div>
-                          )}
+                        {/* UPDATE (permintaan user - "buat ini menjadi table biasa tanpa ada
+                            merge"): Circle/Region/Branch/MC dulu di-merge (rowSpan) biar 1 MC
+                            keliatan jadi 1 blok - sekarang DIHAPUS, nilainya diulang di SETIAP
+                            baris slot (table biasa, tidak ada rowSpan sama sekali). */}
+                        <td style={mcCellStyle}>{r.circle || "—"}</td>
+                        <td style={mcCellStyle}>{r.region || "—"}</td>
+                        <td style={mcCellStyle}>{r.branch || "—"}</td>
+                        <td style={{ ...mcCellStyle, fontWeight: 800, color: t.hi }}>
+                          {r.mc}
+                          {isVirtual && i === 0 && <div title="MC ini belum punya mapping"><span style={{ display: "inline-block", marginTop: 4, fontSize: 9.5, fontWeight: 700, color: t.amber, background: t.amberBg, borderRadius: 6, padding: "1px 6px" }}>Baru</span></div>}
+                        </td>
+                        <td style={{ ...slotCellStyle, textAlign: "center" }}>
+                          <div style={{ display: "flex", justifyContent: "center" }}>
+                            {filled ? (
+                              <div style={{ width: 20, height: 20, borderRadius: 999, background: t.tealBg, color: t.teal, fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</div>
+                            ) : (
+                              <div style={{ width: 20, height: 20, borderRadius: 999, border: `1px dashed ${t.inputBd}`, color: t.lo, fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</div>
+                            )}
+                          </div>
                         </td>
                         <td style={{ ...slotCellStyle, fontWeight: filled ? 700 : 500, color: filled ? t.hi : t.lo, fontStyle: filled ? "normal" : "italic" }}>
                           {filled ? (e.label || r.full_name || `Admin ${i + 1}`) : "Kosong"}

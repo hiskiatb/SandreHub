@@ -23,6 +23,7 @@ import {
   Table2, Wallet, PanelLeftClose, PanelLeftOpen,
   FileSpreadsheet, Users, Key, Briefcase, Wrench, Mail, Sparkles, Archive,
   Database, TrendingUp, UserRoundCog, Landmark,
+  Pencil, Check, Loader2,
 } from "lucide-react";
 
 import FormPendapatan   from "./components/PNL_FormPendapatan";
@@ -45,7 +46,8 @@ import ReportMerge_Module from "./components/ReportMerge_Module";
 import PNL_MPX_Menu       from "./components/PNL_MPX_Menu";
 import SDP_DseDatabase    from "./components/SDP_DseDatabase";
 import AdminMcMapping     from "./components/AdminMcMapping";
-import DSE_ProdAR, { CATEGORY_OPTIONS as DSE_CATEGORY_OPTIONS } from "./components/DSE_ProdAR";
+import AdminAreaMapping   from "./components/AdminAreaMapping";
+import DSE_ProdAR, { CATEGORY_OPTIONS as DSE_CATEGORY_OPTIONS, getCategoryOptionsForRole } from "./components/DSE_ProdAR";
 
 // ─── Role Maps ────────────────────────────────────────────────────────────────
 const IOH_ROLE_REGION_MAP = {
@@ -249,6 +251,7 @@ const HIDE_DATE_PICKER_VIEWS    = new Set(["overview","control-center","pivot-su
 // false = belum ada UI kelolanya, tampil placeholder "Segera hadir".
 const USER_MGMT_ROLES = [
   { k: "finance_mpx",                 label: "District Admin",                ready: true },
+  { k: "admin_area",                  label: "Admin Area",                    ready: true },
   { k: "spm_sumatera",                label: "SPM Sumatera",                  ready: false },
   { k: "marketing_sumatera_program",  label: "Marketing Sumatera Program",    ready: false },
   { k: "ioh_north_sumatera",          label: "IOH North Sumatera",            ready: false },
@@ -520,6 +523,9 @@ export default function DashboardPage() {
       : "dark"
   );
   const [profileOpen,       setProfileOpen]      = useState(false);
+  const [editingName,       setEditingName]      = useState(false);
+  const [nameDraft,         setNameDraft]        = useState("");
+  const [savingName,        setSavingName]       = useState(false);
   const [navOpen,           setNavOpen]          = useState(true);
   const [sidebarCollapsed,  setSidebarCollapsed] = useState(false);
   const [masterData,        setMasterData]       = useState([]);
@@ -572,6 +578,14 @@ export default function DashboardPage() {
   // ── Role flags ────────────────────────────────────────────────────────────
   const isSPM       = profile?.role === "spm_sumatera";
   const isMPX       = profile?.role === "finance_mpx";
+  // FIX AKSES (audit user - "pastikan 100persen tidak ada bug"): role baru
+  // admin_area sebelumnya ga ke-handle sama sekali di gating sidebar/menu
+  // halaman ini - karena kebanyakan gate di bawah pakai pola "!isMPX" (bukan
+  // whitelist role), admin_area ke-lolos ke menu2 yg bukan wewenangnya (MPX
+  // P&L Report, Payout Tracker) SEKALIGUS ke-block dari menu yg SEHARUSNYA
+  // dia akses (Prod. & AR, khususnya tab HoA AR). isAdminArea ditambahkan
+  // eksplisit supaya kedua arah itu dibenerin.
+  const isAdminArea = profile?.role === "admin_area";
   const isIOHAny    = IOH_ROLES.has(profile?.role);
   const isSFM       = SFM_ROLES.has(profile?.role);
   const canMfts     = isSPM || isIOHAny || isSFM;
@@ -737,6 +751,31 @@ export default function DashboardPage() {
 
   const handleToggleSidebar = () => { const next = !sidebarCollapsed; setSidebarCollapsed(next); localStorage.setItem("sh-sidebar-collapsed", String(next)); };
 
+  // UPDATE (permintaan user - "coba perbaiki agar mereka bisa edit nama
+  // mereka sendiri"): Admin MC (role finance_mpx, login via OTP email -
+  // lihat app/sandra/login-admin-mc) dulu nama tampilannya (profiles.
+  // full_name) cuma bisa keisi SEKALI dari RPC mf_dse_admin_mc_login_apply
+  // (atau diubah SPM lewat tab Mapping & User Management), tidak pernah
+  // bisa diubah sendiri oleh pemiliknya. Sekarang bisa, lewat dropdown
+  // profil (pojok kanan atas) - update profiles.full_name milik akun
+  // SENDIRI saja (RLS policy "profiles_update_own": id = auth.uid()).
+  const saveOwnName = async () => {
+    const newName = nameDraft.trim();
+    if (!newName || !profile?.id) { setEditingName(false); return; }
+    if (newName === profile.full_name) { setEditingName(false); return; }
+    setSavingName(true);
+    try {
+      const { error } = await supabase.from("profiles").update({ full_name: newName }).eq("id", profile.id);
+      if (error) throw error;
+      setProfile((prev) => (prev ? { ...prev, full_name: newName } : prev));
+      setEditingName(false);
+    } catch {
+      // best-effort - dropdown kecil, cukup biarkan draft tetap kebuka kalau gagal
+    } finally {
+      setSavingName(false);
+    }
+  };
+
   useEffect(() => {
     if (!activePartner || iohLockedRegion) return;
     const partnerData = masterData.find(i => i.partner_name === activePartner);
@@ -856,7 +895,7 @@ export default function DashboardPage() {
 
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 14px 24px", display: "flex", flexDirection: "column", gap: 26 }}>
         {/* Filter laporan (hanya tampil untuk role yang akses PNL) */}
-        {!hideSidebarFilter && !isSDPMember && (
+        {!hideSidebarFilter && !isSDPMember && !isAdminArea && (
           <div>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 2px", marginBottom: 14 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
@@ -935,7 +974,7 @@ export default function DashboardPage() {
                       lihat menu ini sama sekali, makanya "&& !isMPX" ditambahkan
                       eksplisit (canMonitor/!isSDPMember sebelumnya ikut
                       meng-include isMPX secara tidak sengaja). */}
-                  {!isMPX && (canMonitor || !isSDPMember || isSPM) && (
+                  {!isMPX && !isAdminArea && (canMonitor || !isSDPMember || isSPM) && (
                     <>
                       <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
                         <button onClick={() => navigate("pnl-mpx")} className={`snav${(view === "pnl-mpx" || PNL_MPX_VIEWS.has(view)) ? " active" : ""}`} style={{ flex: 1 }}>
@@ -957,7 +996,7 @@ export default function DashboardPage() {
                       )}
                     </>
                   )}
-                  {!isSDPMember && !isMPX && <SNavItem icon={<Wallet size={14} />}      label="Payout Tracker"       active={view === "payout-tracker"} maint={menuMaint("payout-tracker")} onClick={() => navigate("payout-tracker")} />}
+                  {!isSDPMember && !isMPX && !isAdminArea && <SNavItem icon={<Wallet size={14} />}      label="Payout Tracker"       active={view === "payout-tracker"} maint={menuMaint("payout-tracker")} onClick={() => navigate("payout-tracker")} />}
                   {canSdp       && <SNavItem icon={<Store size={14} />}       label="SDP Management"       active={view === "sdp2"}           onClick={() => navigate("sdp2")} />}
                   {/* UPDATE (permintaan user - "mapping admin mc itu
                       seharusnya didalam dse prod, bukan menjadi menu
@@ -965,7 +1004,7 @@ export default function DashboardPage() {
                       "Mapping Admin MC" yg terpisah DIHAPUS - fitur yg sama
                       skrg jadi tab "User Management" DI DALAM DSE Prod. &
                       AR itu sendiri (lihat DSE_ProdAR.jsx). */}
-                  {(isSPM || isMPX) && (
+                  {(isSPM || isMPX || isAdminArea) && (
                     <>
                       <button onClick={() => setProdArOpen(v => !v)}
                         style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", background: (view === "dse-prod-ar") ? t.blueBg : "transparent", border: "none", borderRadius: 8, cursor: "pointer", padding: "9px 11px", color: (view === "dse-prod-ar") ? t.blue : t.mid, fontFamily: "inherit", fontSize: 13.5, fontWeight: (view === "dse-prod-ar") ? 600 : 500 }}>
@@ -975,7 +1014,10 @@ export default function DashboardPage() {
                       </button>
                       {prodArOpen && (
                         <div style={{ marginLeft: 10, paddingLeft: 8, borderLeft: `1px solid ${t.line}`, display: "flex", flexDirection: "column", gap: 2 }}>
-                          {DSE_CATEGORY_OPTIONS.map((opt) => (
+                          {/* FIX AKSES (audit user): tab kategori difilter sesuai role -
+                              District Admin cuma DSE+DSO/DSP, Admin Area cuma HoA (lihat
+                              getCategoryOptionsForRole di DSE_ProdAR.jsx). */}
+                          {getCategoryOptionsForRole(profile?.role).map((opt) => (
                             <SNavItem key={opt.k} icon={<Wallet size={13} />} label={opt.label}
                               active={view === "dse-prod-ar" && dseCategory === opt.k}
                               onClick={() => { setDseCategory(opt.k); navigate("dse-prod-ar"); }} />
@@ -1108,8 +1150,33 @@ export default function DashboardPage() {
                     <div style={{ padding: "16px 16px 12px", borderBottom: `1px solid ${t.lineSoft}` }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 10 }}>
                         <div style={{ width: 36, height: 36, borderRadius: 8, background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", display: "flex", alignItems: "center", justifyContent: "center", color: "#FFFFFF", fontSize: 14, fontWeight: 700 }}>{profile?.full_name?.charAt(0) || "U"}</div>
-                        <div style={{ overflow: "hidden", minWidth: 0 }}>
-                          <div style={{ fontSize: 13.5, fontWeight: 600, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profile?.full_name || "Member"}</div>
+                        <div style={{ overflow: "hidden", minWidth: 0, flex: 1 }}>
+                          {editingName ? (
+                            <div style={{ display: "flex", alignItems: "center", gap: 5 }} onClick={(ev) => ev.stopPropagation()}>
+                              <input
+                                autoFocus
+                                value={nameDraft}
+                                onChange={(ev) => setNameDraft(ev.target.value)}
+                                onKeyDown={(ev) => { if (ev.key === "Enter") saveOwnName(); if (ev.key === "Escape") setEditingName(false); }}
+                                style={{ flex: 1, minWidth: 0, height: 28, padding: "0 8px", borderRadius: 6, border: `1px solid ${t.blueBd}`, background: t.inputBg, color: t.hi, fontSize: 13, fontFamily: "inherit", outline: "none" }}
+                              />
+                              <button onClick={saveOwnName} disabled={savingName} title="Simpan nama" style={{ width: 26, height: 26, borderRadius: 6, border: "none", background: t.blue, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: savingName ? "not-allowed" : "pointer", flexShrink: 0 }}>
+                                {savingName ? <Loader2 size={12} className="spin" /> : <Check size={12} />}
+                              </button>
+                            </div>
+                          ) : (
+                            <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                              <div style={{ fontSize: 13.5, fontWeight: 600, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profile?.full_name || "Member"}</div>
+                              {/* UPDATE (permintaan user - "coba perbaiki agar mereka bisa edit
+                                  nama mereka sendiri"): tombol pensil ini sengaja cuma muncul utk
+                                  Admin MC (isMPX) - edit profiles.full_name milik akun sendiri. */}
+                              {isMPX && (
+                                <button onClick={(ev) => { ev.stopPropagation(); setNameDraft(profile?.full_name || ""); setEditingName(true); }} title="Ubah nama saya" style={{ width: 20, height: 20, borderRadius: 5, border: "none", background: "transparent", color: t.lo, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                                  <Pencil size={11} />
+                                </button>
+                              )}
+                            </div>
+                          )}
                           <div style={{ fontSize: 11.5, color: t.mid, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profile?.email}</div>
                         </div>
                       </div>
@@ -1162,14 +1229,14 @@ export default function DashboardPage() {
 
                   {/* MPX P&L Report — satu menu, isinya 4 modul pelaporan P&L
                       (lihat PNL_MPX_Menu.jsx). */}
-                  {!isMPX && (canMonitor || !isSDPMember || isSPM) && (
+                  {!isMPX && !isAdminArea && (canMonitor || !isSDPMember || isSPM) && (
                     <DashCard icon={<PieChart size={20} />} title="MPX P&L Report"
                       desc="Laporan P&L, Control Center, Pivot Summary, dan Import Data — 4 modul dalam satu menu."
                       tag="Profit & Loss" active={true} onClick={() => navigate("pnl-mpx")} t={t} d={d}
                       accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.12)" : "rgba(50,188,173,0.08)", bd: d ? "rgba(50,188,173,0.30)" : "rgba(50,188,173,0.20)", shadow: "rgba(50,188,173,0.20)" }} />
                   )}
 
-                  {!isSDPMember && !isMPX && (
+                  {!isSDPMember && !isMPX && !isAdminArea && (
                     <DashCard icon={<Wallet size={20} />} title="Payout Tracker"
                       desc="Monitoring pembayaran Partner & Agency Prepaid — SLA, funnel, heatmap, dan raw data."
                       tag="Payout" active={true} onClick={() => navigate("payout-tracker")} t={t} d={d}
@@ -1198,10 +1265,10 @@ export default function DashboardPage() {
                       DSE Prod & AR, DSO/DSP AR, HoA AR), jadi title/desc
                       kartu di dashboard ini ga boleh nyebut "DSE" doang
                       lagi supaya ga menyesatkan. */}
-                  {(isSPM || isMPX) && (
+                  {(isSPM || isMPX || isAdminArea) && (
                     <DashCard icon={<Wallet size={20} />} title="Prod. & AR"
                       desc="Upload penjualan harian & kelola AR/piutang outstanding — level DSE, DSO/DSP, maupun HoA."
-                      tag={isMPX ? "Admin MC" : "SPM"} active={true} onClick={() => navigate("dse-prod-ar")} t={t} d={d}
+                      tag={isMPX ? "Admin MC" : isAdminArea ? "Admin Area" : "SPM"} active={true} onClick={() => navigate("dse-prod-ar")} t={t} d={d}
                       accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.11)" : "rgba(26,158,144,0.07)", bd: d ? "rgba(50,188,173,0.28)" : "rgba(26,158,144,0.20)", shadow: "rgba(26,158,144,0.16)" }} />
                   )}
 
@@ -1353,7 +1420,7 @@ export default function DashboardPage() {
             )}
 
             {/* ── Payout Tracker ── */}
-            {view === "payout-tracker" && !isSDPMember && !isMPX && !viewUnderMaint && (
+            {view === "payout-tracker" && !isSDPMember && !isMPX && !isAdminArea && !viewUnderMaint && (
               <motion.div key="pt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
                 <PayoutTracker theme={theme} profile={profile} regionFilter={iohRegionView} partnerName={isMPX ? (profile?.partner_name || null) : (activePartner || null)} filterType={activeType !== "ALL" ? activeType : null} readOnly={isReadOnly} masterData={masterData} />
@@ -1417,7 +1484,7 @@ export default function DashboardPage() {
             )}
 
             {/* ── DSE Prod. & AR ── */}
-            {view === "dse-prod-ar" && (isSPM || isMPX) && (
+            {view === "dse-prod-ar" && (isSPM || isMPX || isAdminArea) && (
               <motion.div key="dse-prod-ar" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <DSE_ProdAR theme={theme} profile={profile} onBack={() => navigate("overview")} category={dseCategory} setCategory={setDseCategory} />
               </motion.div>
@@ -1437,25 +1504,35 @@ export default function DashboardPage() {
               <motion.div key="user-mgmt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
 
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>Pilih Role</div>
-                  <div style={{ position: "relative" }}>
-                    <select value={umRole} onChange={(e) => setUmRole(e.target.value)}
-                      style={{ appearance: "none", WebkitAppearance: "none", height: 38, padding: "0 32px 0 14px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>
-                      {USER_MGMT_ROLES.map((r) => (
-                        <option key={r.k} value={r.k}>{r.label}{r.ready ? "" : " (Segera hadir)"}</option>
-                      ))}
-                    </select>
-                    <ChevronDown size={14} color={t.lo} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
-                  </div>
-                </div>
-
+                {/* UPDATE (permintaan user - "pilih role di kiri pencarian"):
+                    dropdown "Pilih Role" dipindah ke dalam baris pencarian
+                    AdminMcMapping (lewat prop roleValue/roleOptions/
+                    onRoleChange) supaya sejajar & lebih simpel - row
+                    terpisah di sini cuma dipertahankan utk role yg BELUM
+                    ready (placeholder "Segera hadir" tidak punya baris
+                    pencarian sendiri). */}
                 {umRole === "finance_mpx" ? (
-                  <AdminMcMapping theme={theme} />
+                  <AdminMcMapping theme={theme} roleValue={umRole} roleOptions={USER_MGMT_ROLES} onRoleChange={setUmRole} />
+                ) : umRole === "admin_area" ? (
+                  <AdminAreaMapping theme={theme} roleValue={umRole} roleOptions={USER_MGMT_ROLES} onRoleChange={setUmRole} />
                 ) : (
-                  <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: "40px 24px", textAlign: "center", color: t.mid, fontSize: 13 }}>
-                    Pengelolaan user untuk role &ldquo;{USER_MGMT_ROLES.find((r) => r.k === umRole)?.label}&rdquo; belum tersedia — segera hadir.
-                  </div>
+                  <>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>Pilih Role</div>
+                      <div style={{ position: "relative" }}>
+                        <select value={umRole} onChange={(e) => setUmRole(e.target.value)}
+                          style={{ appearance: "none", WebkitAppearance: "none", height: 38, padding: "0 32px 0 14px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>
+                          {USER_MGMT_ROLES.filter((r) => r.ready).map((r) => (
+                            <option key={r.k} value={r.k}>{r.label}</option>
+                          ))}
+                        </select>
+                        <ChevronDown size={14} color={t.lo} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+                      </div>
+                    </div>
+                    <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: "40px 24px", textAlign: "center", color: t.mid, fontSize: 13 }}>
+                      Pengelolaan user untuk role &ldquo;{USER_MGMT_ROLES.find((r) => r.k === umRole)?.label}&rdquo; belum tersedia — segera hadir.
+                    </div>
+                  </>
                 )}
               </motion.div>
             )}
@@ -1475,7 +1552,7 @@ export default function DashboardPage() {
               </motion.div>
             )}
 
-            {view === "pnl-mpx" && !isMPX && (canMonitor || !isSDPMember || isSPM) && (
+            {view === "pnl-mpx" && !isMPX && !isAdminArea && (canMonitor || !isSDPMember || isSPM) && (
               <motion.div key="pnl-mpx" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
                   <div style={{ padding: "24px 28px" }}>
@@ -1553,7 +1630,7 @@ export default function DashboardPage() {
             )}
 
             {/* ── Laporan P&L (Summary / Pendapatan / Pengeluaran) ── */}
-            {PNL_VIEWS.has(view) && !isMPX && !viewUnderMaint && (
+            {PNL_VIEWS.has(view) && !isMPX && !isAdminArea && !viewUnderMaint && (
               <motion.div key="fv" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} style={{ maxWidth: 920, margin: "0 auto" }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 20 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
                 {!canPnl ? (
@@ -1681,6 +1758,8 @@ export default function DashboardPage() {
           .lg-sidebar-toggle { display: none !important; }
           .mob-hamburger { display: flex !important; }
         }
+        .spin { animation: dash-spin 0.8s linear infinite; }
+        @keyframes dash-spin { to { transform: rotate(360deg); } }
       `}</style>
     </div>
   );

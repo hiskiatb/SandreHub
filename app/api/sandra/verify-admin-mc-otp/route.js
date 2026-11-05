@@ -72,12 +72,21 @@ export async function POST(req) {
     // ── 2. Pastikan email ini memang terdaftar & aktif sbg Admin MC ───────
     // (RPC SECURITY DEFINER, tidak bergantung auth.uid() - aman dipanggil
     // dari server dgn service role.)
-    const { data: lookup, error: lookupErr } = await supabaseAdmin.rpc("mf_dse_admin_mc_lookup", {
+    // UPDATE (permintaan user - "tambahkan untuk Admin Area"): endpoint ini
+    // dipakai bareng oleh /sandra/login (jalur umum) utk Admin MC MAUPUN
+    // Admin Area - OTP sudah valid di langkah 1, di sini cukup pastikan
+    // emailnya terdaftar aktif di SALAH SATU dari dua mapping itu.
+    const { data: mcLookup } = await supabaseAdmin.rpc("mf_dse_admin_mc_lookup", {
       p_email: cleanEmail,
     });
-    if (lookupErr || !lookup?.found) {
+    let areaLookup = null;
+    if (!mcLookup?.found) {
+      const { data } = await supabaseAdmin.rpc("mf_dse_admin_area_lookup", { p_email: cleanEmail });
+      areaLookup = data;
+    }
+    if (!mcLookup?.found && !areaLookup?.found) {
       return NextResponse.json(
-        { success: false, error: "Email ini belum terdaftar sebagai Admin MC." },
+        { success: false, error: "Email ini belum terdaftar sebagai Admin MC atau Admin Area." },
         { status: 403 }
       );
     }

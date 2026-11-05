@@ -12,7 +12,7 @@ const TEAL  = "#32BCAD";
 const RED   = "#ED1C24";
 const MAGA  = "#C6168D";
 
-const ROLE_LABEL = { cse_rse: "CSE / RSE", bsm: "BSM", pic_region: "PIC Region", spm_sumatera: "SPM Sumatera", internal_ioh: "Internal IOH", finance_mpx: "Admin MC" };
+const ROLE_LABEL = { cse_rse: "CSE / RSE", bsm: "BSM", pic_region: "PIC Region", spm_sumatera: "SPM Sumatera", internal_ioh: "Internal IOH", finance_mpx: "Admin MC", admin_area: "Admin Area" };
 
 const mk = (d) => ({
   bg:      d ? "#0A0A0B" : "#F4F4F6",
@@ -100,7 +100,21 @@ function SandraLoginInner() {
         setStage("otp");
         return;
       }
-    } catch { /* bukan Admin MC / RPC gagal — lanjut cek jalur password di bawah */ }
+      // UPDATE (permintaan user - "tambahkan untuk Admin Area"): sama
+      // persis pola Admin MC di atas, tapi role admin_area - 1 email
+      // admin area otomatis dapat akses SEMUA MC/District di bawah
+      // Branch/Area yang di-mapping ke email itu (lihat AdminAreaMapping).
+      const { data: areaLookup } = await supabase.rpc("mf_dse_admin_area_lookup", { p_email: email });
+      if (areaLookup?.found) {
+        setDetected({ source: "admin_area", role: "admin_area", branches: (areaLookup.branches || []).map((x) => x.branch).filter(Boolean) });
+        const otpRes = await fetch("/api/send-otp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }) });
+        const otpJson = await otpRes.json();
+        if (!otpRes.ok || !otpJson.success) { setErrMsg(otpJson.error || "Gagal mengirim kode OTP."); setCheckingEmail(false); return; }
+        setCheckingEmail(false);
+        setStage("otp");
+        return;
+      }
+    } catch { /* bukan Admin MC/Area / RPC gagal — lanjut cek jalur password di bawah */ }
     try {
       const { data } = await supabase.rpc("sdp_login_lookup", { p_email: email });
       setDetected(data && !data.error ? { source: "sdp", ...data } : null);
@@ -150,6 +164,11 @@ function SandraLoginInner() {
       // gangguan pada sistem"). Sekarang dibungkus try/catch biasa -
       // best-effort, tidak boleh gagalkan login kalau RPC ini error.
       try { await supabase.rpc("mf_dse_admin_mc_login_apply", { p_email: email }); } catch { /* best-effort */ }
+      // UPDATE (permintaan user - "tambahkan untuk Admin Area"): dipanggil
+      // best-effort juga - no-op (applied:false) kalau email ini bukan
+      // Admin Area, jadi aman dipanggil berdampingan dgn apply Admin MC
+      // di atas tanpa perlu tau persis `detected.source`-nya duluan.
+      try { await supabase.rpc("mf_dse_admin_area_login_apply", { p_email: email }); } catch { /* best-effort */ }
       router.refresh();
       router.push("/dashboard");
     } catch (e) { console.error("[handleVerifyOtp]", e); setErrMsg("Terjadi gangguan pada sistem: " + (e?.message || e)); }
