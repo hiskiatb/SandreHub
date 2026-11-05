@@ -759,7 +759,11 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel, roleValue, 
       const rowsRaw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
       if (!rowsRaw.length) throw new Error("File kosong.");
       const header = rowsRaw[0].map((h) => String(h || "").trim().toLowerCase());
-      const idxMc = header.findIndex((h) => /micro ?cluster|^mc$/.test(h));
+      // FIX (audit - header export "Daftar Email" di-rename jadi "District"
+      // (lihat UPDATE 3 handleDownloadEmails di atas), tapi regex upload ini
+      // belum ikut diupdate - upload balik file hasil export sendiri gagal
+      // "kolom wajib tidak ditemukan". Regex sekarang terima "district" juga.
+      const idxMc = header.findIndex((h) => /micro ?cluster|^mc$|district/.test(h));
       const idxLabel = header.findIndex((h) => /nama admin|label/.test(h));
       const idxEmail = header.findIndex((h) => /email/.test(h));
       if (idxMc === -1 || idxEmail === -1) {

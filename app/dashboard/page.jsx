@@ -47,6 +47,7 @@ import PNL_MPX_Menu       from "./components/PNL_MPX_Menu";
 import SDP_DseDatabase    from "./components/SDP_DseDatabase";
 import AdminMcMapping     from "./components/AdminMcMapping";
 import AdminAreaMapping   from "./components/AdminAreaMapping";
+import CombinedEmailExport from "./components/CombinedEmailExport";
 import DSE_ProdAR, { CATEGORY_OPTIONS as DSE_CATEGORY_OPTIONS, getCategoryOptionsForRole } from "./components/DSE_ProdAR";
 
 // ─── Role Maps ────────────────────────────────────────────────────────────────
@@ -1503,6 +1504,17 @@ export default function DashboardPage() {
             {view === "user-management" && isSPM && (
               <motion.div key="user-mgmt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
+
+                {/* FITUR (permintaan user - "sediakan fitur export laporan yang bisa
+                    menandai role yang dipilih misal admin mc dan admin area... export
+                    datanya langsung di dalam excel yang sama... dipisahkan untuk
+                    masing masing region... ada fitur untuk upload kembali" ->
+                    diklarifikasi: soal Download/Upload Daftar Email di User
+                    Management, bukan laporan data): card gabungan - export 1 file
+                    Excel multi-sheet (Admin MC + Admin Area, dipecah per Region) &
+                    upload baliknya - ditaruh di sini, SELALU tampil terlepas dari
+                    role mana yg sedang dipilih di bawah (umRole). */}
+                <CombinedEmailExport theme={theme} />
 
                 {/* UPDATE (permintaan user - "pilih role di kiri pencarian"):
                     dropdown "Pilih Role" dipindah ke dalam baris pencarian
