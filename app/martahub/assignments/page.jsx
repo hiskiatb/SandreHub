@@ -380,8 +380,8 @@ function Body({ canManage, callerEmail, session, period }) {
   // Simpan satu assignment langsung dari kartu "siap-isi" (spt mobile) -
   // membungkus addAssignments yg sudah ada supaya banner info/error &
   // refresh data konsisten dgn jalur Tambah/Edit lama.
-  async function quickAssign({ targetEmail, fullName, role, region, brand, branchSlug, branchName, dsfOrgId }) {
-    await addAssignments([{ email: targetEmail, fullName, role, region, brand, branchId: branchSlug, branchName, dsfOrgId }]);
+  async function quickAssign({ targetEmail, fullName, role, region, brand, branchSlug, branchName, dsfOrgId, mc }) {
+    await addAssignments([{ email: targetEmail, fullName, role, region, brand, branchId: branchSlug, branchName, dsfOrgId, mc: mc || null }]);
   }
 
   // Varian quickAssign KHUSUS DMO (role bme_rge) - isi SATU email yg sama
@@ -1206,20 +1206,33 @@ function AddModal({ onClose, onSave, existing, scope }) {
     if (lockedBrand) setBrand(lockedBrand);
   }, [lockedRegion, lockedBrand]);
 
-  // Daftar Cluster/MC unik untuk branch+brand terpilih (mh_sites), khusus
-  // tl_dsf/dsf/md - MIRROR pola mcListForBranchProvider mobile.
+  // FITUR (DMO DMP khusus 1 MC): kalau role bme_rge & admin baru pilih
+  // SATU chip branch×brand (belum nambah combo lain), kita anggap itu target
+  // "DMO DMP" - MC-nya boleh dipersempit. Lebih dari 1 chip terpilih =
+  // DMO biasa (multi-branch), mc TIDAK ditawarkan (tidak masuk akal 1 MC
+  // berlaku ke banyak branch sekaligus).
+  const singleBmeRgeCombo = useMemo(() => {
+    if (role !== "bme_rge" || selected.size !== 1) return null;
+    const [key] = selected;
+    const [b, bId] = key.split(":");
+    return { brand: b, branchId: bId };
+  }, [role, selected]);
+
+  // Daftar Cluster/MC unik untuk branch+brand terpilih (mh_sites) - dipakai
+  // DUA jalur: tl_dsf/dsf/md (branchId/brand state, MIRROR
+  // mcListForBranchProvider mobile) DAN bme_rge (singleBmeRgeCombo di atas,
+  // khusus menandai DMO DMP utk 1 MC tertentu).
   useEffect(() => {
     let on = true;
-    if (!branchId || !brand) { setMcOptions([]); return; }
-    supabaseMarta.from("mh_sites").select("mc").eq("branch_id", branchId).eq("brand", brand).eq("active", true)
+    const eff = singleBmeRgeCombo || (branchId && brand ? { branchId, brand } : null);
+    if (!eff) { setMcOptions([]); return; }
+    supabaseMarta.rpc("mh_list_mc_by_branch", { p_branch_id: eff.branchId, p_brand: eff.brand })
       .then(({ data }) => {
         if (!on) return;
-        const set = new Set();
-        for (const r of data || []) { const m = (r.mc || "").trim(); if (m) set.add(m); }
-        setMcOptions([...set].sort());
+        setMcOptions((data || []).map((r) => r.mc).filter(Boolean));
       });
     return () => { on = false; };
-  }, [branchId, brand]);
+  }, [branchId, brand, singleBmeRgeCombo]);
 
   const supervisorOptions = useMemo(() => {
     const wanted = SUPERVISOR_ROLES_FOR[role];
@@ -1288,7 +1301,12 @@ function AddModal({ onClose, onSave, existing, scope }) {
     return s;
   }, [existing, emailKey]);
 
-  const toggle = (key) => setSelected((prev) => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
+  // FITUR (permintaan user - "tambahkan email baru untuk DMO membantu
+  // pengisian berbarengan, khusus branch yang punya pembantu khusus utk MC
+  // tertentu"): mc direset tiap ganti pilihan chip - DMO DMP selalu
+  // discoped ke SATU MC dari SATU branch×brand terpilih, jadi mc lama tidak
+  // boleh ikut nempel kalau admin ganti/tambah pilihan branch lain.
+  const toggle = (key) => setSelected((prev) => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); setMc(""); return n; });
 
   const canSave = name.trim() && emailKey
     && (isBranchRole ? selected.size > 0 : true)
@@ -1317,6 +1335,8 @@ function AddModal({ onClose, onSave, existing, scope }) {
           email: emailKey, fullName: name.trim().toUpperCase(), role, region, brand: b,
           branchId: branch_id, branchName: br?.branch || "",
           supervisorAssignmentId: needsSupervisor ? supervisorId : null, dsfOrgId: null,
+          // DMO DMP khusus 1 MC - lihat singleBmeRgeCombo/catatan di atas.
+          mc: (role === "bme_rge" && singleBmeRgeCombo && mc) ? mc : null,
         });
       }
       if (items.length) onSave(items);
@@ -1463,6 +1483,20 @@ function AddModal({ onClose, onSave, existing, scope }) {
               <div style={{ fontSize: 11, color: T.lo, marginTop: 6 }}>
                 <span style={{ color: T.success, fontWeight: 700 }}>✓ Hijau</span> = sudah ter-assign untuk email ini (tak bisa dipilih lagi). Satu email boleh memegang beberapa branch/brand.
               </div>
+              {/* FITUR (permintaan user - DMO DMP khusus 1 MC di branch
+                  yang butuh): muncul begitu role=DMO & baru 1 branch×brand
+                  yg dipilih - isi MC di sini KALAU email ini cuma DMP utk
+                  MC tsb (kosongkan = DMO penuh seluruh branch, spt biasa). */}
+              {role === "bme_rge" && singleBmeRgeCombo && mcOptions.length > 0 && (
+                <div style={{ marginTop: 10 }}>
+                  <Field label={`${mcLabelForBrand(singleBmeRgeCombo.brand)} (opsional — isi kalau email ini DMP khusus 1 ${mcLabelForBrand(singleBmeRgeCombo.brand)}, kosongkan utk DMO penuh 1 branch)`}>
+                    <select value={mc} onChange={(e) => setMc(e.target.value)} style={selectStyle}>
+                      <option value="">- DMO penuh (semua {mcLabelForBrand(singleBmeRgeCombo.brand)}) -</option>
+                      {mcOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </Field>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1581,12 +1615,10 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
   useEffect(() => {
     let on = true;
     if (!branchId || !brand) { setMcOptions([]); return; }
-    supabaseMarta.from("mh_sites").select("mc").eq("branch_id", branchId).eq("brand", brand).eq("active", true)
+    supabaseMarta.rpc("mh_list_mc_by_branch", { p_branch_id: branchId, p_brand: brand })
       .then(({ data }) => {
         if (!on) return;
-        const set = new Set();
-        for (const r of data || []) { const m = (r.mc || "").trim(); if (m) set.add(m); }
-        setMcOptions([...set].sort());
+        setMcOptions((data || []).map((r) => r.mc).filter(Boolean));
       });
     return () => { on = false; };
   }, [branchId, brand]);
@@ -2317,6 +2349,16 @@ function ChartPersonRow({ person, kind, onEdit, onRemove, isSelf }) {
           fontSize: big ? 14.5 : 11, fontWeight: 800, lineHeight: 1.3,
           whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
         }}>{person.full_name || person.email}</div>
+        {/* FITUR (DMO DMP khusus 1 MC) - badge kecil penanda kalau
+            orang ini BUKAN DMO penuh 1 branch, tapi DMP utk 1 MC
+            (person.mc terisi). Biar kelihatan beda sekilas di org-chart,
+            tidak cuma keliatan sama persis spt DMO utama. */}
+        {kind === "dmo" && !!person.mc && (
+          <div data-mh-exporttext style={{
+            display: "inline-block", fontSize: 8.5, fontWeight: 800, marginTop: 2, padding: "1px 6px",
+            borderRadius: 999, background: "rgba(15,110,86,0.12)", color: "#0F6E56",
+          }}>DMP · {person.mc}</div>
+        )}
         {!!person.email && (
           <div data-mh-exporttext title={person.email} style={{
             fontSize: big ? 11.5 : 9.5, fontWeight: 600, marginTop: 2, lineHeight: 1.4,
@@ -2345,6 +2387,21 @@ function ChartNode({ kind, headerLabel, subLabel, people, role, context, canAdd,
   const theme = CHART_THEME[kind];
   const [adding, setAdding] = useState(false);
   const hasPeople = people.length > 0;
+  // FITUR (permintaan user - "+ Tambah kecil di kotak DMO... bisa pilih
+  // semua MC di branch atau beberapa saja"): daftar MC/Cluster union IM3+
+  // 3ID utk branch ini (slot DMO brand=null, lintas brand) - cuma di-fetch
+  // utk node "dmo", ditawarkan ChartQuickAdd sbg opsi "Pilih MC tertentu".
+  const [dmoMcOptions, setDmoMcOptions] = useState([]);
+  useEffect(() => {
+    let on = true;
+    if (kind !== "dmo" || !context?.branchSlug) { setDmoMcOptions([]); return; }
+    supabaseMarta.rpc("mh_list_mc_by_branch", { p_branch_id: context.branchSlug })
+      .then(({ data }) => {
+        if (!on) return;
+        setDmoMcOptions((data || []).map((r) => r.mc).filter(Boolean));
+      });
+    return () => { on = false; };
+  }, [kind, context?.branchSlug]);
   return (
     <div style={{
       width: theme.width, background: theme.bg, color: theme.color, borderRadius: 12,
@@ -2372,9 +2429,12 @@ function ChartNode({ kind, headerLabel, subLabel, people, role, context, canAdd,
       {canAdd && (
         adding ? (
           <div style={{ marginTop: hasPeople ? (kind === "head" ? 12 : 8) : 0, paddingTop: hasPeople ? (kind === "head" ? 12 : 8) : 0, borderTop: hasPeople ? `1px solid ${kind === "dmo" ? T.line : "rgba(255,255,255,0.14)"}` : "none" }}>
-            <ChartQuickAdd dark={kind !== "dmo"}
+            <ChartQuickAdd dark={kind !== "dmo"} mcOptions={dmoMcOptions}
               onCancel={() => setAdding(false)}
-              onSave={async (email, name) => { await onAdd({ targetEmail: email, fullName: name, role, ...context }); setAdding(false); }} />
+              onSave={async (email, name, mcSelected) => {
+                await onAdd({ targetEmail: email, fullName: name, role, ...context, mc: (mcSelected && mcSelected.length) ? mcSelected.join(", ") : null });
+                setAdding(false);
+              }} />
           </div>
         ) : (
           <button onClick={() => setAdding(true)} type="button" style={{
@@ -2393,17 +2453,28 @@ function ChartNode({ kind, headerLabel, subLabel, people, role, context, canAdd,
 /** Form mini (email + nama) dipakai ChartNode saat slot kosong diklik "+
  * Tambah" - versi ringkas dari QuickAddRow, dgn varian warna gelap/terang
  * (`dark`) supaya tetap kebaca di atas kotak Head/Head of Area yg gelap. */
-function ChartQuickAdd({ onSave, onCancel, dark }) {
+function ChartQuickAdd({ onSave, onCancel, dark, mcOptions = [] }) {
   const [emailInput, setEmailInput] = useState("");
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
-  const ready = !!(emailInput.trim() && name.trim());
+  // FITUR (permintaan user - "+ Tambah kecil di kotak DMO... bisa pilih
+  // semua MC di branch atau beberapa saja"): default "all" = DMO penuh
+  // (perilaku lama, tidak berubah). "some" = DMO DMP, dibatasi ke MC
+  // yg dicentang saja - tetap SATU baris assignment yg sama (branch_id
+  // TIDAK berubah), jadi datanya tetap kumulatif masuk ke branch DMO yg
+  // sama, bukan jadi "cabang" terpisah - cuma kolom `mc` yg menandai
+  // batasannya. Toggle cuma muncul kalau mcOptions ada isinya (role bme_rge
+  // & branch ini punya data MC di Master Data).
+  const [mcMode, setMcMode] = useState("all");
+  const [mcSelected, setMcSelected] = useState(new Set());
+  const toggleMc = (m) => setMcSelected((prev) => { const n = new Set(prev); n.has(m) ? n.delete(m) : n.add(m); return n; });
+  const ready = !!(emailInput.trim() && name.trim() && (mcMode === "all" || mcSelected.size > 0));
 
   async function submit() {
     if (!ready || saving) return;
     setSaving(true); setErr("");
-    try { await onSave(emailInput.trim(), name.trim()); }
+    try { await onSave(emailInput.trim(), name.trim(), mcMode === "some" ? [...mcSelected] : null); }
     catch (e) { setErr(e.message || "Gagal"); setSaving(false); }
   }
 
@@ -2417,6 +2488,38 @@ function ChartQuickAdd({ onSave, onCancel, dark }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 5, textAlign: "left" }}>
       <input value={emailInput} onChange={(e) => setEmailInput(e.target.value)} placeholder="Email" type="email" style={fieldStyle} autoFocus />
       <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nama" style={fieldStyle} />
+      {mcOptions.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ display: "flex", gap: 4 }}>
+            {[["all", "Semua MC"], ["some", "Pilih MC tertentu"]].map(([v, l]) => (
+              <button key={v} type="button" onClick={() => setMcMode(v)} style={{
+                flex: 1, padding: "3px 6px", borderRadius: 6, fontSize: 9.5, fontWeight: 800, fontFamily: FONT, cursor: "pointer",
+                border: dark ? "1px solid rgba(255,255,255,0.3)" : `1px solid ${T.line}`,
+                background: mcMode === v ? (dark ? "#fff" : T.primary) : (dark ? "rgba(255,255,255,0.1)" : "#fff"),
+                color: mcMode === v ? (dark ? "#1C2638" : "#fff") : (dark ? "#fff" : T.mid),
+              }}>{l}</button>
+            ))}
+          </div>
+          {mcMode === "some" && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, maxHeight: 90, overflowY: "auto", padding: 4, borderRadius: 6, border: dark ? "1px solid rgba(255,255,255,0.2)" : `1px solid ${T.line}` }}>
+              {mcOptions.map((m) => {
+                const sel = mcSelected.has(m);
+                return (
+                  <button key={m} type="button" onClick={() => toggleMc(m)} style={{
+                    padding: "2px 7px", borderRadius: 999, fontSize: 9, fontWeight: 700, fontFamily: FONT, cursor: "pointer",
+                    border: dark ? "1px solid rgba(255,255,255,0.3)" : `1px solid ${T.line}`,
+                    background: sel ? (dark ? "#fff" : T.primary) : "transparent",
+                    color: sel ? (dark ? "#1C2638" : "#fff") : (dark ? "#fff" : T.mid),
+                  }}>{m}</button>
+                );
+              })}
+            </div>
+          )}
+          <div style={{ fontSize: 8.5, color: dark ? "rgba(255,255,255,0.55)" : T.lo, lineHeight: 1.4 }}>
+            &quot;Pilih MC tertentu&quot; = email ini jadi DMP, cuma bisa buat plan utk MC yg dicentang (menu/tampilan lain tetap sama spt DMO) - datanya tetap tercatat ke branch ini juga (kumulatif, bukan terpisah).
+          </div>
+        </div>
+      )}
       {err && <div style={{ fontSize: 9.5, color: dark ? "#FFB4B4" : T.error, fontWeight: 700 }}>{err}</div>}
       <div style={{ display: "flex", gap: 4 }}>
         <button onClick={submit} disabled={!ready || saving} type="button" style={{
