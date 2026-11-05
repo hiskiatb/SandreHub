@@ -89,13 +89,29 @@ export default function ExcelFilter({
   // Logic Sinkronisasi untuk Chained Filter
   // Jika options dari parent berubah (karena filter di kolom lain), 
   // kita tetap mempertahankan pilihan yang masih valid di dalam options baru.
+  // UPDATE (fix: "diklik salah satu tidak terjadi apa apa" - checkbox yg
+  // BARU DICENTANG langsung balik kosong lagi): effect ini tadinya jalan
+  // ulang tiap kali REFERENCE `options`/`selected` berubah selama popup
+  // masih terbuka (bukan cuma pas baru dibuka) - kalau parent (tabel)
+  // re-render karena ALASAN LAIN APAPUN sementara popup ini kebuka (fetch
+  // lain selesai, state lain berubah, dll) dan itu bikin `options`/
+  // `selected` dapet REFERENCE baru (walau ISI-nya sama persis, umum
+  // terjadi krn useMemo/array baru di parent), effect ini langsung
+  // RESET tempSelected balik ke `selected` yg lama (kosong) - PERSIS SE-
+  // DETIK setelah user klik centang, jadi KELIATANNYA "diklik ga ngapa-
+  // ngapain" padahal sebenernya sempet ke-centang terus langsung ke-reset
+  // lagi oleh effect ini sendiri. Sekarang sinkronisasi cuma jalan pas
+  // popup BARU TRANSISI dari TERTUTUP -> TERBUKA (pelacakan via ref),
+  // bukan tiap kali reference options/selected berubah selagi kebuka.
+  const wasOpenRef = useRef(false);
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !wasOpenRef.current) {
       const validSelected = selected.filter(val => 
         options.some(opt => opt.value === val)
       );
       setTempSelected(validSelected);
     }
+    wasOpenRef.current = isOpen;
   }, [isOpen, options, selected]);
 
   const onMouseDown = (e, type, dir = null) => {
@@ -270,7 +286,7 @@ export default function ExcelFilter({
 
         {/* Options List */}
         <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
-          <label className="apple-item" style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 5, cursor: "pointer" }}>
+          <label className="apple-item" onMouseDown={(e) => e.preventDefault()} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 5, cursor: "pointer", userSelect: "none", WebkitUserSelect: "none" }}>
             <input type="checkbox" checked={isAllSelected} onChange={handleSelectAll} style={{ display: "none" }} />
             <div style={{
               width: 15, height: 15, borderRadius: 4, flexShrink: 0,
@@ -289,7 +305,7 @@ export default function ExcelFilter({
           {filteredOptions.map(opt => {
             const isSelected = tempSelected.includes(opt.value);
             return (
-              <label key={opt.value} className="apple-item" style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 5, cursor: "pointer" }}>
+              <label key={opt.value} className="apple-item" onMouseDown={(e) => e.preventDefault()} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 5, cursor: "pointer", userSelect: "none", WebkitUserSelect: "none" }}>
                 <input type="checkbox" checked={isSelected} onChange={() => setTempSelected(prev => isSelected ? prev.filter(v => v !== opt.value) : [...prev, opt.value])} style={{ display: "none" }} />
                 <div style={{
                   width: 15, height: 15, borderRadius: 4, flexShrink: 0,

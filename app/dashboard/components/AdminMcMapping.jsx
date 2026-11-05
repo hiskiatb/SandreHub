@@ -85,11 +85,52 @@ import * as XLSX from "xlsx";
 import {
   UserRoundCog, X, Check, AlertTriangle, Loader2, Search,
   RefreshCw, Trash2, ToggleLeft, ToggleRight, Download, Upload,
-  Mail, Plus, ChevronDown, ChevronUp,
+  Mail, Plus, ChevronDown, ChevronUp, Pencil,
 } from "lucide-react";
 import PNL_ImportWizard from "./PNL_ImportWizard";
+import ExcelFilter from "./ExcelFilter";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif`;
+
+// Ambang "sedang online" — APROKSIMASI dari last_sign_in_at (bukan denyut
+// presence asli, TraceHub belum punya sistem heartbeat). Login OTP admin
+// MC biasanya langsung dipakai aktif sesaat setelah verifikasi, jadi
+// jendela singkat ini cukup wajar menandakan "baru saja login/aktif".
+const ONLINE_WINDOW_MS = 10 * 60 * 1000;
+
+function formatLastActive(ts) {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return null;
+  const diffMs = Date.now() - d.getTime();
+  const min = Math.floor(diffMs / 60000);
+  if (min < 1) return "Baru saja";
+  if (min < 60) return `${min} menit lalu`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} jam lalu`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day} hari lalu`;
+  return d.toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
+}
+
+/** Status login 1 admin (per slot) — 3 kemungkinan (permintaan user):
+ * "Sedang online" (hijau, dot berdenyut), "Terakhir aktif: X lalu"
+ * (abu-abu), atau "Belum pernah login" (amber). `ts` = last_sign_in_at
+ * dari loginStatusByEmail, bisa null kalau belum pernah ketemu/login. */
+function loginStatusBadge(ts, t) {
+  if (!ts) return { label: "Belum pernah login", color: t.amber, dot: false, cat: "never" };
+  const online = Date.now() - new Date(ts).getTime() < ONLINE_WINDOW_MS;
+  if (online) return { label: "Sedang online", color: t.teal, dot: true, cat: "online" };
+  return { label: `Terakhir aktif: ${formatLastActive(ts)}`, color: t.lo, dot: false, cat: "active" };
+}
+
+// Daftar kategori status login, dipakai juga sbg opsi <ExcelFilter> kolom
+// STATUS (permintaan user - "untuk status ini bisa difilter juga ya").
+const STATUS_CATEGORIES = [
+  { value: "online", label: "Sedang Online" },
+  { value: "active", label: "Pernah Login" },
+  { value: "never", label: "Belum Pernah Login" },
+  { value: "riwayat", label: "Riwayat (Historis)" },
+];
 
 function Toast({ msg, type, onClose }) {
   useEffect(() => { const t = setTimeout(onClose, 4500); return () => clearTimeout(t); }, [onClose]);
@@ -144,6 +185,30 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
   // — tidak selalu jadi mapping_id langsung karena baris "virtual" (MC dari
   // Database DSE yang belum ada mapping-nya) belum punya mapping_id.
   const [emailsByMc, setEmailsByMc] = useState(new Map());
+  // loginStatusByEmail: Map<email_lowercase, last_sign_in_at_iso | null> —
+  // UPDATE (permintaan user - "untuk kolom status ini juga untuk keempat
+  // slot, jika belum login atau terakhir aktif, sedang online"): status
+  // login PER-ADMIN (bukan status aktif/nonaktif MC, yg sudah ada
+  // sendiri). TraceHub belum punya sistem presence/heartbeat spt
+  // MartaHub (lihat lib/martaPresence di project itu) - jadi "sedang
+  // online" di sini cuma APROKSIMASI dari auth.users.last_sign_in_at yang
+  // masih sangat baru (lihat ONLINE_WINDOW_MS), bukan denyut presence
+  // asli. Diambil lewat RPC mf_dse_admin_mc_email_login_status (security
+  // definer, auth.users tidak bisa diakses langsung dari client).
+  const [loginStatusByEmail, setLoginStatusByEmail] = useState(new Map());
+  const fetchLoginStatus = useCallback(async (emails) => {
+    const uniq = Array.from(new Set((emails || []).map((e) => (e || "").toLowerCase().trim()).filter(Boolean)));
+    if (uniq.length === 0) { setLoginStatusByEmail(new Map()); return; }
+    try {
+      const { data, error } = await supabase.rpc("mf_dse_admin_mc_email_login_status", { p_emails: uniq });
+      if (error) throw error;
+      const map = new Map((data || []).map((r) => [r.email, r.last_sign_in_at]));
+      setLoginStatusByEmail(map);
+    } catch {
+      // gagal dimuat — tabel tetap jalan, badge status cuma fallback ke "Belum pernah login"
+      setLoginStatusByEmail(new Map());
+    }
+  }, []);
   const [fetching, setFetching] = useState(false);
   const [search, setSearch] = useState("");
   const [toast, setToast] = useState(null);
@@ -208,6 +273,7 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
       });
       setEmailsByMc(byMc);
       setRows(mapRes.data || []);
+      fetchLoginStatus((emailRes.data || []).map((e) => e.email));
       return mapRes.data || [];
     } catch (e) {
       showToast(e.message || "Gagal memuat data.", "error");
@@ -215,7 +281,7 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
     } finally {
       setFetching(false);
     }
-  }, [isHistorical, asOfDate]);
+  }, [isHistorical, asOfDate, fetchLoginStatus]);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { fetchRows(); if (!isHistorical) fetchRefData(); }, [fetchRows, fetchRefData, isHistorical]);
@@ -280,7 +346,11 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
     if (isHistorical) return;
     const key = mc.toLowerCase();
     const existing = rows.find((r) => r.mc?.toLowerCase() === key);
-    const trimmed = value.trim();
+    // UPDATE (permintaan user - "penulisan nama itu wajib kapital semua"):
+    // Nama Admin/full_name dipaksa UPPERCASE di sisi client juga (DB sudah
+    // ada trigger normalize sbg jaring pengaman, tapi diterapkan di sini
+    // juga biar langsung kelihatan benar di UI tanpa nunggu reload/refetch).
+    const trimmed = field === "full_name" ? value.trim().toUpperCase() : value.trim();
     if (existing && (existing[field] || "") === trimmed) return; // tidak berubah
     const payload = { mc, active: existing?.active ?? true };
     EDITABLE_FIELDS.forEach((f) => {
@@ -318,7 +388,7 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
     try {
       const mapping = await ensureMappingRow(mc);
       const { data, error } = await supabase.from("mf_dse_admin_mc_emails")
-        .insert({ mapping_id: mapping.id, email, label: newLabel.trim() || null, active: true })
+        .insert({ mapping_id: mapping.id, email, label: newLabel.trim().toUpperCase() || null, active: true })
         .select().single();
       if (error) {
         if (String(error.code) === "23505") throw new Error("Email ini sudah terpasang di MC ini.");
@@ -377,6 +447,53 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
     }
   };
 
+  // UPDATE (permintaan user - "untuk tombol hapus ubah menjadi tombol
+  // edit, agar bisa ganti email atau hapus disitu"): tombol "Hapus" di
+  // tiap slot admin (tabel utama) diganti "Edit" - buka popover kecil ini
+  // yg bisa GANTI email/nama admin itu LANGSUNG, atau hapus dari situ
+  // juga (bukan cuma hapus instan tanpa opsi edit spt sebelumnya).
+  const [editingEmailRow, setEditingEmailRow] = useState(null); // { mc, row } | null
+  const [editDraftEmail, setEditDraftEmail] = useState("");
+  const [editDraftLabel, setEditDraftLabel] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
+  const openEditEmail = (mc, row) => {
+    setEditingEmailRow({ mc, row });
+    setEditDraftEmail(row.email || "");
+    setEditDraftLabel(row.label || "");
+  };
+  const saveEditEmail = async () => {
+    if (!editingEmailRow) return;
+    const email = editDraftEmail.trim().toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showToast("Masukkan email yang valid.", "error"); return; }
+    setEditBusy(true);
+    try {
+      const { data, error } = await supabase.from("mf_dse_admin_mc_emails")
+        .update({ email, label: editDraftLabel.trim().toUpperCase() || null })
+        .eq("id", editingEmailRow.row.id).select().single();
+      if (error) {
+        if (String(error.code) === "23505") throw new Error("Email ini sudah terpasang di MC ini.");
+        throw error;
+      }
+      setEmailsByMc((prev) => {
+        const next = new Map(prev);
+        const key = editingEmailRow.mc.toLowerCase();
+        next.set(key, (next.get(key) || []).map((x) => (x.id === data.id ? data : x)));
+        return next;
+      });
+      showToast("Admin diperbarui.", "ok");
+      setEditingEmailRow(null);
+    } catch (e) {
+      showToast(e.message || "Gagal memperbarui admin.", "error");
+    } finally {
+      setEditBusy(false);
+    }
+  };
+  const deleteFromEditEmail = async () => {
+    if (!editingEmailRow) return;
+    await removeEmail(editingEmailRow.mc, editingEmailRow.row);
+    setEditingEmailRow(null);
+  };
+
   // Baris yang ditampilkan = baris mapping yg sudah ada, DIGABUNG dgn MC dari
   // Database DSE yang BELUM punya mapping sama sekali (baris "kosong" siap
   // diisi langsung dari tabel ini, tanpa perlu upload dulu).
@@ -421,8 +538,112 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
     return active.map((e) => e.email?.toLowerCase() || "").sort().join(",");
   };
 
+  // UPDATE (permintaan user - "gunakan konsep filter yang sudah ada untuk
+  // bisa filter kolom-kolom di user management ini"): dipakai <ExcelFilter>
+  // yg SAMA PERSIS komponennya dgn yg sudah ada di tabel roster DSE
+  // (DSE_ProdAR.jsx - Partner/Region/Area/District) - checklist per nilai
+  // unik, bukan bikin filter baru dari nol. Target kolom: Circle/Region/
+  // Branch/MC (persis analog Partner/Region/Area/District di sana) +
+  // status Aktif/Nonaktif MC.
+  const [colFilters, setColFilters] = useState({ circle: [], region: [], branch: [], mc: [], adminName: [], adminEmail: [], status: [], adminCount: [] });
+  const setColFilter = (key, val) => setColFilters((prev) => ({ ...prev, [key]: val }));
+  const resetColFilters = () => setColFilters({ circle: [], region: [], branch: [], mc: [], adminName: [], adminEmail: [], status: [], adminCount: [] });
+  const anyColFilterActive = Object.values(colFilters).some((v) => v.length > 0);
+  // UPDATE (fix: "semua filter belum bekerja dengan baik" - ExcelFilter.jsx
+  // SELALU manggil onSort(...) pas tombol Asc/Desc/Reset diklik (lihat
+  // ExcelFilter.jsx), tapi kolom2 di tabel ini belum ada yg nyambungin prop
+  // onSort/sortDir sama sekali -> klik Asc/Desc/Reset di POPUP MANAPUN
+  // crash ("onSort is not a function") dan bikin seluruh tabel "diem aja"
+  // pas diklik. Tambah 1 sortConfig {key,dir} dipakai semua kolom, persis
+  // pattern yg sudah ada di DSE_ProdAR.jsx.
+  const [sortConfig, setSortConfig] = useState({ key: null, dir: null });
+  const sortPropsFor = (key) => ({
+    sortDir: sortConfig.key === key ? sortConfig.dir : null,
+    onSort: (dir) => setSortConfig({ key, dir }),
+  });
+  // UPDATE (fix runtime error "o.label.toLowerCase" - ExcelFilter.jsx
+  // (komponen yg sama dipakai DSE_ProdAR.jsx) expect options berbentuk
+  // {value,label}, BUKAN array string polos - lihat uniqOpt() di
+  // DSE_ProdAR.jsx, dipakai persis sama di sini).
+  const uniqOpt = (vals) => Array.from(new Set(vals.filter(Boolean))).sort().map((v) => ({ value: v, label: v }));
+  // UPDATE (permintaan user - "dan juga nama admin dan email admin juga
+  // bisa difilter"): opsi utk 2 kolom ini diambil dari emailsByMc (per
+  // ADMIN, bukan per MC spt Circle/Region/Branch/MC) - 1 MC bisa punya
+  // banyak admin, jadi daftar nilai uniknya digabung dari SEMUA admin
+  // aktif di SEMUA MC (nama pakai fallback full_name MC-nya, sama persis
+  // logic yg dipakai nampilin nama admin di tabel).
+  const adminFilterOptions = useMemo(() => {
+    const names = new Set();
+    const emails = new Set();
+    displayRows.forEach((r) => {
+      const list = emailsByMc.get(r.mc?.toLowerCase()) || [];
+      const active = isHistorical ? list : list.filter((e) => e.active !== false);
+      active.forEach((e, i) => {
+        const nm = e.label || r.full_name || `Admin ${i + 1}`;
+        if (nm) names.add(nm);
+        if (e.email) emails.add(e.email);
+      });
+    });
+    return { names: Array.from(names).sort(), emails: Array.from(emails).sort() };
+  }, [displayRows, emailsByMc, isHistorical]);
+
+  // UPDATE (permintaan user - "ini juga bisa filter bisa menampilkan mc
+  // mana yang memiliki 0 admin, 1 admin, 2 admin, 3 admin, dst"): jumlah
+  // admin AKTIF riil per MC (bukan dibatasi 4 slot tampilan tabel) -
+  // dipakai sbg opsi <ExcelFilter> kolom "#", diurutkan NUMERIK (bukan
+  // string) biar "10 Admin" tidak nongol sebelum "2 Admin".
+  const adminCountPerMc = useMemo(() => {
+    const map = new Map();
+    displayRows.forEach((r) => {
+      const list = emailsByMc.get(r.mc?.toLowerCase()) || [];
+      const active = isHistorical ? list : list.filter((e) => e.active !== false);
+      map.set(r.mc, active.length);
+    });
+    return map;
+  }, [displayRows, emailsByMc, isHistorical]);
+  const adminCountOptions = useMemo(() => {
+    const counts = Array.from(new Set(displayRows.map((r) => adminCountPerMc.get(r.mc) ?? 0))).sort((a, b) => a - b);
+    return counts.map((n) => ({ value: n, label: `${n} Admin` }));
+  }, [displayRows, adminCountPerMc]);
+  const colOptions = useMemo(() => ({
+    circle: uniqOpt(displayRows.map((r) => r.circle)),
+    region: uniqOpt(displayRows.map((r) => r.region)),
+    branch: uniqOpt(displayRows.map((r) => r.branch)),
+    mc: uniqOpt(displayRows.map((r) => r.mc)),
+    adminName: uniqOpt(adminFilterOptions.names),
+    adminEmail: uniqOpt(adminFilterOptions.emails),
+    status: STATUS_CATEGORIES,
+    adminCount: adminCountOptions,
+  }), [displayRows, adminFilterOptions, adminCountOptions]);
+
   const filtered = displayRows
     .filter((r) => {
+      if (colFilters.circle.length && !colFilters.circle.includes(r.circle)) return false;
+      if (colFilters.region.length && !colFilters.region.includes(r.region)) return false;
+      if (colFilters.branch.length && !colFilters.branch.includes(r.branch)) return false;
+      if (colFilters.mc.length && !colFilters.mc.includes(r.mc)) return false;
+      if (colFilters.adminName.length || colFilters.adminEmail.length) {
+        const list = emailsByMc.get(r.mc?.toLowerCase()) || [];
+        const active = isHistorical ? list : list.filter((e) => e.active !== false);
+        if (colFilters.adminName.length) {
+          const ok = active.some((e, i) => colFilters.adminName.includes(e.label || r.full_name || `Admin ${i + 1}`));
+          if (!ok) return false;
+        }
+        if (colFilters.adminEmail.length) {
+          const ok = active.some((e) => colFilters.adminEmail.includes(e.email));
+          if (!ok) return false;
+        }
+      }
+      if (colFilters.adminCount.length && !colFilters.adminCount.includes(adminCountPerMc.get(r.mc) ?? 0)) return false;
+      if (colFilters.status.length) {
+        const list = emailsByMc.get(r.mc?.toLowerCase()) || [];
+        const active = isHistorical ? list : list.filter((e) => e.active !== false);
+        const ok = active.some((e) => {
+          const cat = isHistorical ? "riwayat" : loginStatusBadge(loginStatusByEmail.get((e.email || "").toLowerCase()), t).cat;
+          return colFilters.status.includes(cat);
+        });
+        if (!ok) return false;
+      }
       if (!search) return true;
       const s = search.toLowerCase();
       const emails = emailsByMc.get(r.mc?.toLowerCase()) || [];
@@ -432,6 +653,47 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
     })
     .slice()
     .sort((a, b) => {
+      // UPDATE (permintaan user - klik Asc/Desc di popup filter kolom kini
+      // beneran ngurutin tabel, bukan cuma crash): kalau user pilih sort
+      // eksplisit di salah satu kolom, itu MENANG dibanding urutan default
+      // (grouping per email yg sudah ada).
+      if (sortConfig.key && sortConfig.dir) {
+        const dir = sortConfig.dir === "asc" ? 1 : -1;
+        const adminLabelFor = (r) => {
+          const list = emailsByMc.get(r.mc?.toLowerCase()) || [];
+          const active = isHistorical ? list : list.filter((e) => e.active !== false);
+          const first = active[0];
+          return first ? (first.label || r.full_name || "") : "";
+        };
+        const adminEmailFor = (r) => {
+          const list = emailsByMc.get(r.mc?.toLowerCase()) || [];
+          const active = isHistorical ? list : list.filter((e) => e.active !== false);
+          return active[0]?.email || "";
+        };
+        const statusRankFor = (r) => {
+          const list = emailsByMc.get(r.mc?.toLowerCase()) || [];
+          const active = isHistorical ? list : list.filter((e) => e.active !== false);
+          if (isHistorical) return 3;
+          const cats = active.map((e) => loginStatusBadge(loginStatusByEmail.get((e.email || "").toLowerCase()), t).cat);
+          if (cats.includes("online")) return 0;
+          if (cats.includes("active")) return 1;
+          return 2;
+        };
+        let va, vb;
+        switch (sortConfig.key) {
+          case "circle": va = a.circle || ""; vb = b.circle || ""; break;
+          case "region": va = a.region || ""; vb = b.region || ""; break;
+          case "branch": va = a.branch || ""; vb = b.branch || ""; break;
+          case "mc": va = a.mc || ""; vb = b.mc || ""; break;
+          case "adminCount": va = adminCountPerMc.get(a.mc) ?? 0; vb = adminCountPerMc.get(b.mc) ?? 0; break;
+          case "adminName": va = adminLabelFor(a); vb = adminLabelFor(b); break;
+          case "adminEmail": va = adminEmailFor(a); vb = adminEmailFor(b); break;
+          case "status": va = statusRankFor(a); vb = statusRankFor(b); break;
+          default: va = ""; vb = "";
+        }
+        if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
+        return String(va).localeCompare(String(vb)) * dir;
+      }
       const ka = emailGroupKey(a.mc);
       const kb = emailGroupKey(b.mc);
       if (ka === null && kb === null) return (a.mc || "").localeCompare(b.mc || "");
@@ -539,33 +801,54 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
       {toast && <Toast msg={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
 
       <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden", marginBottom: 20 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: 16, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ padding: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
             <UserRoundCog size={20} color={t.teal} />
             <div style={{ fontSize: 19, fontWeight: 800 }}>Mapping & User Management</div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <button onClick={handleDownload} style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 16px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-              <Download size={14} /> Download Data MC
-            </button>
-            {!isHistorical && (
-              <button onClick={() => setShowWizard(true)} style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 16px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-                <Upload size={14} /> Upload Data MC
-              </button>
-            )}
-            <button onClick={handleDownloadEmails} style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 16px", borderRadius: 9, border: `1px solid ${t.tealBd}`, background: t.tealBg, color: t.teal, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-              <Mail size={14} /> Download Daftar Email
-            </button>
-            {!isHistorical && (
-              <>
-                <input ref={emailFileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }}
-                  onChange={(e) => handleUploadEmailsFile(e.target.files?.[0])} />
-                <button onClick={() => emailFileRef.current?.click()} disabled={importingEmails}
-                  style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 16px", borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 13, fontWeight: 700, cursor: importingEmails ? "not-allowed" : "pointer", opacity: importingEmails ? 0.7 : 1 }}>
-                  {importingEmails ? <Loader2 size={14} className="spin" /> : <Upload size={14} />} Upload Daftar Email
+          {/* UPDATE (permintaan user - "buat bentuknya tabel"): tampilan
+              kartu per-MC dikembalikan ke bentuk TABEL seperti semula,
+              TAPI tetap menjaga keterbacaan utk MC yg punya banyak admin
+              (permintaan sebelumnya) - lewat rowSpan: kolom
+              Circle/Region/Branch/MC/Status/Aksi digabung 1 baris per MC,
+              sedangkan Nama Admin & Email Admin tetap 1 BARIS SENDIRI per
+              admin (bernomor), jadi "Nama Admin 1 / Email Admin 1, Nama
+              Admin 2 / Email Admin 2 dst" tetap jelas terpisah tanpa
+              numpuk dalam 1 sel. Toolbar tetap 2 kartu berlabel (Data MC
+              vs Daftar Email) dari redesign sebelumnya - itu bukan bagian
+              dari komplain "bentuk tabel", jadi dipertahankan. */}
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ flex: "1 1 260px", minWidth: 260, borderRadius: 12, border: `1px solid ${t.line}`, background: t.sub, padding: 14 }}>
+              <div style={{ fontSize: 10.5, fontWeight: 800, color: t.mid, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>Data MC <span style={{ fontWeight: 600, textTransform: "none", letterSpacing: 0 }}>(Circle / Region / Branch / Nama Admin)</span></div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button onClick={handleDownload} style={{ display: "flex", alignItems: "center", gap: 7, height: 38, padding: "0 14px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.card, color: t.hi, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+                  <Download size={14} /> Download Data MC
                 </button>
-              </>
-            )}
+                {!isHistorical && (
+                  <button onClick={() => setShowWizard(true)} style={{ display: "flex", alignItems: "center", gap: 7, height: 38, padding: "0 14px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.card, color: t.hi, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+                    <Upload size={14} /> Upload Data MC
+                  </button>
+                )}
+              </div>
+            </div>
+            <div style={{ flex: "1 1 260px", minWidth: 260, borderRadius: 12, border: `1px solid ${t.tealBd}`, background: t.tealBg, padding: 14 }}>
+              <div style={{ fontSize: 10.5, fontWeight: 800, color: t.teal, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>Daftar Email Admin <span style={{ fontWeight: 600, textTransform: "none", letterSpacing: 0 }}>(login OTP, per MC)</span></div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button onClick={handleDownloadEmails} style={{ display: "flex", alignItems: "center", gap: 7, height: 38, padding: "0 14px", borderRadius: 9, border: `1px solid ${t.teal}`, background: t.card, color: t.teal, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+                  <Mail size={14} /> Download Daftar Email
+                </button>
+                {!isHistorical && (
+                  <>
+                    <input ref={emailFileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }}
+                      onChange={(e) => handleUploadEmailsFile(e.target.files?.[0])} />
+                    <button onClick={() => emailFileRef.current?.click()} disabled={importingEmails}
+                      style={{ display: "flex", alignItems: "center", gap: 7, height: 38, padding: "0 14px", borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: importingEmails ? "not-allowed" : "pointer", opacity: importingEmails ? 0.7 : 1 }}>
+                      {importingEmails ? <Loader2 size={14} className="spin" /> : <Upload size={14} />} Upload Daftar Email
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
         </div>
         {isHistorical && (
@@ -577,8 +860,9 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
           </div>
         )}
         {!isHistorical && (
-          <div style={{ padding: "8px 16px", fontSize: 11.5, color: t.mid, borderTop: `1px solid ${t.line}` }}>
-            1 MC boleh punya email admin sebanyak apapun (klik &ldquo;Kelola Email&rdquo; di baris MC, atau upload massal). 1 email yang sama boleh dipasang ke beberapa MC sekaligus — otomatis jadi akses gabungan ke semua MC itu saat login.
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 16px", fontSize: 11.5, color: t.mid, borderTop: `1px solid ${t.line}` }}>
+            <Mail size={13} color={t.lo} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span>1 MC boleh punya admin (email) sebanyak apapun — klik &ldquo;Kelola Email&rdquo; di baris MC, atau upload massal. Semua admin yang terpasang di 1 MC yang sama mengakses data District itu dengan persis sama (DSE, AR, dst) — tidak ada bedanya admin ke berapa yang login, semuanya setara.</span>
           </div>
         )}
       </div>
@@ -606,17 +890,18 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
               <button onClick={() => setEmailPanelMc(null)} style={{ width: 28, height: 28, borderRadius: 999, border: "none", background: d ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)", color: t.hi, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><X size={14} /></button>
             </div>
             <div style={{ fontSize: 12, color: t.mid, marginBottom: 14 }}>
-              Semua email di bawah ini bisa login sebagai Admin MC untuk {emailPanelRow?.mc}. Tidak ada batas jumlah email.
+              Semua email di bawah ini bisa login sebagai Admin MC untuk {emailPanelRow?.mc}, dengan akses data yang SAMA PERSIS satu sama lain. Tidak ada batas jumlah email.
             </div>
 
             {emailPanelList.length === 0 && (
               <div style={{ padding: "14px 0", textAlign: "center", color: t.mid, fontSize: 12.5 }}>Belum ada email admin utk MC ini.</div>
             )}
-            {emailPanelList.map((e) => (
-              <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: `1px solid ${t.line}` }}>
+            {emailPanelList.map((e, i) => (
+              <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: `1px solid ${t.line}` }}>
+                <div style={{ width: 24, height: 24, borderRadius: 999, background: t.tealBg, color: t.teal, fontSize: 10.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{i + 1}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.email}</div>
-                  {e.label && <div style={{ fontSize: 11, color: t.mid }}>{e.label}</div>}
+                  {e.label && <div style={{ fontSize: 11.5, fontWeight: 700, color: t.hi }}>{e.label}</div>}
+                  <div style={{ fontSize: e.label ? 11.5 : 13, fontWeight: e.label ? 500 : 700, color: e.label ? t.mid : t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.email}</div>
                 </div>
                 <button onClick={() => toggleEmailActive(emailPanelMc, e)} disabled={emailBusy} title={e.active ? "Aktif" : "Nonaktif"}
                   style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: e.active ? t.teal : t.lo, fontSize: 11, fontWeight: 700 }}>
@@ -630,141 +915,276 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
             <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
               <input value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="email@contoh.com"
                 onKeyDown={(e) => e.key === "Enter" && addEmail(emailPanelMc)} style={{ ...cellInputStyle, height: 36, flex: 1.4 }} />
-              <input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="Label (opsional)"
+              <input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="Nama admin (opsional)"
                 onKeyDown={(e) => e.key === "Enter" && addEmail(emailPanelMc)} style={{ ...cellInputStyle, height: 36, flex: 1 }} />
               <button onClick={() => addEmail(emailPanelMc)} disabled={emailBusy}
                 style={{ display: "flex", alignItems: "center", gap: 6, height: 36, padding: "0 12px", borderRadius: 7, border: "none", background: t.teal, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: emailBusy ? "not-allowed" : "pointer", flexShrink: 0 }}>
                 {emailBusy ? <Loader2 size={13} className="spin" /> : <Plus size={13} />} Tambah
               </button>
             </div>
+
+            {/* UPDATE (permintaan user - "sederhanakan"): field "Nama default MC"
+                (fallback full_name) dipindah ke sini dari tabel utama - dulu selalu
+                tampil sbg 1 baris tambahan per MC di tabel (bikin numpuk), sekarang
+                cuma muncul di popover ini, pas lagi ngurusin email MC itu juga. */}
+            {!isHistorical && (
+              <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px dashed ${t.line}` }}>
+                <div style={{ fontSize: 10.5, color: t.lo, marginBottom: 5 }}>Nama default MC (fallback kalau salah satu email di atas belum punya nama sendiri)</div>
+                <input key={`${emailPanelMc}-fn-${emailPanelRow?.full_name || ""}`} defaultValue={emailPanelRow?.full_name || ""} placeholder="Contoh: Admin MC-Bungo"
+                  onBlur={(ev) => handleCellBlur(emailPanelMc, "full_name", ev.target.value)} style={{ ...cellInputStyle, maxWidth: "100%" }} />
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 16, borderBottom: `1px solid ${t.line}` }}>
+      {/* ── Popover "Edit" 1 admin (ganti dari tombol Hapus instan - permintaan
+          user "ubah menjadi tombol edit, agar bisa ganti email atau hapus
+          disitu") - bisa GANTI email/nama di sini, atau hapus dari sini juga. */}
+      {editingEmailRow && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9100, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={(ev) => { if (ev.target === ev.currentTarget) setEditingEmailRow(null); }}>
+          <div style={{ width: "100%", maxWidth: 420, background: d ? "#15151A" : "#FFFFFF", borderRadius: 16, boxShadow: "0 24px 60px rgba(0,0,0,0.45)", padding: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+              <div style={{ fontSize: 16, fontWeight: 800 }}>Edit Admin — {editingEmailRow.mc}</div>
+              <button onClick={() => setEditingEmailRow(null)} style={{ width: 28, height: 28, borderRadius: 999, border: "none", background: d ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)", color: t.hi, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><X size={14} /></button>
+            </div>
+            <div style={{ fontSize: 12, color: t.mid, marginBottom: 14 }}>
+              Ganti email atau nama admin ini, atau hapus sepenuhnya dari {editingEmailRow.mc}.
+            </div>
+
+            <div style={{ fontSize: 10.5, color: t.lo, marginBottom: 5 }}>Email</div>
+            <input value={editDraftEmail} onChange={(ev) => setEditDraftEmail(ev.target.value)} placeholder="email@contoh.com"
+              style={{ ...cellInputStyle, height: 36, marginBottom: 10 }} />
+            <div style={{ fontSize: 10.5, color: t.lo, marginBottom: 5 }}>Nama admin (opsional)</div>
+            <input value={editDraftLabel} onChange={(ev) => setEditDraftLabel(ev.target.value)} placeholder="Nama admin (opsional)"
+              style={{ ...cellInputStyle, height: 36, marginBottom: 16 }} />
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={deleteFromEditEmail} disabled={editBusy}
+                style={{ display: "flex", alignItems: "center", gap: 6, height: 36, padding: "0 12px", borderRadius: 7, border: `1px solid ${t.red}`, background: "none", color: t.red, fontSize: 12.5, fontWeight: 700, cursor: editBusy ? "not-allowed" : "pointer" }}>
+                <Trash2 size={13} /> Hapus
+              </button>
+              <div style={{ flex: 1 }} />
+              <button onClick={() => setEditingEmailRow(null)} disabled={editBusy}
+                style={{ height: 36, padding: "0 12px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: "none", color: t.mid, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+                Batal
+              </button>
+              <button onClick={saveEditEmail} disabled={editBusy}
+                style={{ display: "flex", alignItems: "center", gap: 6, height: 36, padding: "0 12px", borderRadius: 7, border: "none", background: t.teal, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: editBusy ? "not-allowed" : "pointer" }}>
+                {editBusy ? <Loader2 size={13} className="spin" /> : <Check size={13} />} Simpan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden", marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 16 }}>
           <div style={{ position: "relative", flex: 1 }}>
             <Search size={14} style={{ position: "absolute", left: 12, top: 12, color: t.lo }} />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari MC / circle / region / branch / nama / email…" style={{ ...inputStyle, paddingLeft: 34 }} />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari MC / circle / region / branch / nama admin / email…" style={{ ...inputStyle, paddingLeft: 34 }} />
           </div>
           <button onClick={fetchRows} title="Refresh" style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
             <RefreshCw size={14} className={fetching ? "spin" : ""} />
           </button>
         </div>
+      </div>
 
-        <div style={{ padding: "8px 16px", fontSize: 11.5, color: t.mid, borderBottom: `1px solid ${t.line}` }}>
-          Circle/Region/Branch diambil otomatis dari Database DSE (tidak bisa diubah di sini). Nama Admin bisa langsung diketik di tabel ini — tidak perlu upload ulang.
-        </div>
-
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-            <thead>
-              <tr style={{ background: t.sub }}>
-                {["CIRCLE", "REGION", "BRANCH", "MC", "NAMA ADMIN", "EMAIL ADMIN", "STATUS", ""].map((h, i) => (
-                  <th key={i} style={{ textAlign: "left", padding: "9px 12px", color: t.mid, fontWeight: 700, whiteSpace: "nowrap", borderBottom: `1px solid ${t.line}` }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {fetching ? (
-                <tr><td colSpan={8} style={{ padding: 28, textAlign: "center", color: t.mid }}><Loader2 size={16} className="spin" /></td></tr>
-              ) : filtered.length === 0 ? (
-                <tr><td colSpan={8} style={{ padding: 28, textAlign: "center", color: t.mid }}>Belum ada MC. Tambahkan dulu di Database DSE, lalu isi admin-nya di sini.</td></tr>
-              ) : filtered.map((r) => {
-                const key = r.mc?.toLowerCase();
-                const isVirtual = !r.id;
-                const emails = emailsByMc.get(key) || [];
-                const activeEmails = emails.filter((e) => e.active !== false);
+      <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden" }}>
+        {fetching ? (
+          <div style={{ padding: 40, textAlign: "center", color: t.mid }}><Loader2 size={18} className="spin" /></div>
+        ) : filtered.length === 0 ? (
+          <div style={{ padding: 40, textAlign: "center", color: t.mid, fontSize: 13 }}>
+            Belum ada MC. Tambahkan dulu di Database DSE, lalu isi admin-nya di sini.
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              {(() => {
+                // UPDATE (permintaan user - "buat semuanya tidak wrap text buat
+                // dengan rapi gridlinesnya"): style header kolom, dipakai semua
+                // <th> di tabel ini — nowrap konsisten spy header & gridline rapi
+                // walau lebar kolom pas-pasan (scroll horizontal, bukan wrap).
+                const th = { textAlign: "left", padding: "10px 12px", fontSize: 10.5, fontWeight: 800, color: t.mid, textTransform: "uppercase", letterSpacing: 0.4, whiteSpace: "nowrap", border: `1px solid ${t.line}` };
                 return (
-                  <tr key={r.mc} style={{ borderBottom: `1px solid ${t.line}`, opacity: isVirtual ? 0.85 : 1 }}>
-                    {/* UPDATE (permintaan user - "bukannya nilai dari
-                        circle region dan branch ini statis ya" + "ini data
-                        yang sama yang digunakan pada dse, jangan biarkan
-                        kita bisa ubah ubah"): 3 kolom ini DIBALIK dari
-                        <input> yang bisa diketik manual jadi TEKS read-only
-                        (nilainya sendiri sudah di-override dari Database
-                        DSE lewat `displayRows`, lihat komentar di atas) -
-                        sama persis perlakuannya dgn kolom MC di sebelahnya
-                        yang juga sudah read-only. */}
-                    <td style={{ padding: "8px 10px", minWidth: 110, color: r.circle ? t.hi : t.lo, fontWeight: 600, fontStyle: r.circle ? "normal" : "italic" }}>{r.circle || "—"}</td>
-                    <td style={{ padding: "8px 10px", minWidth: 130, color: r.region ? t.hi : t.lo, fontWeight: 600, fontStyle: r.region ? "normal" : "italic" }}>{r.region || "—"}</td>
-                    <td style={{ padding: "8px 10px", minWidth: 130, color: r.branch ? t.hi : t.lo, fontWeight: 600, fontStyle: r.branch ? "normal" : "italic" }}>{r.branch || "—"}</td>
-                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap", fontWeight: 700 }}>
-                      {r.mc}
-                      {isVirtual && <span title="MC ini belum punya mapping — langsung isi di baris ini" style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: t.amber, background: t.amberBg, borderRadius: 6, padding: "1px 6px" }}>baru</span>}
-                    </td>
-                    <td style={{ padding: "6px 10px", minWidth: 150 }}>
-                      <input key={`${r.mc}-fn-${r.full_name || ""}`} defaultValue={r.full_name || ""} placeholder="—"
-                        onBlur={(e) => handleCellBlur(r.mc, "full_name", e.target.value)} disabled={isHistorical} style={cellInputStyle} />
-                    </td>
-                    {/* UPDATE (permintaan user - "perbaiki harusnya langsung
-                        tampilkan saja untuk email emailnya"): dulu kolom ini
-                        cuma nampilin TOMBOL "N email — Kelola" (alamat email-
-                        nya sendiri disembunyikan, harus diklik dulu baru
-                        kebuka popover) - padahal mode historical (asOfDate)
-                        di atas SUDAH nampilin alamat emailnya langsung
-                        sebagai teks (lihat cabang `isHistorical` di atas,
-                        TIDAK disentuh/tetap sama). Sekarang mode live
-                        (editable) jg langsung nampilin daftar alamat email
-                        apa adanya (sama persis pola `isHistorical`, baris
-                        per email + label kalau ada) - tombol "Kelola Email"
-                        TETAP ada (buat tambah/hapus email), tapi jadi link
-                        kecil TERPISAH di bawah daftar, bukan satu2nya cara
-                        buat tau email apa aja yang terpasang. */}
-                    <td style={{ padding: "6px 10px", minWidth: 220 }}>
-                      {isHistorical ? (
-                        emails.length === 0 ? (
-                          <span style={{ fontSize: 12, color: t.lo }}>—</span>
-                        ) : (
-                          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                            {emails.map((e, i) => <span key={i} style={{ fontSize: 11.5, color: t.hi }}>{e.email}{e.label ? ` (${e.label})` : ""}</span>)}
-                          </div>
-                        )
-                      ) : (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
-                          {activeEmails.length === 0 ? (
-                            <span style={{ fontSize: 12, color: t.lo, fontStyle: "italic" }}>Belum ada email</span>
+              <thead>
+                <tr style={{ background: t.sub, borderBottom: `1px solid ${t.line}` }}>
+                  <th style={th}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>CIRCLE
+                      <ExcelFilter t={t} d={d} label="Circle" options={colOptions.circle} selected={colFilters.circle} onApply={(v) => setColFilter("circle", v)} onClear={() => setColFilter("circle", [])} {...sortPropsFor("circle")} />
+                    </div>
+                  </th>
+                  <th style={th}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>REGION
+                      <ExcelFilter t={t} d={d} label="Region" options={colOptions.region} selected={colFilters.region} onApply={(v) => setColFilter("region", v)} onClear={() => setColFilter("region", [])} {...sortPropsFor("region")} />
+                    </div>
+                  </th>
+                  <th style={th}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>BRANCH
+                      <ExcelFilter t={t} d={d} label="Branch" options={colOptions.branch} selected={colFilters.branch} onApply={(v) => setColFilter("branch", v)} onClear={() => setColFilter("branch", [])} {...sortPropsFor("branch")} />
+                    </div>
+                  </th>
+                  <th style={th}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>MC
+                      <ExcelFilter t={t} d={d} label="MC" options={colOptions.mc} selected={colFilters.mc} onApply={(v) => setColFilter("mc", v)} onClear={() => setColFilter("mc", [])} {...sortPropsFor("mc")} />
+                    </div>
+                  </th>
+                  <th style={th}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>#
+                      <ExcelFilter t={t} d={d} label="Jumlah Admin" options={colOptions.adminCount} selected={colFilters.adminCount} onApply={(v) => setColFilter("adminCount", v)} onClear={() => setColFilter("adminCount", [])} {...sortPropsFor("adminCount")} />
+                    </div>
+                  </th>
+                  <th style={th}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>NAMA ADMIN
+                      <ExcelFilter t={t} d={d} label="Nama Admin" options={colOptions.adminName} selected={colFilters.adminName} onApply={(v) => setColFilter("adminName", v)} onClear={() => setColFilter("adminName", [])} {...sortPropsFor("adminName")} />
+                    </div>
+                  </th>
+                  <th style={th}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>EMAIL ADMIN
+                      <ExcelFilter t={t} d={d} label="Email Admin" options={colOptions.adminEmail} selected={colFilters.adminEmail} onApply={(v) => setColFilter("adminEmail", v)} onClear={() => setColFilter("adminEmail", [])} {...sortPropsFor("adminEmail")} />
+                    </div>
+                  </th>
+                  {/* UPDATE (permintaan user - "untuk kolom edit/tambah ini nama
+                      kolomnya itu AKSI, dan pisahkan dengan sangat baik dan ui
+                      yang sangat baik"): header kosong diberi nama "AKSI" +
+                      divider (border kiri lebih tebal & background beda tipis)
+                      spy jelas kepisah dari kolom data admin (Nama/Email) dan
+                      dari kolom STATUS di sampingnya, bukan nyambung begitu
+                      saja. STATUS skrg juga punya <ExcelFilter> sendiri
+                      (checklist: Sedang Online / Pernah Login / Belum Pernah
+                      Login / Riwayat). */}
+                  <th style={{ ...th, borderLeft: `2px solid ${t.line}`, background: t.sub2 || t.sub }}>AKSI</th>
+                  <th style={{ ...th, borderLeft: `2px solid ${t.line}` }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>STATUS
+                      <ExcelFilter t={t} d={d} label="Status" options={colOptions.status} selected={colFilters.status} onApply={(v) => setColFilter("status", v)} onClear={() => setColFilter("status", [])} {...sortPropsFor("status")} />
+                    </div>
+                  </th>
+                </tr>
+              </thead>
+                ); })()}
+              <tbody>
+                {filtered.map((r) => {
+                  const key = r.mc?.toLowerCase();
+                  const isVirtual = !r.id;
+                  const emails = emailsByMc.get(key) || [];
+                  const rowEmails = isHistorical ? emails : emails.filter((e) => e.active !== false);
+                  const mcCellStyle = { padding: "10px 12px", border: `1px solid ${t.line}`, verticalAlign: "top", whiteSpace: "nowrap", background: isVirtual ? t.amberBg : undefined };
+                  const slotCellStyle = { padding: "10px 12px", border: `1px solid ${t.line}`, whiteSpace: "nowrap" };
+
+                  // UPDATE (permintaan user - "tombol hapus ada ketika email dan nama berisi, jika
+                  // tidak tambah, jadi per mc ada 4 slot, mau itu dikosong atau tidak, di mc ke kiri
+                  // di merge untuk 4 row buat dengan sangat rapi"): setiap MC (mode LIVE, bukan
+                  // historis) SELALU punya persis 4 "slot" baris - slot terisi (ada email+nama)
+                  // tampilkan tombol Hapus, slot kosong tampilkan tombol + Tambah (buka popover
+                  // Kelola Email) - bukan Hapus. Kolom kiri (Circle/Region/Branch/MC/Status/Aksi
+                  // MC) di-merge (rowSpan) PERSIS 4 baris terus, konsisten mau MC itu admin-nya 0
+                  // ataupun penuh 4. Kalau admin > 4, 4 slot tetap terisi penuh + 1 baris ringkas
+                  // "+N lainnya" di luar area merge (colSpan penuh) ngarahin ke Kelola Email -
+                  // Historis (read-only, data masa lalu) TIDAK dipaksa 4 slot karena tidak bisa
+                  // ditambah/dihapus - cukup tampilkan apa adanya.
+                  const MAX_SLOTS = 4;
+                  let slots, span, hiddenCount;
+                  if (isHistorical) {
+                    slots = (rowEmails.length ? rowEmails : [null]).map((e) => ({ e, filled: !!e }));
+                    span = slots.length;
+                    hiddenCount = 0;
+                  } else {
+                    const filledSlots = rowEmails.slice(0, MAX_SLOTS).map((e) => ({ e, filled: true }));
+                    const emptySlots = Array.from({ length: Math.max(MAX_SLOTS - filledSlots.length, 0) }, () => ({ e: null, filled: false }));
+                    slots = [...filledSlots, ...emptySlots];
+                    span = MAX_SLOTS;
+                    hiddenCount = Math.max(rowEmails.length - MAX_SLOTS, 0);
+                  }
+                  const rowsOut = [];
+
+                  slots.forEach((slot, i) => {
+                    const { e, filled } = slot;
+                    rowsOut.push(
+                      <tr key={`${r.mc}-slot-${i}`} style={{ borderBottom: `1px solid ${t.line}` }}>
+                        {i === 0 && (
+                          <>
+                            <td rowSpan={span} style={mcCellStyle}>{r.circle || "—"}</td>
+                            <td rowSpan={span} style={mcCellStyle}>{r.region || "—"}</td>
+                            <td rowSpan={span} style={mcCellStyle}>{r.branch || "—"}</td>
+                            <td rowSpan={span} style={{ ...mcCellStyle, fontWeight: 800, color: t.hi }}>
+                              {r.mc}
+                              {isVirtual && <div title="MC ini belum punya mapping"><span style={{ display: "inline-block", marginTop: 4, fontSize: 9.5, fontWeight: 700, color: t.amber, background: t.amberBg, borderRadius: 6, padding: "1px 6px" }}>Baru</span></div>}
+                            </td>
+                          </>
+                        )}
+                        <td style={slotCellStyle}>
+                          {filled ? (
+                            <div style={{ width: 20, height: 20, borderRadius: 999, background: t.tealBg, color: t.teal, fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</div>
                           ) : (
-                            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                              {activeEmails.map((e, i) => (
-                                <span key={i} style={{ fontSize: 11.5, color: t.hi, fontWeight: 600, wordBreak: "break-all" }}>
-                                  {e.email}{e.label ? <span style={{ color: t.mid, fontWeight: 500 }}>{` (${e.label})`}</span> : ""}
-                                </span>
-                              ))}
-                            </div>
+                            <div style={{ width: 20, height: 20, borderRadius: 999, border: `1px dashed ${t.inputBd}`, color: t.lo, fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</div>
                           )}
-                          <button onClick={() => setEmailPanelMc(r.mc)} style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", padding: 0, color: t.teal, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-                            <Mail size={10} /> {activeEmails.length === 0 ? "Tambah email" : "Kelola Email"}
+                        </td>
+                        <td style={{ ...slotCellStyle, fontWeight: filled ? 700 : 500, color: filled ? t.hi : t.lo, fontStyle: filled ? "normal" : "italic" }}>
+                          {filled ? (e.label || r.full_name || `Admin ${i + 1}`) : "Kosong"}
+                        </td>
+                        <td style={{ ...slotCellStyle, color: filled ? t.mid : t.lo }}>
+                          {filled ? e.email : "—"}
+                        </td>
+                        <td style={{ ...slotCellStyle, borderLeft: `2px solid ${t.line}`, background: isVirtual ? undefined : (d ? "rgba(255,255,255,0.015)" : "rgba(0,0,0,0.012)") }}>
+                          {filled ? (
+                            !isHistorical && (
+                              <button onClick={() => openEditEmail(r.mc, e)} title="Edit admin ini"
+                                style={{ display: "flex", alignItems: "center", gap: 5, background: t.teal, border: `1px solid ${t.teal}`, borderRadius: 7, padding: "4px 8px", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", boxShadow: t.shadowSm }}>
+                                <Pencil size={11} /> Edit
+                              </button>
+                            )
+                          ) : (
+                            !isHistorical && (
+                              <button onClick={() => setEmailPanelMc(r.mc)} title="Tambah admin"
+                                style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: `1px dashed ${t.tealBd}`, borderRadius: 7, padding: "4px 8px", color: t.teal, fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                                <Plus size={11} /> Tambah
+                              </button>
+                            )
+                          )}
+                        </td>
+                        <td style={{ ...slotCellStyle, borderLeft: `2px solid ${t.line}` }}>
+                          {/* UPDATE (permintaan user - "untuk kolom status ini juga untuk
+                              keempat slot, jika belum login atau terakhir aktif, sedang
+                              online"): status LOGIN per-admin (beda dari status aktif/nonaktif
+                              MC, yg sekarang digabung ke kolom AKSI MC) - 1 badge per slot,
+                              bukan digabung (merge) spt sebelumnya. */}
+                          {filled && isHistorical ? (
+                            <span style={{ fontSize: 11, color: t.lo, fontStyle: "italic" }}>riwayat</span>
+                          ) : filled ? (() => {
+                            const st = loginStatusBadge(loginStatusByEmail.get((e.email || "").toLowerCase()), t);
+                            return (
+                              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: st.color, whiteSpace: "nowrap" }}>
+                                {st.dot && <span style={{ width: 6, height: 6, borderRadius: "50%", background: t.teal, flexShrink: 0 }} />}
+                                {st.label}
+                              </span>
+                            );
+                          })() : (
+                            <span style={{ fontSize: 11, color: t.lo }}>—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  });
+
+                  if (hiddenCount > 0) {
+                    rowsOut.push(
+                      <tr key={`${r.mc}-more`} style={{ borderBottom: `1px solid ${t.line}` }}>
+                        <td colSpan={9} style={{ padding: "8px 12px", border: `1px solid ${t.line}` }}>
+                          <button onClick={() => setEmailPanelMc(r.mc)} style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", padding: 0, color: t.teal, fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
+                            <Mail size={11} /> +{hiddenCount} admin lainnya — lihat semua di Kelola Email
                           </button>
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>
-                      {savingKey === key ? (
-                        <Loader2 size={14} className="spin" color={t.mid} />
-                      ) : isVirtual || isHistorical ? (
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 700, color: r.active ? t.teal : t.lo }}>
-                          {r.active ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
-                          {isVirtual ? "—" : r.active ? "Aktif" : "Nonaktif"}
-                        </span>
-                      ) : (
-                        <button onClick={() => toggleActive(r)} style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: r.active ? t.teal : t.lo, fontSize: 12, fontWeight: 700 }}>
-                          {r.active ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
-                          {r.active ? "Aktif" : "Nonaktif"}
-                        </button>
-                      )}
-                    </td>
-                    <td style={{ padding: "8px 12px", textAlign: "right", whiteSpace: "nowrap" }}>
-                      {!isVirtual && !isHistorical && (
-                        <button onClick={() => handleDelete(r)} title="Hapus" style={{ background: "none", border: "none", color: t.red, cursor: "pointer", display: "inline-flex" }}><Trash2 size={14} /></button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                        </td>
+                      </tr>
+                    );
+                  }
+
+                  return rowsOut;
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <style>{`.spin { animation: spin 0.8s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }`}</style>

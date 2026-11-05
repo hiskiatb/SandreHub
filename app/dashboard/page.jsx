@@ -647,6 +647,23 @@ export default function DashboardPage() {
       if (!user) return router.push("/sandra/login");
       const { data: prof } = await supabase.from("profiles").select("*").eq("id", user.id).single();
 
+      // FIX KEAMANAN (permintaan user - "saya takutnya bisa mengakses data
+      // lain padahal login gagal"): sebelumnya kalau baris `profiles` tidak
+      // ada / role-nya null (misal krn RPC mf_dse_admin_mc_login_apply gagal
+      // diam2 - lihat bug yg baru diperbaiki), SEMUA pengecekan "role ===
+      // finance_mpx" dst di bawah ini jadi FALSE, jadi query partner_branches
+      // MELEWATI filter partner_name/region yang seharusnya membatasi akses -
+      // akibatnya user yg profilnya rusak/kosong ini tetap bisa lihat SEMUA
+      // partner (termasuk yang bukan tanggung jawabnya), bukan cuma yg
+      // ditentukan role-nya. Sekarang: profil tidak ditemukan = jangan
+      // percaya sesi ini sama sekali - paksa logout & balik ke login, JANGAN
+      // lanjut render dashboard dengan akses default yang longgar.
+      if (!prof || !prof.role) {
+        await supabase.auth.signOut();
+        router.replace("/sandra/login?error=profile_missing");
+        return;
+      }
+
       // Agency: bukan user dashboard internal → arahkan ke portal agency
       if (prof?.role === "agency") return router.replace("/agency");
 
@@ -912,7 +929,13 @@ export default function DashboardPage() {
                   {/* MPX P&L Report — klik label buka layar menunya
                       (PNL_MPX_Menu), klik chevron buka pintasan langsung
                       ke 4 modul di dalamnya tanpa pindah halaman dulu. */}
-                  {(canMonitor || !isSDPMember || isSPM) && (
+                  {/* FIX AKSES (permintaan user - "untuk admin mc mengapa dia bisa
+                      mengakses mpx p&l report dan payout tracker"): Admin MC
+                      (finance_mpx) HANYA boleh akses "Prod. & AR" - tidak boleh
+                      lihat menu ini sama sekali, makanya "&& !isMPX" ditambahkan
+                      eksplisit (canMonitor/!isSDPMember sebelumnya ikut
+                      meng-include isMPX secara tidak sengaja). */}
+                  {!isMPX && (canMonitor || !isSDPMember || isSPM) && (
                     <>
                       <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
                         <button onClick={() => navigate("pnl-mpx")} className={`snav${(view === "pnl-mpx" || PNL_MPX_VIEWS.has(view)) ? " active" : ""}`} style={{ flex: 1 }}>
@@ -926,15 +949,15 @@ export default function DashboardPage() {
                       </div>
                       {pnlGroupOpen && (
                         <div style={{ marginLeft: 10, paddingLeft: 8, borderLeft: `1px solid ${t.line}`, display: "flex", flexDirection: "column", gap: 2 }}>
-                          {!isSDPMember && <SNavItem icon={<PieChart size={13} />}    label="Laporan P&L"          active={PNL_VIEWS.has(view)}       maint={menuMaint("summary")} onClick={() => navigate("summary")} />}
-                          {canMonitor && <SNavItem icon={<Layers size={13} />}        label="PNL Control Center"   active={view === "control-center"} maint={menuMaint("control-center")} onClick={() => navigate("control-center")} />}
-                          {canMonitor && <SNavItem icon={<Table2 size={13} />}        label="Pivot P&L Summary"    active={view === "pivot-summary"}  maint={menuMaint("pivot-summary")} onClick={() => navigate("pivot-summary")} />}
+                          {!isSDPMember && !isMPX && <SNavItem icon={<PieChart size={13} />}    label="Laporan P&L"          active={PNL_VIEWS.has(view)}       maint={menuMaint("summary")} onClick={() => navigate("summary")} />}
+                          {canMonitor && !isMPX && <SNavItem icon={<Layers size={13} />}        label="PNL Control Center"   active={view === "control-center"} maint={menuMaint("control-center")} onClick={() => navigate("control-center")} />}
+                          {canMonitor && !isMPX && <SNavItem icon={<Table2 size={13} />}        label="Pivot P&L Summary"    active={view === "pivot-summary"}  maint={menuMaint("pivot-summary")} onClick={() => navigate("pivot-summary")} />}
                           {isSPM        && <SNavItem icon={<FileSpreadsheet size={13} />} label="Import Data"      active={view === "import-wizard"}  onClick={() => navigate("import-wizard")} />}
                         </div>
                       )}
                     </>
                   )}
-                  {!isSDPMember && <SNavItem icon={<Wallet size={14} />}      label="Payout Tracker"       active={view === "payout-tracker"} maint={menuMaint("payout-tracker")} onClick={() => navigate("payout-tracker")} />}
+                  {!isSDPMember && !isMPX && <SNavItem icon={<Wallet size={14} />}      label="Payout Tracker"       active={view === "payout-tracker"} maint={menuMaint("payout-tracker")} onClick={() => navigate("payout-tracker")} />}
                   {canSdp       && <SNavItem icon={<Store size={14} />}       label="SDP Management"       active={view === "sdp2"}           onClick={() => navigate("sdp2")} />}
                   {/* UPDATE (permintaan user - "mapping admin mc itu
                       seharusnya didalam dse prod, bukan menjadi menu
@@ -1054,7 +1077,20 @@ export default function DashboardPage() {
 
           <div className="hdr-right" style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             <button className="icon-btn" onClick={toggleTheme} style={{ width: 36, height: 36 }}>{d ? <Sun size={15} /> : <Moon size={15} />}</button>
-            <NotificationBell t={t} d={d} isSPM={canMonitor} activeYear={activeYear} masterData={masterData} disabledMonthsMap={disabledMonthsMap} />
+            {/* UPDATE (bug report - "mengapa admin mc bisa mengakses ini",
+                screenshot: Admin MC lihat notifikasi finalisasi laporan
+                P&L milik Partner/MC LAIN - PT ADI CIPTA SURYA TEKNIK, PT
+                PRIMA SENTRAL DISTRIBUSI, dst): bell ini bagian dari modul
+                MPX P&L yg sudah diputuskan DISEMBUNYIKAN TOTAL dari Admin
+                MC (lihat semua `!isMPX` di sekitar MPX P&L Report/Payout
+                Tracker) - tapi ke-lewat di sini krn propnya `isSPM={canMonitor}`,
+                dan `canMonitor` SENDIRI didefinisikan termasuk isMPX
+                (`isSPM || isIOHAny || isMPX`), jadi Admin MC tetep lolos
+                gate `if (!isSPM) return null;` di dalam NotificationBell &
+                liat SEMUA notifikasi P&L lintas Partner/MC tanpa filter
+                sama sekali (bukan cuma salah tampil, beneran data orang
+                lain). Fix: exclude isMPX eksplisit di sini. */}
+            <NotificationBell t={t} d={d} isSPM={canMonitor && !isMPX} activeYear={activeYear} masterData={masterData} disabledMonthsMap={disabledMonthsMap} />
             <div style={{ position: "relative" }}>
               <button onClick={() => setProfileOpen(!profileOpen)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 10px 0 4px", height: 36, borderRadius: 8, border: `1px solid ${profileOpen ? t.blueBd : t.line}`, background: profileOpen ? t.blueSoft : t.inputBg, cursor: "pointer", fontFamily: "inherit" }}>
                 <div style={{ width: 26, height: 26, borderRadius: 6, background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", display: "flex", alignItems: "center", justifyContent: "center", color: "#FFFFFF", fontSize: 12, fontWeight: 700 }}>
@@ -1126,14 +1162,14 @@ export default function DashboardPage() {
 
                   {/* MPX P&L Report — satu menu, isinya 4 modul pelaporan P&L
                       (lihat PNL_MPX_Menu.jsx). */}
-                  {(canMonitor || !isSDPMember || isSPM) && (
+                  {!isMPX && (canMonitor || !isSDPMember || isSPM) && (
                     <DashCard icon={<PieChart size={20} />} title="MPX P&L Report"
                       desc="Laporan P&L, Control Center, Pivot Summary, dan Import Data — 4 modul dalam satu menu."
                       tag="Profit & Loss" active={true} onClick={() => navigate("pnl-mpx")} t={t} d={d}
                       accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.12)" : "rgba(50,188,173,0.08)", bd: d ? "rgba(50,188,173,0.30)" : "rgba(50,188,173,0.20)", shadow: "rgba(50,188,173,0.20)" }} />
                   )}
 
-                  {!isSDPMember && (
+                  {!isSDPMember && !isMPX && (
                     <DashCard icon={<Wallet size={20} />} title="Payout Tracker"
                       desc="Monitoring pembayaran Partner & Agency Prepaid — SLA, funnel, heatmap, dan raw data."
                       tag="Payout" active={true} onClick={() => navigate("payout-tracker")} t={t} d={d}
@@ -1296,7 +1332,7 @@ export default function DashboardPage() {
             )}
 
             {/* ── PNL Control Center ── */}
-            {view === "control-center" && canMonitor && !viewUnderMaint && (
+            {view === "control-center" && canMonitor && !isMPX && !viewUnderMaint && (
               <motion.div key="cc" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
                 <PNLControlCenter
@@ -1309,7 +1345,7 @@ export default function DashboardPage() {
             )}
 
             {/* ── Pivot P&L Summary ── */}
-            {view === "pivot-summary" && canMonitor && !viewUnderMaint && (
+            {view === "pivot-summary" && canMonitor && !isMPX && !viewUnderMaint && (
               <motion.div key="ps" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
                 <PNLPivotSummary theme={theme} activeYear={activeYear} userRole={profile?.role} partnerName={isMPX ? profile?.partner_name : null} />
@@ -1317,7 +1353,7 @@ export default function DashboardPage() {
             )}
 
             {/* ── Payout Tracker ── */}
-            {view === "payout-tracker" && !isSDPMember && !viewUnderMaint && (
+            {view === "payout-tracker" && !isSDPMember && !isMPX && !viewUnderMaint && (
               <motion.div key="pt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
                 <PayoutTracker theme={theme} profile={profile} regionFilter={iohRegionView} partnerName={isMPX ? (profile?.partner_name || null) : (activePartner || null)} filterType={activeType !== "ALL" ? activeType : null} readOnly={isReadOnly} masterData={masterData} />
@@ -1439,19 +1475,19 @@ export default function DashboardPage() {
               </motion.div>
             )}
 
-            {view === "pnl-mpx" && (canMonitor || !isSDPMember || isSPM) && (
+            {view === "pnl-mpx" && !isMPX && (canMonitor || !isSDPMember || isSPM) && (
               <motion.div key="pnl-mpx" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
                   <div style={{ padding: "24px 28px" }}>
                     <PNL_MPX_Menu theme={theme} onExit={() => navigate("overview")} onSelect={(id) => navigate(id)}
                       items={[
-                        !isSDPMember && { id: "summary", icon: PieChart, label: "Laporan P&L",
+                        !isSDPMember && !isMPX && { id: "summary", icon: PieChart, label: "Laporan P&L",
                           desc: "Analisis pendapatan harian, margin produk, dan pengeluaran operasional partner.", tag: "Profit & Loss",
                           accent: { color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.12)" : "rgba(50,188,173,0.08)", bd: d ? "rgba(50,188,173,0.30)" : "rgba(50,188,173,0.20)" } },
-                        canMonitor && { id: "control-center", icon: Layers, label: "PNL Control Center",
+                        canMonitor && !isMPX && { id: "control-center", icon: Layers, label: "PNL Control Center",
                           desc: isMPX ? "Monitoring progres pengisian laporan branch-branch di partner Anda." : "Monitoring progres pengisian laporan seluruh branch di wilayah Sumatera.", tag: "Monitoring",
                           accent: { color: "#ED1C24", bg: d ? "rgba(237,28,36,0.10)" : "rgba(237,28,36,0.06)", bd: d ? "rgba(237,28,36,0.26)" : "rgba(237,28,36,0.16)" } },
-                        canMonitor && { id: "pivot-summary", icon: Table2, label: "Pivot P&L Summary",
+                        canMonitor && !isMPX && { id: "pivot-summary", icon: Table2, label: "Pivot P&L Summary",
                           desc: isMPX ? "Ringkasan REV, EXP, dan P/L branch-branch partner Anda dalam pivot table." : "Ringkasan REV, EXP, dan P/L seluruh MPX per bulan dalam format pivot table.", tag: "Ringkasan",
                           accent: { color: d ? "#C49A00" : "#9A7400", bg: d ? "rgba(255,203,5,0.11)" : "rgba(255,203,5,0.09)", bd: d ? "rgba(255,203,5,0.28)" : "rgba(255,203,5,0.20)" } },
                         isSPM && { id: "import-wizard", icon: FileSpreadsheet, label: "Import Data Otomatis",
@@ -1517,7 +1553,7 @@ export default function DashboardPage() {
             )}
 
             {/* ── Laporan P&L (Summary / Pendapatan / Pengeluaran) ── */}
-            {PNL_VIEWS.has(view) && !viewUnderMaint && (
+            {PNL_VIEWS.has(view) && !isMPX && !viewUnderMaint && (
               <motion.div key="fv" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} style={{ maxWidth: 920, margin: "0 auto" }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 20 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
                 {!canPnl ? (

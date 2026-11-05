@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import supabase from "../../../lib/supabase";
 import { HubLogo } from "../../../components/HubLogo";
@@ -43,6 +43,8 @@ function SandraLoginInner() {
   const [detected, setDetected] = useState(null);   // { source:"admin_mc", role, mc } | { source:"sdp", found, role, ... }
   const [showPw,   setShowPw]   = useState(false);
   const [otp,      setOtp]      = useState("");
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const otpRefs = useRef([]);
   const [checking, setChecking] = useState(true);
   const t = mk(d);
 
@@ -78,9 +80,22 @@ function SandraLoginInner() {
     try {
       const { data: mcLookup } = await supabase.rpc("mf_dse_admin_mc_lookup", { p_email: email });
       if (mcLookup?.found) {
-        setDetected({ source: "admin_mc", role: "finance_mpx", mc: mcLookup.mc || "" });
-        const { error: otpErr } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
-        if (otpErr) { setErrMsg(otpErr.message || "Gagal mengirim kode OTP."); setCheckingEmail(false); return; }
+        // UPDATE (permintaan user - "kan bisa beberapa mc sekaligus"): 1
+        // email Admin MC bisa di-mapping ke LEBIH DARI 1 MC (lihat field
+        // "mcs" dari mf_dse_admin_mc_lookup) - simpan semua, bukan cuma
+        // mcLookup.mc (MC pertama saja).
+        setDetected({ source: "admin_mc", role: "finance_mpx", mcs: (mcLookup.mcs || []).map((x) => x.mc).filter(Boolean) });
+        // UPDATE (permintaan user - "mengapa masih menggunakan magic link saya
+        // ingin otp yang dikirimkan bukan click to login"): sebelumnya di sini
+        // pakai supabase.auth.signInWithOtp() langsung - itu mengirim email
+        // bawaan Supabase Auth (template "Magic Link", tombol klik-untuk-
+        // masuk), BUKAN kode 6 digit. Sekarang pakai endpoint custom yang
+        // sama dgn /sandra/login-admin-mc (/api/send-otp, Resend, template
+        // SandraHub yang benar2 menampilkan kode OTP) - user selalu DIMINTA
+        // MENGETIK kode, tidak pernah ada link yang bisa diklik.
+        const otpRes = await fetch("/api/send-otp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }) });
+        const otpJson = await otpRes.json();
+        if (!otpRes.ok || !otpJson.success) { setErrMsg(otpJson.error || "Gagal mengirim kode OTP."); setCheckingEmail(false); return; }
         setCheckingEmail(false);
         setStage("otp");
         return;
@@ -101,25 +116,98 @@ function SandraLoginInner() {
     setLoading(true);
     try {
       const email = form.email.trim().toLowerCase();
-      const { error: verifyErr } = await supabase.auth.verifyOtp({ email, token: cleanOtp, type: "email" });
-      if (verifyErr) {
-        setErrMsg(verifyErr.message?.toLowerCase().includes("expired") ? "Kode OTP sudah kedaluwarsa. Kirim ulang." : "Kode OTP salah atau sudah tidak berlaku.");
+      // UPDATE: verifikasi kode custom (tabel email_otps, sama pola dgn
+      // /sandra/login-admin-mc) lewat endpoint server-side, BUKAN
+      // supabase.auth.verifyOtp({ type: "email" }) lagi (itu cuma valid utk
+      // kode yg dikirim via signInWithOtp bawaan Supabase). Endpoint ini
+      // mengembalikan token_hash (dari Admin API generateLink magiclink),
+      // ditukar jadi sesi asli di baris verifyOtp bawahnya - ini murni
+      // pertukaran token server-side, TIDAK mengirim email apapun & TIDAK
+      // butuh user klik link manapun.
+      const verifyRes = await fetch("/api/sandra/verify-admin-mc-otp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, otp: cleanOtp }) });
+      const verifyJson = await verifyRes.json();
+      if (!verifyRes.ok || !verifyJson.success) {
+        setErrMsg(verifyJson.error || "Kode OTP salah atau sudah tidak berlaku.");
         return;
       }
-      await supabase.rpc("mf_dse_admin_mc_login_apply").catch(() => {});
+      const { error: verifyErr } = await supabase.auth.verifyOtp({ token_hash: verifyJson.token_hash, type: "magiclink" });
+      if (verifyErr) {
+        setErrMsg("Gagal membuat sesi login. Coba lagi.");
+        return;
+      }
+      // FIX (bug "nama/role profil kosong setelah login Admin MC"): kirim
+      // email EKSPLISIT ke RPC ini (sama pola dgn mf_dse_admin_mc_lookup di
+      // atas), bukan andalkan auth.email() di sisi server yg kadang tidak
+      // match persis dgn sesi yg baru dibentuk - lihat migrasi
+      // fix_admin_mc_login_apply_use_explicit_email.
+      // FIX (TypeError "...rpc(...).catch is not a function"): hasil
+      // .rpc() dari postgrest-js cuma "thenable" (punya .then, bisa di-
+      // await) TAPI BUKAN Promise asli - tidak punya method .catch()
+      // bawaan, jadi chaining .catch() langsung di belakangnya SELALU
+      // throw TypeError di titik itu juga, SEBELUM request-nya sendiri
+      // sempat jalan. Ini yang dari awal bikin RPC pembuat profil gagal
+      // total & diam2 (ketangkep try/catch luar, keliatan cuma "Terjadi
+      // gangguan pada sistem"). Sekarang dibungkus try/catch biasa -
+      // best-effort, tidak boleh gagalkan login kalau RPC ini error.
+      try { await supabase.rpc("mf_dse_admin_mc_login_apply", { p_email: email }); } catch { /* best-effort */ }
       router.refresh();
       router.push("/dashboard");
-    } catch { setErrMsg("Terjadi gangguan pada sistem."); }
+    } catch (e) { console.error("[handleVerifyOtp]", e); setErrMsg("Terjadi gangguan pada sistem: " + (e?.message || e)); }
     finally { setLoading(false); }
   };
 
   const handleResendOtp = async () => {
     setErrMsg(""); setLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithOtp({ email: form.email.trim().toLowerCase(), options: { shouldCreateUser: true } });
-      if (error) setErrMsg(error.message || "Gagal mengirim ulang kode OTP.");
+      const res = await fetch("/api/send-otp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: form.email.trim().toLowerCase() }) });
+      const json = await res.json();
+      if (!res.ok || !json.success) setErrMsg(json.error || "Gagal mengirim ulang kode OTP.");
     } finally { setLoading(false); }
   };
+
+  // UPDATE (permintaan user - "ini buat lebih baguys dan mewah"): countdown
+  // "Kirim ulang" 45 detik sejak stage berubah ke "otp" - sama pola dgn
+  // /sandra/login-admin-mc.
+  useEffect(() => {
+    if (stage !== "otp") return;
+    setResendCooldown(45);
+  }, [stage]);
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const id = setInterval(() => setResendCooldown((v) => Math.max(0, v - 1)), 1000);
+    return () => clearInterval(id);
+  }, [resendCooldown]);
+
+  // Kotak OTP 6 digit terpisah - digit disimpan tetap sbg 1 string `otp`.
+  const otpDigits = Array.from({ length: 6 }, (_, i) => otp[i] || "");
+  const setOtpDigit = (i, val) => {
+    const clean = val.replace(/\D/g, "").slice(-1);
+    const next = otpDigits.slice();
+    next[i] = clean;
+    setOtp(next.join("").replace(/\s+/g, ""));
+    if (clean && i < 5) otpRefs.current[i + 1]?.focus();
+  };
+  const handleOtpKeyDown = (i, ev) => {
+    if (ev.key === "Backspace" && !otpDigits[i] && i > 0) otpRefs.current[i - 1]?.focus();
+    else if (ev.key === "ArrowLeft" && i > 0) otpRefs.current[i - 1]?.focus();
+    else if (ev.key === "ArrowRight" && i < 5) otpRefs.current[i + 1]?.focus();
+  };
+  const handleOtpPaste = (ev) => {
+    const pasted = ev.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
+    if (!pasted) return;
+    ev.preventDefault();
+    setOtp(pasted);
+    otpRefs.current[Math.min(pasted.length, 5)]?.focus();
+  };
+  // Auto-submit begitu 6 digit lengkap - taruh SETELAH handleVerifyOtp
+  // dideklarasikan (const arrow fn, tidak di-hoist).
+  const autoSubmittedRef = useRef("");
+  useEffect(() => {
+    if (stage === "otp" && otp.length === 6 && autoSubmittedRef.current !== otp) {
+      autoSubmittedRef.current = otp;
+      handleVerifyOtp();
+    }
+  }, [otp, stage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Langkah 2 — login (auth tetap password) + terapkan mapping ke profil.
   const handleLogin = async () => {
@@ -267,26 +355,74 @@ function SandraLoginInner() {
                     <button onClick={() => { setStage("email"); setOtp(""); setDetected(null); setErrMsg(""); }} style={{ background:"none", border:"none", cursor:"pointer", color:TEAL, fontSize:12.5, fontWeight:700, fontFamily:FONT, flexShrink:0 }}>Ganti</button>
                   </div>
 
-                  <div style={{ display:"flex", alignItems:"center", gap:9, padding:"10px 12px", borderRadius:10, background:t.tealBg, border:`1px solid ${t.tealBd}`, marginBottom:16 }}>
-                    <ShieldCheck size={15} color={TEAL} style={{flexShrink:0}}/>
-                    <div style={{ minWidth:0 }}>
+                  <div style={{ display:"flex", alignItems:"flex-start", gap:9, padding:"10px 12px", borderRadius:10, background:t.tealBg, border:`1px solid ${t.tealBd}`, marginBottom:16 }}>
+                    <ShieldCheck size={15} color={TEAL} style={{flexShrink:0, marginTop:1}}/>
+                    <div style={{ minWidth:0, flex:1 }}>
                       <div style={{ fontSize:12.5, fontWeight:800, color:t.hi }}>Masuk sebagai {ROLE_LABEL[detected?.role] || "Admin MC"}</div>
-                      <div style={{ fontSize:11.5, color:t.mid, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{detected?.mc ? `MC: ${detected.mc}` : "Tanpa kata sandi — kode OTP sudah dikirim"}</div>
+                      {/* UPDATE (permintaan user - "perbaiki masuk sebagai admin 4 mc
+                          perbaiki tampilannnya agar clear"): sebelumnya semua MC
+                          digabung jadi 1 baris teks panjang (whiteSpace:"nowrap" +
+                          ellipsis) - kalau MC-nya banyak (4+), nama2 MC di belakang
+                          KEPOTONG ("MC-...") & ga kebaca sama sekali. Sekarang tiap
+                          MC jadi chip/badge kecil sendiri2 yang bebas wrap ke baris
+                          berikutnya (flexWrap:"wrap") - semua MC selalu kebaca penuh,
+                          berapa pun jumlahnya. */}
+                      {detected?.mcs?.length ? (
+                        <div style={{ display:"flex", flexWrap:"wrap", gap:5, marginTop:5 }}>
+                          {detected.mcs.map((mc) => (
+                            <span key={mc} style={{ fontSize:11, fontWeight:700, color:TEAL, background:d?"rgba(50,188,173,0.14)":"#fff", border:`1px solid ${t.tealBd}`, borderRadius:999, padding:"3px 9px", whiteSpace:"nowrap" }}>{mc}</span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ fontSize:11.5, color:t.mid, marginTop:2 }}>Tanpa kata sandi — kode OTP sudah dikirim</div>
+                      )}
                     </div>
                   </div>
 
-                  <label style={{ fontSize:11, fontWeight:700, letterSpacing:"0.07em", textTransform:"uppercase", color:t.mid }}>Kode OTP (6 digit)</label>
-                  <div style={{ ...fieldStyle, marginTop:5 }}>
-                    <KeyRound size={14} color={t.lo} style={{flexShrink:0}}/>
-                    <input type="text" inputMode="numeric" maxLength={6} placeholder="••••••" value={otp} onChange={e=>setOtp(e.target.value.replace(/\D/g,""))} onKeyDown={e=>e.key==="Enter"&&handleVerifyOtp()} style={{ ...inputStyle, letterSpacing:4 }} autoFocus/>
+                  <label style={{ fontSize:11, fontWeight:700, letterSpacing:"0.07em", textTransform:"uppercase", color:t.mid, display:"block", marginBottom:10, textAlign:"center" }}>Masukkan kode 6 digit</label>
+                  {/* UPDATE (permintaan user - "ini buat lebih baguys dan mewah"):
+                      input OTP tunggal (1 text box titik2) diganti 6 kotak digit
+                      terpisah - auto-pindah antar kotak, bisa paste 6 digit
+                      sekaligus, auto-submit begitu lengkap (lihat otpDigits/
+                      setOtpDigit/handleOtpKeyDown/handleOtpPaste/autoSubmittedRef
+                      di atas). Sentuhan "mewah": border+glow gradient teal→magenta
+                      begitu SEMUA 6 digit terisi (otpComplete), bukan cuma border
+                      teal polos spt kotak yg masih kosong/sebagian. */}
+                  <div onPaste={handleOtpPaste} className="otpBoxRow" style={{ display:"flex", gap:8, justifyContent:"center" }}>
+                    {otpDigits.map((digit, i) => {
+                      const otpComplete = otpDigits.every(Boolean);
+                      return (
+                        <input key={i} ref={(el) => (otpRefs.current[i] = el)}
+                          type="text" inputMode="numeric" maxLength={1} value={digit}
+                          onChange={(e) => setOtpDigit(i, e.target.value)}
+                          onKeyDown={(e) => handleOtpKeyDown(i, e)}
+                          onFocus={(e) => e.currentTarget.select()}
+                          className="otpDigitBox"
+                          style={{
+                            width:44, height:54, maxWidth:"15vw", borderRadius:12, outline:"none", textAlign:"center",
+                            fontFamily:FONT, fontSize:22, fontWeight:800, color:t.hi,
+                            background: otpComplete ? (d?"rgba(50,188,173,0.10)":"rgba(50,188,173,0.06)") : t.fieldBg,
+                            border: otpComplete ? `1.5px solid ${TEAL}` : `1.5px solid ${digit?TEAL:t.line}`,
+                            boxShadow: otpComplete ? `0 0 0 3px rgba(50,188,173,0.14), 0 6px 16px rgba(198,22,141,0.10)` : "none",
+                            transition:"border-color 0.15s, box-shadow 0.2s, background 0.2s",
+                          }}
+                          autoFocus={i===0} />
+                      );
+                    })}
                   </div>
                   <button onClick={handleVerifyOtp} disabled={loading}
-                    style={{ marginTop:20, width:"100%", height:46, borderRadius:10, border:"none", background:loading?`${TEAL}55`:`linear-gradient(135deg,${TEAL},#1A9E90)`, color:"#fff", fontSize:14, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", gap:7, boxShadow:loading?"none":`0 4px 18px rgba(50,188,173,0.25)`, cursor:loading?"not-allowed":"pointer", fontFamily:FONT }}>
+                    style={{ marginTop:22, width:"100%", height:46, borderRadius:10, border:"none", background:loading?`${TEAL}55`:`linear-gradient(135deg,${TEAL},#1A9E90)`, color:"#fff", fontSize:14, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", gap:7, boxShadow:loading?"none":`0 4px 18px rgba(50,188,173,0.25)`, cursor:loading?"not-allowed":"pointer", fontFamily:FONT }}>
                     {loading ? <Loader2 size={16} style={{animation:"spin .85s linear infinite"}}/> : <><span>Verifikasi & Masuk</span><ArrowRight size={14} strokeWidth={2.5}/></>}
                   </button>
-                  <button onClick={handleResendOtp} disabled={loading} style={{ marginTop:12, width:"100%", background:"none", border:"none", cursor:"pointer", color:t.mid, fontSize:12.5, fontWeight:600, fontFamily:FONT }}>
-                    Belum dapat kode? Kirim ulang
-                  </button>
+                  <div style={{ marginTop:14, textAlign:"center", fontSize:12.5, fontWeight:600, color:t.mid }}>
+                    {resendCooldown > 0 ? (
+                      <span>Belum dapat kode? Kirim ulang dalam {resendCooldown}s</span>
+                    ) : (
+                      <button onClick={() => { handleResendOtp(); setOtp(""); otpRefs.current[0]?.focus(); }} disabled={loading} style={{ background:"none", border:"none", cursor:loading?"not-allowed":"pointer", color:TEAL, fontSize:12.5, fontWeight:700, fontFamily:FONT }}>
+                        Belum dapat kode? Kirim ulang
+                      </button>
+                    )}
+                  </div>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -333,10 +469,46 @@ function SandraLoginInner() {
         input::-ms-reveal, input::-ms-clear { display:none }
         input::-webkit-credentials-auto-fill-button { visibility:hidden }
         input[type="password"]::-webkit-textfield-decoration-container { display:none }
+        /* UPDATE (bug report - "mengapa kadang kata sandi ini tidak
+           kontras" + "dia harus show atau hide dulu baru normal"):
+           begitu browser/password manager ngisi otomatis field password,
+           Chrome/Safari MAKSA warna background + teks sendiri (highlight
+           autofill bawaan browser, biasanya biru/kuning pucat) yg nimpa
+           total style custom di atas (background transparan + color:t.hi)
+           - itu kenapa teksnya keliatan pudar/ga kontras TEPAT setelah
+           autofill, tapi balik normal begitu toggle show/hide (ganti
+           type="password"/"text" maksa browser re-render inputnya dari
+           nol, ngilangin highlight autofill itu SESAAT). Fix standar:
+           override pseudo-class :-webkit-autofill biar warnanya dipaksa
+           balik ke tema kita sendiri dari awal (sebelum sempat ke-toggle
+           show/hide sama sekali), bukan nunggu triggernya ga sengaja. */
+        input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:focus, input:-webkit-autofill:active {
+          -webkit-text-fill-color: ${t.hi} !important;
+          -webkit-box-shadow: 0 0 0 1000px ${t.card} inset !important;
+          box-shadow: 0 0 0 1000px ${t.card} inset !important;
+          caret-color: ${t.hi};
+          transition: background-color 9999s ease-in-out 0s, color 9999s ease-in-out 0s;
+        }
         @keyframes spin { to { transform:rotate(360deg) } }
         button { transition: opacity 0.14s, transform 0.12s; }
         button:hover:not(:disabled) { opacity: 0.84; }
         button:active:not(:disabled) { transform: scale(0.97); }
+        .otpDigitBox { transition: border-color 0.15s, box-shadow 0.2s, background 0.2s; }
+        .otpDigitBox:focus { border-color: #32BCAD !important; box-shadow: 0 0 0 3px rgba(50,188,173,0.15); }
+        /* UPDATE (permintaan user - "tapi pastikan resposive di mobile ya"):
+           6 kotak OTP fixed 44px x gap 8px = 304px bisa overflow di layar
+           sempit (iPhone SE 320px dst, card padding 28px kiri-kanan +
+           padding halaman 20px). Di bawah 380px/340px kotak & gap mengecil
+           otomatis via media query ini (pakai !important krn width/height
+           kotak di-set inline). */
+        @media (max-width: 380px) {
+          .otpBoxRow { gap: 5px !important; }
+          .otpDigitBox { width: 38px !important; height: 50px !important; font-size: 19px !important; }
+        }
+        @media (max-width: 340px) {
+          .otpBoxRow { gap: 4px !important; }
+          .otpDigitBox { width: 33px !important; height: 46px !important; font-size: 17px !important; border-radius: 10px !important; }
+        }
       `}</style>
     </div>
   );

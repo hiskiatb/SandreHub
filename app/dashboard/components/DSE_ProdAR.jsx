@@ -46,7 +46,7 @@ import {
   Upload, FileSpreadsheet, X, Check, AlertTriangle, Loader2, FileDown,
   Search, RefreshCw, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, Wallet, TrendingUp, Calendar, Info,
   Pencil, Save, ListChecks, History, Database, Trash2,
-  Users, UserCheck, UserX, Ticket, CircleDollarSign, Clock,
+  Users, UserCheck, UserX, Ticket, CircleDollarSign, Clock, Router,
   SlidersHorizontal, Crown, Medal, MapPin, ArrowUpDown, Plus, RotateCcw, Copy, Printer, EyeOff, Eye, Minus,
   FileImage, FileText,
 } from "lucide-react";
@@ -169,7 +169,7 @@ function humanizeAge(days) {
   const remMonths = Math.round((days % 365) / 30);
   return remMonths > 0 ? `${years} thn ${remMonths} bln` : `${years} thn`;
 }
-const emptyEntry = () => ({ qty_sp: 0, nilai_sp: 0, qty_saldo: 0, nilai_saldo: 0, qty_voucher: 0, nilai_voucher: 0, ar_piutang: 0, ar_bayar: 0, catatan: "" });
+const emptyEntry = () => ({ qty_sp: 0, nilai_sp: 0, nilai_fwa: 0, qty_saldo: 0, nilai_saldo: 0, qty_voucher: 0, nilai_voucher: 0, ar_piutang: 0, ar_bayar: 0, catatan: "" });
 // Format jam:menit lokal dari timestamptz, utk audit trail "Diperbarui HH:mm" per baris
 const fmtTime = (iso) => { if (!iso) return ""; try { return new Date(iso).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }); } catch { return ""; } };
 const DAY_NAMES = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
@@ -251,6 +251,18 @@ const fmtDayMonthFull = (iso) => { if (!iso) return ""; const d = new Date(iso +
 // otomatis sebelumnya, cuma sekarang levelnya teks bukan layout. Day
 // SELALU zero-padded (dd) di semua tingkat.
 const pad2 = (n) => String(n).padStart(2, "0");
+// UPDATE (permintaan user - "start pencatatan daily itu di bulan
+// November 2026 dan bulan bulan kedepannya (bulan start web ini mulai
+// berjalan), khusus untuk bulan Oktober itu kan bulan lalu jadi tidak
+// memungkinkan untuk kita suruh dia ngisi daily per DSE nya, jadi
+// khusus untuk Oktober maka dia hanya perlu melakukan pengisian untuk
+// nilai Full Month"): batas bawah mode Daily (tanggal spesifik per hari)
+// - bulan sebelum ini (Oktober 2026 & seterusnya ke masa lalu) cuma bisa
+// diisi lewat mode Full Month (tetap bebas dipilih bulan apa saja di
+// situ), krn ga masuk akal minta data harian retroaktif dari sebelum web
+// ini jalan. jumpToDay (dipakai nav prev/next & klik tanggal kalender)
+// DIPAKSA ga pernah turun di bawah tanggal ini.
+const DAILY_START_DATE = "2026-11-01";
 const shiftDay = (iso, delta) => {
   const d = new Date(iso + "T00:00:00");
   d.setDate(d.getDate() + delta);
@@ -303,6 +315,7 @@ const COLMAP = {
   brand: ["brand", "merk"],
   qty_sp: ["qty sp", "jumlah sp"],
   nilai_sp: ["nilai sp", "value sp", "omzet sp"],
+  nilai_fwa: ["nilai fwa", "value fwa", "omzet fwa"],
   qty_saldo: ["qty saldo", "jumlah saldo"],
   nilai_saldo: ["nilai saldo", "value saldo", "omzet saldo"],
   qty_voucher: ["qty voucher", "jumlah voucher"],
@@ -363,6 +376,7 @@ function parseWorkbook(file, defaultMc) {
             tanggal, dse_code: dseCode, mc: defaultMc || null,
             qty_sp: fRaw(col.qty_sp >= 0 ? line[col.qty_sp] : 0),
             nilai_sp: fRaw(col.nilai_sp >= 0 ? line[col.nilai_sp] : 0),
+            nilai_fwa: fRaw(col.nilai_fwa >= 0 ? line[col.nilai_fwa] : 0),
             qty_saldo: fRaw(col.qty_saldo >= 0 ? line[col.qty_saldo] : 0),
             nilai_saldo: fRaw(col.nilai_saldo >= 0 ? line[col.nilai_saldo] : 0),
             qty_voucher: fRaw(col.qty_voucher >= 0 ? line[col.qty_voucher] : 0),
@@ -675,7 +689,7 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose, o
         // disentuh lagi, lihat UPDATE di startEdit/saveEdit) - baris
         // mf_dse_prod_ar (& metric lain di tanggal yg sama: AR/Catatan/
         // metric lain) TETAP ada, krn 1 baris = 1 hari gabungan semua jenis.
-        const col = confirmTarget.kind === "sp" ? "nilai_sp" : confirmTarget.kind === "voucher" ? "nilai_voucher" : "nilai_saldo";
+        const col = confirmTarget.kind === "sp" ? "nilai_sp" : confirmTarget.kind === "fwa" ? "nilai_fwa" : confirmTarget.kind === "voucher" ? "nilai_voucher" : "nilai_saldo";
         const patch = { [col]: 0 };
         const { error } = await supabase.from("mf_dse_prod_ar").update(patch).eq("dse_code", dseCode).eq("tanggal", confirmTarget.tanggal);
         if (error) throw error;
@@ -697,7 +711,7 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose, o
   // edit/tampilan di sini CUMA nilai (Rp) - kolom qty_sp/qty_voucher/
   // qty_saldo di DB TETAP ga disentuh (dibiarkan apa adanya, bukan
   // di-reset ke 0) krn itu bukan lagi konsep yg dikelola dari UI manapun.
-  const nilaiColOf = (kind) => (kind === "sp" ? "nilai_sp" : kind === "voucher" ? "nilai_voucher" : "nilai_saldo");
+  const nilaiColOf = (kind) => (kind === "sp" ? "nilai_sp" : kind === "fwa" ? "nilai_fwa" : kind === "voucher" ? "nilai_voucher" : "nilai_saldo");
   const startEdit = (row, kind) => {
     setEditTanggal(row.tanggal);
     setEditDraft({ nilai: String(row[nilaiColOf(kind)] || 0) });
@@ -759,7 +773,7 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose, o
     for (let d = 1; d <= lastDay; d++) {
       const tanggal = `${y}-${pad2(m)}-${pad2(d)}`;
       const row = byTanggal.get(tanggal);
-      out.push(row ? { ...row, __exists: true } : { dse_code: dseCode, tanggal, nilai_sp: 0, nilai_voucher: 0, nilai_saldo: 0, qty_sp: 0, qty_voucher: 0, qty_saldo: 0, __exists: false });
+      out.push(row ? { ...row, __exists: true } : { dse_code: dseCode, tanggal, nilai_sp: 0, nilai_fwa: 0, nilai_voucher: 0, nilai_saldo: 0, qty_sp: 0, qty_voucher: 0, qty_saldo: 0, __exists: false });
     }
     return out;
   }, [prodRows, historyMonth, dseCode]);
@@ -769,6 +783,7 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose, o
   const HISTORY_TABS = [
     { k: "info", label: "Informasi DSE", icon: Users },
     { k: "sp", label: "Penjualan SP", icon: SimCardIcon, color: t.red, bg: t.redBg },
+    { k: "fwa", label: "Penjualan FWA", icon: Router, color: t.pink, bg: t.pinkBg },
     { k: "voucher", label: "Penjualan Voucher", icon: Ticket, color: t.blue, bg: t.blueBg },
     { k: "saldo", label: "Penjualan Saldo", icon: Wallet, color: t.amber, bg: t.amberBg },
   ];
@@ -1100,6 +1115,8 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose, o
             )
           ) : historyTab === "sp" ? (
             renderSalesTab("sp", "SP", t.red, t.redBg, SimCardIcon)
+          ) : historyTab === "fwa" ? (
+            renderSalesTab("fwa", "FWA", t.pink, t.pinkBg, Router)
           ) : historyTab === "voucher" ? (
             renderSalesTab("voucher", "Voucher", t.blue, t.blueBg, Ticket)
           ) : (
@@ -3358,7 +3375,7 @@ function ArPiutangInput({ t, dseCode, dseCode3id, dseName, mc, branch, entryDate
     </>
   );
 }
-function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChange, identityEdit, onSave, saving, dirty, prevOutstanding, audit, onShowHistory, readOnly, mode, rank, isToday, entryDate, onPickDate, onSwitchPeriodMode, periodMode, periodSubtitle, profile, arMonth, runGuarded, statusEvents, hiddenCols = {}, loadingDse }) {
+function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChange, identityEdit, onSave, saving, dirty, prevOutstanding, audit, onShowHistory, readOnly, mode, rank, isToday, entryDate, onPickDate, onSwitchPeriodMode, periodMode, periodSubtitle, profile, arMonth, runGuarded, statusEvents, hiddenCols = {}, loadingDse, dailyDisabled = false, autoOpenCode, onAutoOpenHandled }) {
   // UPDATE (permintaan user - "pisahkan data ar dse dan penjualan dse ke
   // menu terpisah"): 1 komponen yg sama dipakai utk 2 menu terpisah -
   // mode="sales" (tab "Penjualan DSE": SP/Voucher/Saldo/Total) & mode="ar"
@@ -3386,6 +3403,24 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
   // ini unmount - komponennya dipakein key yg sama jadi state lama nempel),
   // paksa balik ke "ar" selama mode AR, karena tombol "info" udah ga ada.
   useEffect(() => { if (isAr && sheetTab === "info") setSheetTab("ar"); }, [isAr, sheetTab]);
+  // UPDATE (permintaan user - search suggestion "ketika dipilih maka akan
+  // menampilkan line si dse nya beserta popupnya dengan baik"): baris ini
+  // diminta buka popup form-nya SENDIRI (bukan via klik manual) begitu
+  // dipilih dari dropdown saran pencarian di induk (DSE_ProdAR) -
+  // autoOpenCode cuma COCOK sesaat (induk langsung reset ke "" lewat
+  // onAutoOpenHandled setelah ke-terima, biar ga buka ulang2 tiap re-render).
+  // autoOpenCode cuma "pulsa" sesaat dari induk (langsung direset ke ""
+  // lewat onAutoOpenHandled) - pola generic "buka popup dari luar" ini
+  // emang butuh efek, bukan dipindah ke event handler (kliknya ada di
+  // komponen lain / dropdown saran pencarian).
+  useEffect(() => {
+    if (autoOpenCode && autoOpenCode === dse.dse_code) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setCardOpen(true);
+      setSheetTab("info");
+      onAutoOpenHandled?.();
+    }
+  }, [autoOpenCode, dse.dse_code]); // eslint-disable-line react-hooks/exhaustive-deps
   // UPDATE (permintaan user - "buat toggle untuk menyembunyikan atau
   // tampilkan detail ... default disembunyikan dulu"): blok District/Area/
   // Region/Partner (struktural, read-only) di tab Informasi DSE skrg bisa
@@ -3461,7 +3496,7 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
   const ageInfo = statusAgeInfo(dse.dse_code, status, statusEvents, joinDate);
 
   const e = entry || emptyEntry();
-  const totalPenjualan = fRaw(e.nilai_sp) + fRaw(e.nilai_voucher) + fRaw(e.nilai_saldo);
+  const totalPenjualan = fRaw(e.nilai_sp) + fRaw(e.nilai_fwa) + fRaw(e.nilai_voucher) + fRaw(e.nilai_saldo);
   const outstanding = fRaw(prevOutstanding);
   const setE = (patch) => onEntryChange(dse.dse_code, { ...e, ...patch });
   const handleBayarChange = (v) => onEntryChange(dse.dse_code, { ...e, ar_bayar: v, ar_piutang: Math.max(0, outstanding - fRaw(v)) });
@@ -3855,6 +3890,7 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
       : [
           { k: "info", label: "Informasi DSE", icon: Users },
           { k: "sp", label: "Penjualan SP", icon: SimCardIcon, color: t.red, bg: t.redBg },
+          { k: "fwa", label: "Penjualan FWA", icon: Router, color: t.pink, bg: t.pinkBg },
           { k: "voucher", label: "Penjualan Voucher", icon: Ticket, color: t.blue, bg: t.blueBg },
           { k: "saldo", label: "Penjualan Saldo", icon: Wallet, color: t.amber, bg: t.amberBg },
         ];
@@ -4145,6 +4181,7 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
     };
 
     const spBody = renderMoneyTab("sp", "SP", t.red, t.redBg, e.nilai_sp, (v) => setE({ nilai_sp: v }), SimCardIcon);
+    const fwaBody = renderMoneyTab("fwa", "FWA", t.pink, t.pinkBg, e.nilai_fwa, (v) => setE({ nilai_fwa: v }), Router);
     const voucherBody = renderMoneyTab("voucher", "Voucher", t.blue, t.blueBg, e.nilai_voucher, (v) => setE({ nilai_voucher: v }), Ticket);
     const saldoBody = renderMoneyTab("saldo", "Saldo MOBO", t.amber, t.amberBg, e.nilai_saldo, (v) => setE({ nilai_saldo: v }), Wallet);
 
@@ -4158,7 +4195,7 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
       </div>
     );
 
-    const sheetBody = sheetTab === "info" ? infoBody : sheetTab === "sp" ? spBody : sheetTab === "voucher" ? voucherBody : sheetTab === "saldo" ? saldoBody : arBody;
+    const sheetBody = sheetTab === "info" ? infoBody : sheetTab === "sp" ? spBody : sheetTab === "fwa" ? fwaBody : sheetTab === "voucher" ? voucherBody : sheetTab === "saldo" ? saldoBody : arBody;
 
     // UPDATE (permintaan user - "Total Penjualan November, dan dibawahnya
     // adalah pemilihan tanggal buat dengan sangat bagus, baru jelas
@@ -4472,12 +4509,16 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
               <span style={{ fontSize: 16, fontWeight: 800, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>Form Informasi &amp; Penjualan DSE</span>
               {!isAr && (
                 <div style={{ display: "flex", alignItems: "center", gap: 2, padding: 2, borderRadius: 9, background: t.sub, flexShrink: 0 }}>
-                  {[{ k: "tanggal", label: "Daily" }, { k: "bulan", label: "Full Month" }].map(({ k, label }) => (
-                    <button key={k} onClick={() => onSwitchPeriodMode?.(k)}
-                      style={{ height: 26, padding: "0 10px", borderRadius: 7, border: "none", background: periodMode === k ? t.card : "transparent", color: periodMode === k ? t.hi : t.mid, fontSize: 10.5, fontWeight: periodMode === k ? 700 : 600, cursor: "pointer", fontFamily: FONT, boxShadow: periodMode === k ? t.shadowSm : "none", whiteSpace: "nowrap", transition: "background 0.15s, box-shadow 0.15s" }}>
+                  {[{ k: "tanggal", label: "Daily" }, { k: "bulan", label: "Full Month" }].map(({ k, label }) => {
+                    const kDisabled = k === "tanggal" && dailyDisabled;
+                    return (
+                    <button key={k} onClick={() => { if (kDisabled) return; onSwitchPeriodMode?.(k); }}
+                      disabled={kDisabled} title={kDisabled ? "Pencatatan Daily baru dimulai November 2026 - gunakan Full Month untuk bulan ini" : undefined}
+                      style={{ height: 26, padding: "0 10px", borderRadius: 7, border: "none", background: periodMode === k ? t.card : "transparent", color: kDisabled ? t.line : periodMode === k ? t.hi : t.mid, fontSize: 10.5, fontWeight: periodMode === k ? 700 : 600, cursor: kDisabled ? "default" : "pointer", fontFamily: FONT, boxShadow: periodMode === k ? t.shadowSm : "none", whiteSpace: "nowrap", transition: "background 0.15s, box-shadow 0.15s", opacity: kDisabled ? 0.5 : 1 }}>
                       {label}
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
               <button onClick={requestClosePopup} title="Tutup" style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
@@ -4538,8 +4579,8 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
                   {!isAr ? (
                     <>
                       {(() => {
-                        const periodLabelColor = sheetTab === "info" ? t.teal : sheetTab === "sp" ? t.red : sheetTab === "voucher" ? t.blue : t.amber;
-                        const periodLabelBg = sheetTab === "info" ? t.tealBg : sheetTab === "sp" ? t.redBg : sheetTab === "voucher" ? t.blueBg : t.amberBg;
+                        const periodLabelColor = sheetTab === "info" ? t.teal : sheetTab === "sp" ? t.red : sheetTab === "fwa" ? t.pink : sheetTab === "voucher" ? t.blue : t.amber;
+                        const periodLabelBg = sheetTab === "info" ? t.tealBg : sheetTab === "sp" ? t.redBg : sheetTab === "fwa" ? t.pinkBg : sheetTab === "voucher" ? t.blueBg : t.amberBg;
                         return (
                           <div style={{ display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0, padding: "6px 10px", borderRadius: 10, background: periodLabelBg }}>
                             <span style={{ width: 5, height: 5, borderRadius: 999, background: periodLabelColor, flexShrink: 0 }} />
@@ -4583,7 +4624,9 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
   if (isCardView) {
     return (
       <>
+      <div id={`dse-row-${dse.dse_code}`}>
       {collapsedCard}
+      </div>
       {editPopupPortal}
       {nameChangeModal}
       {vacantConfirmModal}
@@ -4621,7 +4664,7 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
   };
   return (
     <>
-    <tr onClick={isAr && readOnly ? undefined : () => { setCardOpen(true); setSheetTab("info"); }}
+    <tr id={`dse-row-${dse.dse_code}`} onClick={isAr && readOnly ? undefined : () => { setCardOpen(true); setSheetTab("info"); }}
       onMouseEnter={() => { if (!(isAr && readOnly)) setRowHover(true); }}
       onMouseLeave={() => setRowHover(false)}
       style={{ borderBottom: `1px solid ${t.line}`, background: dirty ? t.tealBg : rowHover ? t.sub : "transparent", cursor: (isAr && readOnly) ? "default" : "pointer", transition: "background 0.1s" }}>
@@ -4662,6 +4705,7 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
       {!isAr ? (
         <>
           <td onClick={openPopupToTab("sp")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", borderLeft: `2px solid ${t.line}`, background: t.redBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(e.nilai_sp)}</td>
+          <td onClick={openPopupToTab("fwa")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", background: t.pinkBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(e.nilai_fwa)}</td>
           <td onClick={openPopupToTab("voucher")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", background: t.blueBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(e.nilai_voucher)}</td>
           <td onClick={openPopupToTab("saldo")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 140, textAlign: "right", background: t.amberBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(e.nilai_saldo)}</td>
           <td onClick={openPopupToTab("info")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 800, color: t.teal, whiteSpace: "nowrap", transition: "filter 0.1s, box-shadow 0.1s" }}>
@@ -4707,11 +4751,11 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
 // banyak tempat biar visualnya konsisten persis.
 const RANK_BADGE_COLORS = ["#D4A017", "#9CA3AF", "#B5651D"];
 function RankBadge({ i, t }) {
-  if (i === 0) return <Crown size={16} color={RANK_BADGE_COLORS[0]} fill={RANK_BADGE_COLORS[0]} fillOpacity={0.18} />;
-  if (i === 1) return <Medal size={16} color={RANK_BADGE_COLORS[1]} />;
-  if (i === 2) return <Medal size={16} color={RANK_BADGE_COLORS[2]} />;
+  if (i === 0) return <Crown size={22} color={RANK_BADGE_COLORS[0]} fill={RANK_BADGE_COLORS[0]} fillOpacity={0.18} />;
+  if (i === 1) return <Medal size={22} color={RANK_BADGE_COLORS[1]} />;
+  if (i === 2) return <Medal size={22} color={RANK_BADGE_COLORS[2]} />;
   return (
-    <span style={{ width: 22, height: 22, borderRadius: "50%", background: t.sub, color: t.mid, fontSize: 10.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <span style={{ width: 27, height: 27, borderRadius: "50%", background: t.sub, color: t.mid, fontSize: 12.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>
       {i + 1}
     </span>
   );
@@ -4726,6 +4770,7 @@ function RankBadge({ i, t }) {
 const RANK_METRIC_OPTIONS = [
   { v: "total", label: "Total Penjualan" },
   { v: "sp", label: "Penjualan SP" },
+  { v: "fwa", label: "Penjualan FWA" },
   { v: "voucher", label: "Penjualan Voucher" },
   { v: "saldo", label: "Penjualan Saldo" },
 ];
@@ -4801,9 +4846,10 @@ function RankMetricMenu({ t, value, onChange }) {
 }
 const rankMetricValueOf = (obj, metric) => (
   metric === "sp" ? obj.nilaiSp
+  : metric === "fwa" ? obj.nilaiFwa
   : metric === "voucher" ? obj.nilaiVoucher
   : metric === "saldo" ? obj.nilaiSaldo
-  : obj.nilaiSp + obj.nilaiVoucher + obj.nilaiSaldo
+  : obj.nilaiSp + obj.nilaiFwa + obj.nilaiVoucher + obj.nilaiSaldo
 );
 
 // UPDATE (permintaan user - lihat screenshot filter kolom Status: "disini
@@ -5319,6 +5365,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
     red: d ? "#F87171" : "#DC2626", redBg: d ? "rgba(248,113,113,0.10)" : "rgba(220,38,38,0.07)",
     amber: d ? "#FBBF24" : "#B45309", amberBg: d ? "rgba(251,191,36,0.10)" : "rgba(180,83,9,0.08)",
     blue: d ? "#60A5FA" : "#2563EB", blueBg: d ? "rgba(96,165,250,0.10)" : "rgba(37,99,235,0.07)",
+    pink: d ? "#F472B6" : "#C6168D", pinkBg: d ? "rgba(244,114,182,0.10)" : "rgba(198,22,141,0.07)", // FWA - samakan dgn warna+icon Router di MartaHub mobile
     shadowSm: d ? "0 1px 4px rgba(0,0,0,0.4)" : "0 1px 3px rgba(0,0,0,0.07)",
   };
   // UPDATE (permintaan user - "saat di scroll header ini tidak ikut ke
@@ -5475,7 +5522,8 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   const [periodMode, setPeriodMode] = useState("tanggal"); // "bulan" | "tanggal"
   const jumpToMonth = (newYm) => { setCalViewMonth(newYm); setSelectedDates(monthDatesUpTo(newYm)); };
   const jumpToDay = (newIso) => {
-    const capped = newIso > todayISO() ? todayISO() : newIso;
+    let capped = newIso > todayISO() ? todayISO() : newIso;
+    if (capped < DAILY_START_DATE) capped = DAILY_START_DATE;
     setCalViewMonth(capped.slice(0, 7));
     setSelectedDates([capped]);
   };
@@ -5555,6 +5603,33 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
     if (nextLimitHintTimer.current) clearTimeout(nextLimitHintTimer.current);
     nextLimitHintTimer.current = setTimeout(() => setNextLimitHint(false), 1800);
   };
+  // UPDATE (permintaan user - "start pencatatan Daily di November 2026,
+  // Oktober & sebelumnya cuma lewat Full Month"): bubble batas MUNDUR,
+  // pola & styling disalin PERSIS dari nextLimitHint di atas (cuma
+  // anchornya ke prevNavBtnRef, bukan nextNavBtnRef).
+  const [prevLimitHint, setPrevLimitHint] = useState(false);
+  const [prevLimitHintPos, setPrevLimitHintPos] = useState(null);
+  const prevNavBtnRef = useRef(null);
+  const prevLimitHintTimer = useRef(null);
+  const showPrevLimitHint = () => {
+    const btn = prevNavBtnRef.current;
+    if (btn) {
+      const r = btn.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const maxW = Math.min(230, vw - 16);
+      let left = r.right - maxW;
+      left = Math.max(8, Math.min(left, vw - maxW - 8));
+      const btnCenter = r.left + r.width / 2;
+      const arrowLeft = Math.max(12, Math.min(btnCenter - left - 5, maxW - 22));
+      setPrevLimitHintPos({ left, maxWidth: maxW, bottom: window.innerHeight - r.top + 9, arrowLeft });
+    }
+    setPrevLimitHint(true);
+  };
+  const flashPrevLimitHint = () => {
+    showPrevLimitHint();
+    if (prevLimitHintTimer.current) clearTimeout(prevLimitHintTimer.current);
+    prevLimitHintTimer.current = setTimeout(() => setPrevLimitHint(false), 1800);
+  };
   const periodRef = useRef(null);
   // UPDATE (permintaan user - "perbaiki uinya tertutup sebatas di
   // container, buat dia diluar container agar tidak terpotong"): popup
@@ -5628,6 +5703,21 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   const [dseMeta, setDseMeta] = useState([]); // [{region,branch,mc}] dari Database DSE - sumber opsi cascading di atas
   const [dseList, setDseList] = useState([]);
   const [dseSearch, setDseSearch] = useState("");
+  // UPDATE (permintaan user - "perbaiki untuk pencarian ini akan
+  // menampilkan suggestionnya ... ketika dipilih maka akan menampilkan
+  // line si dse nya beserta popupnya dengan baik"): kotak "Cari Kode
+  // DSE / Nama" dulu CUMA nyaring tabel di bawah (filteredDseList)
+  // diam2 pas ngetik - ga ada daftar saran/autocomplete, dan ga ada cara
+  // langsung "loncat" ke 1 DSE spesifik (apalagi kalau hasil filter
+  // masih banyak). `autoOpenCode` = kode DSE yg lagi diminta dibuka
+  // popup Form Informasi & Penjualan-nya SECARA OTOMATIS (dikirim ke tiap
+  // <DseInputRow>, lihat prop autoOpenCode/onAutoOpenHandled di bawah) -
+  // row-nya sendiri dikasih id (`dse-row-<kode>`, lihat <tr>/collapsedCard)
+  // supaya bisa di-scrollIntoView begitu suggestion diklik.
+  const [searchSuggestOpen, setSearchSuggestOpen] = useState(false);
+  const [searchSuggestPos, setSearchSuggestPos] = useState(null);
+  const [autoOpenCode, setAutoOpenCode] = useState("");
+  const searchInputWrapRef = useRef(null);
   // UPDATE (permintaan user - "tambahkan pemfilteran untuk setiap kolom
   // tanpa terkecuali", lalu dikoreksi - "pemfilteran seperti ini" [contoh:
   // ExcelFilter.jsx, komponen yg sama persis dipakai di PNL Control Center &
@@ -5640,7 +5730,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // linked ke toggle Brand di atas (lihat "brand" case khusus di bawah).
   const [colFilters, setColFilters] = useState({
     id: [], partner: [], region: [], branch: [], mc: [], nama: [], status: [], join: [],
-    totalSp: [], totalVoucher: [],
+    totalSp: [], totalFwa: [], totalVoucher: [],
     saldo: [], totalPenjualan: [], ar: [], catatan: [],
     totalPiutang: [], totalDibayar: [], arStatus: [], jatuhTempo: [], arKeterangan: [],
     // UPDATE (permintaan user - sub-filter "umur" per Status, lihat
@@ -5653,7 +5743,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   const resetOneFilter = (k) => setColFilter(k, []);
   const resetColFilters = () => setColFilters({
     id: [], partner: [], region: [], branch: [], mc: [], nama: [], status: [], join: [],
-    totalSp: [], totalVoucher: [],
+    totalSp: [], totalFwa: [], totalVoucher: [],
     saldo: [], totalPenjualan: [], ar: [], catatan: [],
     totalPiutang: [], totalDibayar: [], arStatus: [], jatuhTempo: [], arKeterangan: [],
     statusAge: [],
@@ -5674,6 +5764,21 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // Dihitung jumlah KOLOM yg lagi difilter (bukan jumlah nilai) buat badge
   // angka di tombol baru yg lebih jelas (lihat toolbar search di bawah).
   const activeColFilterCount = Object.values(colFilters).filter((v) => (Array.isArray(v) ? v.length > 0 : v !== "")).length;
+  // UPDATE (permintaan user - "tambahkan juga opsi untuk clear all
+  // filter"): tombol "Reset Filter" di toolbar dulu CUMA ngitung/nge-reset
+  // colFilters (filter kolom ala Excel) - mcFilter (dropdown District
+  // khusus Admin MC) & dseSearch (kotak Cari) ga ikut, padahal keduanya
+  // SAMA2 bikin tabel keliatan kosong kalau kebawa nyangkut dari
+  // sebelumnya. Dihitung/di-reset BARENG di sini (nama beda dari
+  // anyColFilterActive/activeColFilterCount yg tetap dipakai apa adanya
+  // utk badge kecil di header kolom "#").
+  const anyTopFilterActive = anyColFilterActive || !!dseSearch.trim() || (isMPX && !!mcFilter);
+  const topFilterCount = activeColFilterCount + (dseSearch.trim() ? 1 : 0) + (isMPX && mcFilter ? 1 : 0);
+  const resetAllTopFilters = () => {
+    resetColFilters();
+    setDseSearch("");
+    if (isMPX && mcFilter) { setMcFilter(""); applyGroupBy("partner"); }
+  };
   const [sortConfig, setSortConfig] = useState({ key: null, dir: null }); // { key, dir: "asc"|"desc" }
   const [loadingDse, setLoadingDse] = useState(false);
   const [entries, setEntries] = useState({});     // { [dse_code]: {...} } — satu entry per DSE (tidak lagi per brand)
@@ -5747,13 +5852,25 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // SPM perlu pilih Region/Area/District dulu (tidak otomatis dibatasi RLS);
   // Admin District langsung terbatas lewat RLS jadi tidak perlu pilih. dseMeta
   // dipakai utk membangun opsi cascading Region -> Area -> District di bawah.
+  // UPDATE (permintaan user - "otomatis admin tersebut juga yang handle data
+  // AR DSO DSP ar pada mc yang dia di assign"): dulu effect ini CUMA jalan utk
+  // isSPM - dseMeta jadi SELALU [] utk Admin MC (isMPX), bikin filter
+  // Partner/Region/Area/District kosong/ga keliatan DAN tabel DSO/DSP AR &
+  // HoA AR (ArDsoHoaPanel, yg sumber datanya persis dari dseMeta ini) selalu
+  // kosong total walau Admin MC-nya valid & ke-assign ke beberapa District.
+  // Fix: Admin MC sekarang JUGA fetch dseMeta, tapi DIBATASI cuma ke
+  // District(s) miliknya sendiri (myMcNames dari RPC mf_dse_admin_mc_my_mcs,
+  // sudah diambil di atas) - bukan semua District se-Sumatera kayak SPM.
   useEffect(() => {
-    if (!isSPM) return;
+    if (!isSPM && !isMPX) return;
     (async () => {
-      const { data } = await supabase.from("mf_dse_database").select("region, branch, mdi, mc, hoa_name").eq("is_revoked", false).not("mc", "is", null);
+      if (isMPX && myMcNames.length === 0) { setDseMeta([]); return; }
+      let q = supabase.from("mf_dse_database").select("region, branch, mdi, mc, hoa_name").eq("is_revoked", false).not("mc", "is", null);
+      if (isMPX) q = q.in("mc", myMcNames);
+      const { data } = await q;
       setDseMeta(data || []);
     })();
-  }, [isSPM]);
+  }, [isSPM, isMPX, myMcNames]);
 
   // Urutan hierarki cascading: Partner -> Region -> Area -> District. Partner
   // DI ATAS Region (bukan di bawah) karena 1 Partner (mdi) bisa beroperasi
@@ -5978,7 +6095,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
         // Vacant (vacant warna merah jika ada jika 0 tetap hitam)"):
         // totalVacant ditambah persis spt pola mcSummary (lihat
         // r.dse_status === "Vacant" di useMemo mcSummary di bawah).
-        if (!byGroup[key]) byGroup[key] = { key, label, totalAlokasi: 0, totalActive: 0, totalVacant: 0, qtySp: 0, nilaiSp: 0, qtyVoucher: 0, nilaiVoucher: 0, nilaiSaldo: 0, tunggakan: 0, totalPiutang: 0, totalDibayar: 0 };
+        if (!byGroup[key]) byGroup[key] = { key, label, totalAlokasi: 0, totalActive: 0, totalVacant: 0, qtySp: 0, nilaiSp: 0, nilaiFwa: 0, qtyVoucher: 0, nilaiVoucher: 0, nilaiSaldo: 0, tunggakan: 0, totalPiutang: 0, totalDibayar: 0 };
         byGroup[key].totalAlokasi += 1;
         const effStatus = periodMode === "tanggal" ? resolveStatusAsOf(r.dse_code, entryDate, statusEvents, r.dse_status) : r.dse_status;
         if (effStatus === "Active") byGroup[key].totalActive += 1;
@@ -6022,14 +6139,14 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
         // (bukan dijumlah, krn dia saldo bukan nilai kumulatif).
         // "Both" -> jumlahkan IM3 + 3ID sekaligus (ga difilter per-brand);
         // kalau cuma 1 brand aktif tetap difilter spt sebelumnya.
-        let prodQuery = supabase.from("mf_dse_prod_ar").select("dse_code, tanggal, qty_sp, nilai_sp, qty_voucher, nilai_voucher, nilai_saldo, ar_piutang").in("dse_code", codes);
+        let prodQuery = supabase.from("mf_dse_prod_ar").select("dse_code, tanggal, qty_sp, nilai_sp, nilai_fwa, qty_voucher, nilai_voucher, nilai_saldo, ar_piutang").in("dse_code", codes);
         prodQuery = isRangeMode ? prodQuery.in("tanggal", sortedSelectedDates).order("tanggal", { ascending: true }) : prodQuery.eq("tanggal", entryDate);
         const { data: prod, error: e2 } = await prodQuery;
         if (e2) throw e2;
         (prod || []).forEach((p) => {
           const g = byGroup[groupOf[p.dse_code]];
           if (!g) return;
-          g.qtySp += fRaw(p.qty_sp); g.nilaiSp += fRaw(p.nilai_sp);
+          g.qtySp += fRaw(p.qty_sp); g.nilaiSp += fRaw(p.nilai_sp); g.nilaiFwa += fRaw(p.nilai_fwa);
           g.qtyVoucher += fRaw(p.qty_voucher); g.nilaiVoucher += fRaw(p.nilai_voucher);
           g.nilaiSaldo += fRaw(p.nilai_saldo);
           g.tunggakan = isRangeMode ? fRaw(p.ar_piutang) : (g.tunggakan + fRaw(p.ar_piutang)); // range: baris terakhir menang (saldo, bukan kumulatif)
@@ -6088,6 +6205,14 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
         if (partnerFilter) q = q.eq("mdi", partnerFilter);
         if (mcFilter) q = q.eq("mc", mcFilter);
       }
+      // UPDATE (permintaan user - "saya sudah pilih MC nya, namun mengapa
+      // tidak berubah"): dropdown District khusus Admin MC (isMPX, lihat
+      // .dseprod-filterrow di atas) nge-set `mcFilter` yg SAMA dgn punya
+      // SPM, tapi filter ini dulu CUMA diterapkan di query kalau `isSPM` -
+      // Admin MC-nya ke-skip total (RLS udah batasin ke District dia
+      // sendiri, tapi beda District MILIKNYA SENDIRI ga ikut ke-filter kalau
+      // dia punya >1 District). Terapkan juga utk isMPX.
+      if (isMPX && mcFilter) q = q.eq("mc", mcFilter);
       // Supabase caps a single request at 1000 rows -> paginate with
       // .range() so DSE lists past 1000 (ALL Sumatera akumulasi) aren't
       // silently truncated.
@@ -6118,10 +6243,10 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           const uploaderIds = new Set();
           (prod || []).forEach((r) => {
             const acc = map[r.dse_code] || {
-              qty_sp: 0, nilai_sp: 0, qty_saldo: 0, nilai_saldo: 0, qty_voucher: 0, nilai_voucher: 0,
+              qty_sp: 0, nilai_sp: 0, nilai_fwa: 0, qty_saldo: 0, nilai_saldo: 0, qty_voucher: 0, nilai_voucher: 0,
               ar_piutang: 0, ar_bayar: 0, catatan: "", updated_at: r.updated_at, uploaded_at: r.uploaded_at, uploaded_by: r.uploaded_by,
             };
-            acc.qty_sp += fRaw(r.qty_sp); acc.nilai_sp += fRaw(r.nilai_sp);
+            acc.qty_sp += fRaw(r.qty_sp); acc.nilai_sp += fRaw(r.nilai_sp); acc.nilai_fwa += fRaw(r.nilai_fwa);
             acc.qty_saldo += fRaw(r.qty_saldo); acc.nilai_saldo += fRaw(r.nilai_saldo);
             acc.qty_voucher += fRaw(r.qty_voucher); acc.nilai_voucher += fRaw(r.nilai_voucher);
             acc.ar_bayar += fRaw(r.ar_bayar);
@@ -6153,7 +6278,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
         // lewat Promise.all supaya waktu tunggunya cuma selama query yg
         // paling lambat, bukan dijumlah. Kolom yg di-select juga dipersempit
         // (dulu "*") supaya payload yg ditarik lebih kecil.
-        const PROD_COLS = "dse_code, qty_sp, nilai_sp, qty_saldo, nilai_saldo, qty_voucher, nilai_voucher, ar_piutang, ar_bayar, catatan, updated_at, uploaded_at, uploaded_by";
+        const PROD_COLS = "dse_code, qty_sp, nilai_sp, nilai_fwa, qty_saldo, nilai_saldo, qty_voucher, nilai_voucher, ar_piutang, ar_bayar, catatan, updated_at, uploaded_at, uploaded_by";
         const [
           { data: prod, error: e2 },
           { data: prev, error: e3 },
@@ -6176,7 +6301,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
         const uploaderIds = new Set();
         (prod || []).forEach((r) => {
           map[r.dse_code] = {
-            qty_sp: r.qty_sp, nilai_sp: r.nilai_sp, qty_saldo: r.qty_saldo, nilai_saldo: r.nilai_saldo,
+            qty_sp: r.qty_sp, nilai_sp: r.nilai_sp, nilai_fwa: r.nilai_fwa, qty_saldo: r.qty_saldo, nilai_saldo: r.nilai_saldo,
             qty_voucher: r.qty_voucher, nilai_voucher: r.nilai_voucher,
             ar_piutang: r.ar_piutang, ar_bayar: r.ar_bayar || 0, catatan: r.catatan || "",
             updated_at: r.updated_at, uploaded_at: r.uploaded_at, uploaded_by: r.uploaded_by,
@@ -6211,7 +6336,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
     } finally {
       setLoadingDse(false);
     }
-  }, [isSPM, regionFilter, branchFilter, partnerFilter, mcFilter, entryDate, isRangeMode, sortedSelectedDates]);
+  }, [isSPM, isMPX, regionFilter, branchFilter, partnerFilter, mcFilter, entryDate, isRangeMode, sortedSelectedDates]);
 
   useEffect(() => { loadDseAndEntries(); }, [loadDseAndEntries]);
 
@@ -6323,7 +6448,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
         const row = {
           tanggal: entryDate, dse_code: code,
           mc: (idEdit?.mc ?? dse?.mc) || null,
-          qty_sp: fRaw(e.qty_sp), nilai_sp: fRaw(e.nilai_sp),
+          qty_sp: fRaw(e.qty_sp), nilai_sp: fRaw(e.nilai_sp), nilai_fwa: fRaw(e.nilai_fwa),
           qty_saldo: fRaw(e.qty_saldo), nilai_saldo: fRaw(e.nilai_saldo),
           qty_voucher: fRaw(e.qty_voucher), nilai_voucher: fRaw(e.nilai_voucher),
           ar_piutang: fRaw(e.ar_piutang), ar_bayar: fRaw(e.ar_bayar), catatan: e.catatan || null,
@@ -6411,11 +6536,12 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
     const mcVal = r.mc ?? "";
     const e = entries[r.dse_code];
     const nilaiSp = fRaw(e?.nilai_sp);
+    const nilaiFwa = fRaw(e?.nilai_fwa);
     const nilaiVoucher = fRaw(e?.nilai_voucher);
     const nilaiSaldo = fRaw(e?.nilai_saldo);
     const catatanAll = (e?.catatan || "").trim();
     const ar = fRaw(prevAr[r.dse_code]);
-    const totalPenjualan = nilaiSp + nilaiVoucher + nilaiSaldo;
+    const totalPenjualan = nilaiSp + nilaiFwa + nilaiVoucher + nilaiSaldo;
     const agg = arItemsAgg[r.dse_code];
     const totalPiutangVal = agg ? agg.totalPiutang : 0;
     const totalDibayarVal = agg ? agg.totalDibayar : 0;
@@ -6428,7 +6554,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
     // di pill Status (statusAgeInfo) - dipakai utk opsi sub-filter umur
     // per status di header kolom Status (lihat ageOptionsByStatus).
     const ageDaysVal = statusAgeInfo(r.dse_code, statusVal, statusEvents, joinVal)?.days ?? null;
-    return { r, namaVal, statusVal, joinVal, partnerVal, regionVal, branchVal, mcVal, nilaiSp, nilaiVoucher, nilaiSaldo, totalPenjualan, ar, catatanAll, totalPiutangVal, totalDibayarVal, arStatusVal, jatuhTempoVal, arKeteranganVal, ageDaysVal };
+    return { r, namaVal, statusVal, joinVal, partnerVal, regionVal, branchVal, mcVal, nilaiSp, nilaiFwa, nilaiVoucher, nilaiSaldo, totalPenjualan, ar, catatanAll, totalPiutangVal, totalDibayarVal, arStatusVal, jatuhTempoVal, arKeteranganVal, ageDaysVal };
   }), [dseList, identity, entries, prevAr, arItemsAgg, statusEvents]);
 
   // Opsi checklist tiap kolom (distinct values dari enrichedDse saat ini).
@@ -6450,6 +6576,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       status: STATUS_OPTIONS.map((s) => ({ value: s.v, label: s.label })),
       join: uniq(enrichedDse.map((x) => x.joinVal), (v) => (v ? fmtLongDate(v) : "— Kosong —")),
       totalSp: uniq(enrichedDse.map((x) => x.nilaiSp), (v) => `Rp ${fmtID(v)}`),
+      totalFwa: uniq(enrichedDse.map((x) => x.nilaiFwa), (v) => `Rp ${fmtID(v)}`),
       totalVoucher: uniq(enrichedDse.map((x) => x.nilaiVoucher), (v) => `Rp ${fmtID(v)}`),
       saldo: uniq(enrichedDse.map((x) => x.nilaiSaldo), (v) => `Rp ${fmtID(v)}`),
       totalPenjualan: uniq(enrichedDse.map((x) => x.totalPenjualan), (v) => `Rp ${fmtID(v)}`),
@@ -6513,6 +6640,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       if (ageSel && ageSel.length && !ageSel.includes(x.ageDaysVal)) return false;
       if (colFilters.join.length && !colFilters.join.includes(x.joinVal)) return false;
       if (colFilters.totalSp.length && !colFilters.totalSp.includes(x.nilaiSp)) return false;
+      if (colFilters.totalFwa.length && !colFilters.totalFwa.includes(x.nilaiFwa)) return false;
       if (colFilters.totalVoucher.length && !colFilters.totalVoucher.includes(x.nilaiVoucher)) return false;
       if (colFilters.saldo.length && !colFilters.saldo.includes(x.nilaiSaldo)) return false;
       if (colFilters.totalPenjualan.length && !colFilters.totalPenjualan.includes(x.totalPenjualan)) return false;
@@ -6539,6 +6667,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           case "status": return x.statusVal || "";
           case "join": return x.joinVal || "";
           case "totalSp": return x.nilaiSp;
+          case "totalFwa": return x.nilaiFwa;
           case "totalVoucher": return x.nilaiVoucher;
           case "saldo": return x.nilaiSaldo;
           case "totalPenjualan": return x.totalPenjualan;
@@ -6571,6 +6700,36 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
 
     return out.map((x) => x.r);
   }, [enrichedDse, dseSearch, colFilters, statusAgeByStatus, sortConfig, tab, rankMetric]);
+
+  // UPDATE (permintaan user - search suggestion dropdown): daftar saran
+  // independen dari filteredDseList (yg bisa kepengaruh colFilters lain) -
+  // cari lintas ID DSE (IM3), ID DSE (3ID), & Nama DSE, max 8 saran biar
+  // dropdown ga kepanjangan.
+  const searchSuggestions = useMemo(() => {
+    const s = dseSearch.trim().toLowerCase();
+    if (!s) return [];
+    return enrichedDse
+      .filter((x) => x.r.dse_code?.toLowerCase().includes(s) || x.r.dse_code_3id?.toLowerCase().includes(s) || x.r.ds_name?.toLowerCase().includes(s))
+      .slice(0, 8)
+      .map((x) => x.r);
+  }, [dseSearch, enrichedDse]);
+
+  // Begitu autoOpenCode diminta & baris-nya sudah ke-render (nunggu
+  // filteredDseList ikut update dulu kalau dseSearch baru aja dipersempit
+  // ke 1 kode), scroll baris itu ke tengah layar biar keliatan jelas.
+  useEffect(() => {
+    if (!autoOpenCode) return;
+    const el = typeof document !== "undefined" ? document.getElementById(`dse-row-${autoOpenCode}`) : null;
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [autoOpenCode, filteredDseList]);
+
+  const pickSearchSuggestion = (dse) => {
+    runGuarded(() => {
+      setDseSearch(dse.dse_code);
+      setSearchSuggestOpen(false);
+      setAutoOpenCode(dse.dse_code);
+    });
+  };
   // ── Ringkasan (summary cards) — di-scope ke District yang sedang dipilih (lihat
   // `dseList`, bukan filteredDseList, supaya tetap utuh walau sedang mengetik
   // di kotak "Cari DSE") + brand & tanggal yang aktif saat ini. Status DSE
@@ -6582,7 +6741,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // utk sekarang summary-nya cuma per District yg sedang dipilih di filter atas.
   const mcSummary = useMemo(() => {
     let totalActive = 0, totalVacant = 0, totalInterview = 0;
-    let qtySp = 0, nilaiSp = 0, qtyVoucher = 0, nilaiVoucher = 0, nilaiSaldo = 0, tunggakan = 0, totalDibayar = 0;
+    let qtySp = 0, nilaiSp = 0, nilaiFwa = 0, qtyVoucher = 0, nilaiVoucher = 0, nilaiSaldo = 0, tunggakan = 0, totalDibayar = 0;
     for (const dse of dseList) {
       const liveStatus = identity[dse.dse_code]?.dse_status ?? dse.dse_status ?? "";
       // UPDATE (status per tanggal): mode Daily (tanggal spesifik, bukan
@@ -6595,7 +6754,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       else if (status === "Interview") totalInterview++;
       const e = entries[dse.dse_code];
       if (e) {
-        qtySp += fRaw(e.qty_sp); nilaiSp += fRaw(e.nilai_sp);
+        qtySp += fRaw(e.qty_sp); nilaiSp += fRaw(e.nilai_sp); nilaiFwa += fRaw(e.nilai_fwa);
         qtyVoucher += fRaw(e.qty_voucher); nilaiVoucher += fRaw(e.nilai_voucher);
         nilaiSaldo += fRaw(e.nilai_saldo);
         tunggakan += fRaw(e.ar_piutang);
@@ -6613,7 +6772,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
     // page-level) - totalPiutang = sisa + dibayar (identitas akuntansi
     // harian: piutang hari ini = sisa yg belum dibayar + yg sudah dibayar).
     const totalPiutang = tunggakan + totalDibayar;
-    return { totalAlokasi: dseList.length, totalActive, totalVacant, totalInterview, qtySp, nilaiSp, qtyVoucher, nilaiVoucher, nilaiSaldo, tunggakan, totalDibayar, totalPiutang, totalPenjualan: nilaiSp + nilaiVoucher + nilaiSaldo };
+    return { totalAlokasi: dseList.length, totalActive, totalVacant, totalInterview, qtySp, nilaiSp, nilaiFwa, qtyVoucher, nilaiVoucher, nilaiSaldo, tunggakan, totalDibayar, totalPiutang, totalPenjualan: nilaiSp + nilaiFwa + nilaiVoucher + nilaiSaldo };
   }, [dseList, identity, entries, periodMode, entryDate, statusEvents]);
 
   // UPDATE (permintaan user - "harusnya angkanya saja yang loading namun
@@ -6623,7 +6782,17 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // skeleton pulsing (NumSkeleton) selama load PERTAMA kali (loadingDse
   // && dseList masih kosong), biar ga ada layout-shift / spinner generik
   // yang nutupin seluruh kartu seperti sebelumnya.
-  const isSummaryLoading = loadingDse && dseList.length === 0;
+  // UPDATE (permintaan user - "jika dia loading langsung tampilkan
+  // animasi loading seperti biasa, agar terinformasi dengan sangat
+  // baik"): dulu skeleton kartu Ringkasan (StatTile di atas) CUMA muncul
+  // pas load PERTAMA kali (dseList msh kosong) - ganti filter/District
+  // (yg datanya udah pernah ke-load sebelumnya) ga nampilin animasi apa2
+  // sama sekali, angka lama nongol diam lalu tiba2 "lompat" ke angka
+  // baru tanpa indikasi lagi proses. Sekarang skeleton pulse ini muncul
+  // di SETIAP loadingDse=true, bukan cuma yg pertama - tabel baris DSE
+  // sendiri TETAP ga di-skeleton-in (lihat komentar di bawah soal
+  // row/popup ke-unmount), cuma kartu ringkasan angkanya aja.
+  const isSummaryLoading = loadingDse;
 
   // ── Import massal Excel (opsional, sekunder) ──────────────────────────────
   const [staged, setStaged] = useState(null);
@@ -6663,7 +6832,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   const [searchInput, setSearchInput] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [totals, setTotals] = useState({ qty_sp: 0, nilai_sp: 0, qty_saldo: 0, nilai_saldo: 0, qty_voucher: 0, nilai_voucher: 0, ar_piutang: 0, ar_bayar: 0 });
+  const [totals, setTotals] = useState({ qty_sp: 0, nilai_sp: 0, nilai_fwa: 0, qty_saldo: 0, nilai_saldo: 0, qty_voucher: 0, nilai_voucher: 0, ar_piutang: 0, ar_bayar: 0 });
   const [exportLoading, setExportLoading] = useState(false);
   // Laporan Tunggakan massal (semua DSE yg masih nunggak di akhir bulan
   // terpilih, calViewMonth) - lihat ArCetakBulkModal.
@@ -6689,7 +6858,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       setTotal(count || 0);
       setPage(pg);
 
-      let tq = supabase.from("mf_dse_prod_ar").select("qty_sp,nilai_sp,qty_saldo,nilai_saldo,qty_voucher,nilai_voucher,ar_piutang,ar_bayar");
+      let tq = supabase.from("mf_dse_prod_ar").select("qty_sp,nilai_sp,nilai_fwa,qty_saldo,nilai_saldo,qty_voucher,nilai_voucher,ar_piutang,ar_bayar");
       if (dateFrom) tq = tq.gte("tanggal", dateFrom);
       if (dateTo) tq = tq.lte("tanggal", dateTo);
       if (srch) {
@@ -6698,11 +6867,11 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       }
       const { data: all } = await tq.limit(50000);
       const sum = (all || []).reduce((a, r) => ({
-        qty_sp: a.qty_sp + fRaw(r.qty_sp), nilai_sp: a.nilai_sp + fRaw(r.nilai_sp),
+        qty_sp: a.qty_sp + fRaw(r.qty_sp), nilai_sp: a.nilai_sp + fRaw(r.nilai_sp), nilai_fwa: a.nilai_fwa + fRaw(r.nilai_fwa),
         qty_saldo: a.qty_saldo + fRaw(r.qty_saldo), nilai_saldo: a.nilai_saldo + fRaw(r.nilai_saldo),
         qty_voucher: a.qty_voucher + fRaw(r.qty_voucher), nilai_voucher: a.nilai_voucher + fRaw(r.nilai_voucher),
         ar_piutang: a.ar_piutang + fRaw(r.ar_piutang), ar_bayar: a.ar_bayar + fRaw(r.ar_bayar),
-      }), { qty_sp: 0, nilai_sp: 0, qty_saldo: 0, nilai_saldo: 0, qty_voucher: 0, nilai_voucher: 0, ar_piutang: 0, ar_bayar: 0 });
+      }), { qty_sp: 0, nilai_sp: 0, nilai_fwa: 0, qty_saldo: 0, nilai_saldo: 0, qty_voucher: 0, nilai_voucher: 0, ar_piutang: 0, ar_bayar: 0 });
       setTotals(sum);
     } catch (e) {
       showToast(e.message || "Gagal memuat data.", "error");
@@ -6725,10 +6894,10 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       if (dateTo) q = q.lte("tanggal", dateTo);
       const { data, error } = await q.limit(50000);
       if (error) throw error;
-      const head = ["Tanggal", "Kode DSE", "District", "Area", "Nama DS", "Nama DSE", "Qty SP", "Nilai SP", "Qty Saldo", "Nilai Saldo", "Qty Voucher", "Nilai Voucher", "Bayar AR", "Sisa AR/Piutang", "Catatan", "Terakhir Diperbarui"];
+      const head = ["Tanggal", "Kode DSE", "District", "Area", "Nama DS", "Nama DSE", "Qty SP", "Nilai SP", "Nilai FWA", "Qty Saldo", "Nilai Saldo", "Qty Voucher", "Nilai Voucher", "Bayar AR", "Sisa AR/Piutang", "Catatan", "Terakhir Diperbarui"];
       const body = (data || []).map((r) => [
         r.tanggal, r.dse_code, r.mc || "", r.branch || "", r.ds_name || "", r.dse_name || "",
-        fRaw(r.qty_sp), fRaw(r.nilai_sp), fRaw(r.qty_saldo), fRaw(r.nilai_saldo), fRaw(r.qty_voucher), fRaw(r.nilai_voucher),
+        fRaw(r.qty_sp), fRaw(r.nilai_sp), fRaw(r.nilai_fwa), fRaw(r.qty_saldo), fRaw(r.nilai_saldo), fRaw(r.qty_voucher), fRaw(r.nilai_voucher),
         fRaw(r.ar_bayar), fRaw(r.ar_piutang), r.catatan || "", r.updated_at || "",
       ]);
       const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
@@ -6908,11 +7077,18 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           kena limit (ga bisa maju lewat hari/bulan ini) dikasih `title`
           tooltip biar user tau KENAPA dia nonaktif/pudar, bukan cuma
           diem aja. */}
-      <button className="dseprod-navbtn" title={periodMode === "bulan" ? "Bulan sebelumnya" : "Hari sebelumnya"}
-        onClick={() => runGuarded(() => (periodMode === "bulan" ? jumpToMonth(shiftMonth(calViewMonth, -1)) : jumpToDay(shiftDay(entryDate, -1))))}
-        style={{ width: width < 400 ? 30 : 36, height: width < 400 ? 30 : 36, borderRadius: 10, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-        <ChevronDown size={14} style={{ transform: "rotate(90deg)" }} />
-      </button>
+      {(() => {
+        const atPrevLimit = periodMode === "tanggal" && entryDate <= DAILY_START_DATE;
+        return (
+          <button ref={prevNavBtnRef} className="dseprod-navbtn" title={periodMode === "bulan" ? "Bulan sebelumnya" : "Hari sebelumnya"}
+            onMouseEnter={() => { if (atPrevLimit) showPrevLimitHint(); }}
+            onMouseLeave={() => { if (atPrevLimit) setPrevLimitHint(false); }}
+            onClick={() => { if (atPrevLimit) { flashPrevLimitHint(); return; } runGuarded(() => (periodMode === "bulan" ? jumpToMonth(shiftMonth(calViewMonth, -1)) : jumpToDay(shiftDay(entryDate, -1)))); }}
+            style={{ width: width < 400 ? 30 : 36, height: width < 400 ? 30 : 36, borderRadius: 10, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: atPrevLimit ? t.line : t.hi, cursor: atPrevLimit ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <ChevronDown size={14} style={{ transform: "rotate(90deg)" }} />
+          </button>
+        );
+      })()}
 
       {/* UPDATE (permintaan user - "mengapa pada saat daily teks 2
           November 2026 nya ini tidak center buat dengan rapi"): dulu
@@ -6992,10 +7168,19 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
         document.body
       )}
 
+      {prevLimitHint && prevLimitHintPos && typeof document !== "undefined" && createPortal(
+        <div className="periodFade" style={{ position: "fixed", bottom: prevLimitHintPos.bottom, left: prevLimitHintPos.left, width: prevLimitHintPos.maxWidth, background: t.hi, color: "#fff", fontSize: 11, fontWeight: 600, lineHeight: 1.4, padding: "7px 11px", borderRadius: 9, whiteSpace: "normal", wordBreak: "break-word", boxShadow: "0 10px 24px rgba(0,0,0,0.28)", zIndex: 400, pointerEvents: "none" }}>
+          Pencatatan Daily baru dimulai 1 November 2026 - untuk bulan sebelumnya, gunakan Full Month
+          <div style={{ position: "absolute", top: "100%", left: prevLimitHintPos.arrowLeft, width: 0, height: 0, borderLeft: "5px solid transparent", borderRight: "5px solid transparent", borderTop: `5px solid ${t.hi}` }} />
+        </div>,
+        document.body
+      )}
+
       {periodOpen && periodMode === "tanggal" && periodPopPos && typeof document !== "undefined" && createPortal(
         <div ref={periodMenuRef} className="periodFade" style={{ position: "fixed", top: periodPopPos.top, left: periodPopPos.left - 264, zIndex: 300, width: 264, maxWidth: "calc(100vw - 32px)", borderRadius: 16, border: `1px solid ${t.line}`, background: t.card, boxShadow: "0 16px 40px rgba(0,0,0,0.22)", padding: 14 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-            <button onClick={() => setCalViewMonth(shiftMonth(calViewMonth, -1))} style={{ width: 28, height: 28, borderRadius: 7, border: "none", background: t.sub, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <button onClick={() => setCalViewMonth(shiftMonth(calViewMonth, -1))} disabled={calViewMonth <= DAILY_START_DATE.slice(0, 7)} title={calViewMonth <= DAILY_START_DATE.slice(0, 7) ? "Pencatatan Daily baru dimulai November 2026" : undefined}
+              style={{ width: 28, height: 28, borderRadius: 7, border: "none", background: t.sub, color: calViewMonth <= DAILY_START_DATE.slice(0, 7) ? t.line : t.mid, cursor: calViewMonth <= DAILY_START_DATE.slice(0, 7) ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <ChevronDown size={13} style={{ transform: "rotate(90deg)" }} />
             </button>
             <div style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>
@@ -7018,14 +7203,16 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
               const isSelected = iso === entryDate;
               const isToday = iso === todayISO();
               const isFuture = iso > todayISO();
+              const isBeforeDailyStart = iso < DAILY_START_DATE;
+              const isDisabled = isFuture || isBeforeDailyStart;
               return (
-                <button key={iso} disabled={isFuture}
+                <button key={iso} disabled={isDisabled}
                   onClick={() => runGuarded(() => { jumpToDay(iso); setPeriodOpen(false); })}
-                  title={isFuture ? "Tanggal belum tiba" : fmtLongDate(iso)}
+                  title={isFuture ? "Tanggal belum tiba" : isBeforeDailyStart ? "Pencatatan Daily baru dimulai 1 November 2026 - gunakan Full Month" : fmtLongDate(iso)}
                   style={{
                     aspectRatio: "1", borderRadius: 8, border: isToday && !isSelected ? `1.5px solid ${t.teal}` : "none",
-                    background: isSelected ? t.teal : "transparent", color: isFuture ? t.line : isSelected ? "#fff" : t.hi,
-                    fontSize: 12, fontWeight: isSelected || isToday ? 700 : 500, cursor: isFuture ? "default" : "pointer",
+                    background: isSelected ? t.teal : "transparent", color: isDisabled ? t.line : isSelected ? "#fff" : t.hi,
+                    fontSize: 12, fontWeight: isSelected || isToday ? 700 : 500, cursor: isDisabled ? "default" : "pointer",
                     fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center",
                   }}>
                   {Number(iso.slice(8, 10))}
@@ -7410,12 +7597,16 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
               <div className="dseprod-controls" style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, justifyContent: "flex-end" }}>
                 {tab !== "ar" && (
                 <div className="dseprod-modetoggle" style={{ display: "flex", alignItems: "center", gap: 2, height: 36, padding: 3, borderRadius: 10, background: t.sub, flexShrink: 0 }}>
-                  {[{ k: "tanggal", label: "Daily" }, { k: "bulan", label: "Full Month" }].map(({ k, label }) => (
-                    <button key={k} onClick={() => runGuarded(() => switchPeriodMode(k))} className="dseprod-modetoggle-btn"
-                      style={{ height: 30, padding: "0 13px", borderRadius: 7, border: "none", outline: "none", background: periodMode === k ? t.card : "transparent", color: periodMode === k ? t.hi : t.mid, fontSize: 12, fontWeight: periodMode === k ? 700 : 600, cursor: "pointer", fontFamily: FONT, boxShadow: periodMode === k ? t.shadowSm : "none", transition: "background 0.2s, box-shadow 0.2s, color 0.2s", whiteSpace: "nowrap" }}>
+                  {[{ k: "tanggal", label: "Daily" }, { k: "bulan", label: "Full Month" }].map(({ k, label }) => {
+                    const dailyDisabled = k === "tanggal" && calViewMonth < DAILY_START_DATE.slice(0, 7);
+                    return (
+                    <button key={k} onClick={() => { if (dailyDisabled) return; runGuarded(() => switchPeriodMode(k)); }} className="dseprod-modetoggle-btn"
+                      disabled={dailyDisabled} title={dailyDisabled ? "Pencatatan Daily baru dimulai November 2026 - gunakan Full Month untuk bulan ini" : undefined}
+                      style={{ height: 30, padding: "0 13px", borderRadius: 7, border: "none", outline: "none", background: periodMode === k ? t.card : "transparent", color: dailyDisabled ? t.line : periodMode === k ? t.hi : t.mid, fontSize: 12, fontWeight: periodMode === k ? 700 : 600, cursor: dailyDisabled ? "default" : "pointer", fontFamily: FONT, boxShadow: periodMode === k ? t.shadowSm : "none", transition: "background 0.2s, box-shadow 0.2s, color 0.2s", whiteSpace: "nowrap", opacity: dailyDisabled ? 0.5 : 1 }}>
                       {label}
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
                 )}
                 {periodNavEl}
@@ -7432,12 +7623,16 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
               <div className="dseprod-controls" style={{ display: "flex", alignItems: "center", gap: 8, flex: "1 1 auto", minWidth: 0, justifyContent: "flex-start" }}>
                 {tab !== "ar" && (
                 <div className="dseprod-modetoggle" style={{ display: "flex", alignItems: "center", gap: 2, height: 36, padding: 3, borderRadius: 10, background: t.sub, flexShrink: 0 }}>
-                  {[{ k: "tanggal", label: "Daily" }, { k: "bulan", label: "Full Month" }].map(({ k, label }) => (
-                    <button key={k} onClick={() => runGuarded(() => switchPeriodMode(k))} className="dseprod-modetoggle-btn"
-                      style={{ height: 30, padding: "0 13px", borderRadius: 7, border: "none", outline: "none", background: periodMode === k ? t.card : "transparent", color: periodMode === k ? t.hi : t.mid, fontSize: 12, fontWeight: periodMode === k ? 700 : 600, cursor: "pointer", fontFamily: FONT, boxShadow: periodMode === k ? t.shadowSm : "none", transition: "background 0.2s, box-shadow 0.2s, color 0.2s", whiteSpace: "nowrap" }}>
+                  {[{ k: "tanggal", label: "Daily" }, { k: "bulan", label: "Full Month" }].map(({ k, label }) => {
+                    const dailyDisabled = k === "tanggal" && calViewMonth < DAILY_START_DATE.slice(0, 7);
+                    return (
+                    <button key={k} onClick={() => { if (dailyDisabled) return; runGuarded(() => switchPeriodMode(k)); }} className="dseprod-modetoggle-btn"
+                      disabled={dailyDisabled} title={dailyDisabled ? "Pencatatan Daily baru dimulai November 2026 - gunakan Full Month untuk bulan ini" : undefined}
+                      style={{ height: 30, padding: "0 13px", borderRadius: 7, border: "none", outline: "none", background: periodMode === k ? t.card : "transparent", color: dailyDisabled ? t.line : periodMode === k ? t.hi : t.mid, fontSize: 12, fontWeight: periodMode === k ? 700 : 600, cursor: dailyDisabled ? "default" : "pointer", fontFamily: FONT, boxShadow: periodMode === k ? t.shadowSm : "none", transition: "background 0.2s, box-shadow 0.2s, color 0.2s", whiteSpace: "nowrap", opacity: dailyDisabled ? 0.5 : 1 }}>
                       {label}
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
                 )}
                 {periodNavEl}
@@ -7495,12 +7690,16 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
         <div style={{ padding: "10px 16px", display: "flex", alignItems: "center", gap: width < 400 ? 6 : 8, flexWrap: "nowrap" }}>
           {tab !== "ar" && (
           <div className="dseprod-modetoggle" style={{ display: "flex", alignItems: "center", gap: 2, height: width < 400 ? 36 : 44, padding: 3, borderRadius: 11, background: t.sub, flexShrink: 0 }}>
-            {[{ k: "tanggal", label: "Daily" }, { k: "bulan", label: "Full Month" }].map(({ k, label }) => (
-              <button key={k} onClick={() => runGuarded(() => switchPeriodMode(k))} className="dseprod-modetoggle-btn"
-                style={{ height: width < 400 ? 30 : 38, padding: width < 400 ? "0 8px" : "0 14px", borderRadius: 8, border: "none", outline: "none", background: periodMode === k ? t.card : "transparent", color: periodMode === k ? t.hi : t.mid, fontSize: width < 400 ? 10.5 : 12.5, fontWeight: periodMode === k ? 700 : 600, cursor: "pointer", fontFamily: FONT, boxShadow: periodMode === k ? t.shadowSm : "none", transition: "background 0.2s, box-shadow 0.2s, color 0.2s", whiteSpace: "nowrap" }}>
+            {[{ k: "tanggal", label: "Daily" }, { k: "bulan", label: "Full Month" }].map(({ k, label }) => {
+              const dailyDisabled = k === "tanggal" && calViewMonth < DAILY_START_DATE.slice(0, 7);
+              return (
+              <button key={k} onClick={() => { if (dailyDisabled) return; runGuarded(() => switchPeriodMode(k)); }} className="dseprod-modetoggle-btn"
+                disabled={dailyDisabled} title={dailyDisabled ? "Pencatatan Daily baru dimulai November 2026 - gunakan Full Month untuk bulan ini" : undefined}
+                style={{ height: width < 400 ? 30 : 38, padding: width < 400 ? "0 8px" : "0 14px", borderRadius: 8, border: "none", outline: "none", background: periodMode === k ? t.card : "transparent", color: dailyDisabled ? t.line : periodMode === k ? t.hi : t.mid, fontSize: width < 400 ? 10.5 : 12.5, fontWeight: periodMode === k ? 700 : 600, cursor: dailyDisabled ? "default" : "pointer", fontFamily: FONT, boxShadow: periodMode === k ? t.shadowSm : "none", transition: "background 0.2s, box-shadow 0.2s, color 0.2s", whiteSpace: "nowrap", opacity: dailyDisabled ? 0.5 : 1 }}>
                 {label}
               </button>
-            ))}
+              );
+            })}
           </div>
           )}
           <div style={{ flex: "1 1 180px", minWidth: 0 }}>{periodNavEl}</div>
@@ -7625,9 +7824,99 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                 )}
               </div>
             )}
-            <div className="dseprod-filtersearch" style={{ position: "relative", flex: 1, minWidth: 180 }}>
-              <Search size={14} style={{ position: "absolute", left: 12, top: 12, color: t.lo }} />
-              <input value={dseSearch} onChange={(e) => setDseSearch(e.target.value)} placeholder="Cari Kode DSE / Nama…" style={{ ...inputStyle, paddingLeft: 34 }} />
+            {/* UPDATE (permintaan user - "otomatis admin tersebut juga yang
+                handle data AR DSO DSP ar pada mc yang dia di assign", lalu
+                "filter not visible"): Admin MC (isMPX) yg ke-assign ke LEBIH
+                DARI 1 District butuh cara pilih District mana yg mau
+                dilihat (filter Partner/Region/Area di atas cuma utk SPM -
+                ga relevan buat Admin MC krn cuma punya 1 Partner/Region).
+                Jadi dropdown District ringan sendiri, opsinya DIBATASI cuma
+                ke District milik admin ini (myMcNames, bukan mcOptions
+                se-Sumatera). Kalau cuma 1 District ga perlu filter sama
+                sekali (langsung ke-scope otomatis). */}
+            {isMPX && myMcNames.length > 1 && (
+              <div style={{ position: "relative", flexShrink: 0 }}>
+                {/* UPDATE (permintaan user - "harusnya saat mc dipilih dia
+                    akan clear pencarian"): ganti District di sini dulu
+                    GA ngosongin kotak Cari - kalau sebelumnya ada teks
+                    pencarian yg ga match District baru (mis. "BUNGO203"
+                    padahal baru pindah ke MC-KERINCI), tabel keliatan
+                    kosong total ("Belum ada Kode DSE") padahal District-nya
+                    sendiri ada isinya, cuma ketutup filter pencarian lama
+                    yg kebawa nyangkut.
+                    UPDATE (permintaan user - "harusnya dia ngelink ke
+                    district nya"): dropdown ringan khusus Admin MC ini
+                    dulu KE-PISAH total dari filter kolom "District" di
+                    header tabel (colFilters.mc, ikon corong di kolom
+                    DISTRICT) - pilih District di sini ga nge-highlight
+                    header kolomnya sama sekali, padahal datanya SUDAH
+                    kefilter, jadi keliatan kayak 2 sistem filter yg ga
+                    nyambung. Disinkronkan: pilih District di sini SKRG
+                    ikut nyalain filter kolomnya juga (colFilters.mc),
+                    begitu juga pas direset. */}
+                <select value={mcFilter} onChange={(e) => { const v = e.target.value; runGuarded(() => { setMcFilter(v); setDseSearch(""); setColFilter("mc", v ? [v] : []); applyGroupBy(v ? "dse" : "partner"); }); }}
+                  style={{ height: 38, padding: loadingDse ? "0 44px 0 14px" : "0 30px 0 14px", borderRadius: 9, border: `1px solid ${mcFilter ? t.teal : t.inputBd}`, background: mcFilter ? t.tealBg : t.inputBg, color: mcFilter ? t.teal : t.mid, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT, appearance: "none", whiteSpace: "nowrap" }}>
+                  <option value="">— Semua District Saya —</option>
+                  {myMcNames.map((mc) => <option key={mc} value={mc}>{mc}</option>)}
+                </select>
+                {/* UPDATE (permintaan user - "jika dia loading langsung
+                    tampilkan animasi loading seperti biasa"): spinner kecil
+                    muncul TEPAT di dropdown ini begitu ganti District
+                    (loadingDse=true) - paling dekat & paling jelas sumber
+                    aksinya drpd cuma ngandelin spin icon kecil di tombol
+                    Refresh yg letaknya jauh di ujung kanan baris filter. */}
+                {loadingDse ? (
+                  <RefreshCw size={13} className="spin" style={{ position: "absolute", right: 10, top: 13, color: t.teal, pointerEvents: "none" }} />
+                ) : (
+                  <ChevronDown size={13} style={{ position: "absolute", right: 10, top: 13, color: t.lo, pointerEvents: "none" }} />
+                )}
+              </div>
+            )}
+            <div ref={searchInputWrapRef} className="dseprod-filtersearch" style={{ position: "relative", flex: 1, minWidth: 180 }}>
+              <Search size={14} style={{ position: "absolute", left: 12, top: 12, color: t.lo, zIndex: 1 }} />
+              {/* UPDATE (permintaan user - "perbaiki untuk pencarian ini
+                  akan menampilkan suggestionnya ... ketika dipilih maka
+                  akan menampilkan line si dse nya beserta popupnya dengan
+                  baik"): input Cari Kode DSE/Nama sekarang buka dropdown
+                  saran (portal ke document.body, posisi dihitung dari
+                  getBoundingClientRect ref-nya - pola SAMA PERSIS dgn
+                  popup Filter/RankMetricMenu lain di file ini, krn kotak
+                  ini ada di dalam wrapper ber-overflow:hidden punya
+                  animasi accordion hero card, jadi dropdown ga boleh
+                  non-portal atau bakal kepotong). */}
+              <input value={dseSearch}
+                onChange={(e) => { const v = e.target.value; setDseSearch(v); setSearchSuggestOpen(!!v.trim()); setAutoOpenCode(""); }}
+                onFocus={() => {
+                  const r = searchInputWrapRef.current?.getBoundingClientRect();
+                  if (r) setSearchSuggestPos({ left: r.left, top: r.bottom + 6, width: r.width });
+                  if (dseSearch.trim()) setSearchSuggestOpen(true);
+                }}
+                onBlur={() => setTimeout(() => setSearchSuggestOpen(false), 150)}
+                placeholder="Cari Kode DSE / Nama…" style={{ ...inputStyle, paddingLeft: 34 }} />
+              {searchSuggestOpen && searchSuggestPos && searchSuggestions.length > 0 && typeof document !== "undefined" && createPortal(
+                <div className="periodFade" style={{ position: "fixed", top: searchSuggestPos.top, left: searchSuggestPos.left, width: Math.max(searchSuggestPos.width, 280), maxWidth: "calc(100vw - 32px)", zIndex: 500, borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: "0 16px 40px rgba(0,0,0,0.22)", padding: 6, maxHeight: 360, overflowY: "auto" }}>
+                  {searchSuggestions.map((r) => (
+                    <button key={r.dse_code} onMouseDown={(ev) => { ev.preventDefault(); pickSearchSuggestion(r); }}
+                      style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 10, border: "none", background: "transparent", cursor: "pointer", fontFamily: FONT, textAlign: "left" }}
+                      onMouseEnter={(ev) => { ev.currentTarget.style.background = t.sub; }}
+                      onMouseLeave={(ev) => { ev.currentTarget.style.background = "transparent"; }}>
+                      <div style={{ width: 32, height: 32, borderRadius: 9, background: t.tealBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        <Search size={14} color={t.teal} />
+                      </div>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.ds_name || "Belum diisi"}</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 3, flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 10.5, fontWeight: 700, color: "#D97706", background: d ? "rgba(217,119,6,0.14)" : "rgba(217,119,6,0.09)", borderRadius: 999, padding: "2px 7px" }}>{r.dse_code}</span>
+                          {r.dse_code_3id && <span style={{ fontSize: 10.5, fontWeight: 700, color: "#BE185D", background: d ? "rgba(190,24,93,0.14)" : "rgba(190,24,93,0.08)", borderRadius: 999, padding: "2px 7px" }}>{r.dse_code_3id}</span>}
+                          {r.mc && <span style={{ fontSize: 10.5, color: t.mid }}>{r.mc}</span>}
+                        </div>
+                      </div>
+                      <ChevronRight size={14} color={t.lo} style={{ flexShrink: 0 }} />
+                    </button>
+                  ))}
+                </div>,
+                document.body
+              )}
             </div>
             {/* UPDATE (permintaan user - "mana tombol clear all filter"):
                 tombol reset filter yg JELAS & SELALU KELIHATAN (nempel di
@@ -7636,11 +7925,11 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                 kolom "#" tabel desktop. Cuma nongol kalau beneran ada
                 filter kolom yg aktif, label + badge angka kolom yg
                 difilter biar jelas dampaknya sebelum diklik. */}
-            {anyColFilterActive && (
-              <button onClick={resetColFilters} title="Hapus semua filter kolom yang aktif"
+            {anyTopFilterActive && (
+              <button onClick={() => runGuarded(resetAllTopFilters)} title="Hapus semua filter (District, Cari, & filter kolom) yang aktif"
                 style={{ display: "flex", alignItems: "center", gap: 6, height: 38, padding: "0 12px", borderRadius: 9, border: `1px solid ${t.red}55`, background: t.redBg, color: t.red, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap", flexShrink: 0 }}>
                 <X size={13} /> Reset Filter
-                <span style={{ fontSize: 10, fontWeight: 800, background: t.red, color: "#fff", borderRadius: 999, padding: "1.5px 6px", minWidth: 14, textAlign: "center" }}>{activeColFilterCount}</span>
+                <span style={{ fontSize: 10, fontWeight: 800, background: t.red, color: "#fff", borderRadius: 999, padding: "1.5px 6px", minWidth: 14, textAlign: "center" }}>{topFilterCount}</span>
               </button>
             )}
             {/* UPDATE (permintaan user - "untuk kolom partner region
@@ -7771,8 +8060,9 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                 </div>
                 {tab !== "ar" ? (
                   <>
-                    <StatTile t={t} icon={<CircleDollarSign size={13} color={t.teal} />} label="Total Penjualan" value={isSummaryLoading ? <NumSkeleton t={t} width={72} height={20} /> : `Rp ${fmtID(mcSummary.totalPenjualan)}`} sub="SP + Voucher + Saldo" />
+                    <StatTile t={t} icon={<CircleDollarSign size={13} color={t.teal} />} label="Total Penjualan" value={isSummaryLoading ? <NumSkeleton t={t} width={72} height={20} /> : `Rp ${fmtID(mcSummary.totalPenjualan)}`} sub="SP + FWA + Voucher + Saldo" />
                     <StatTile t={t} icon={<SimCardIcon size={13} />} label="Penjualan SP" value={isSummaryLoading ? <NumSkeleton t={t} width={72} height={20} /> : `Rp ${fmtID(mcSummary.nilaiSp)}`} />
+                    <StatTile t={t} icon={<Router size={13} />} label="Penjualan FWA" value={isSummaryLoading ? <NumSkeleton t={t} width={72} height={20} /> : `Rp ${fmtID(mcSummary.nilaiFwa)}`} />
                     <StatTile t={t} icon={<Ticket size={13} />} label="Penjualan Voucher" value={isSummaryLoading ? <NumSkeleton t={t} width={72} height={20} /> : `Rp ${fmtID(mcSummary.nilaiVoucher)}`} />
                     <StatTile t={t} icon={<Wallet size={13} />} label="Penjualan Saldo" value={isSummaryLoading ? <NumSkeleton t={t} width={72} height={20} /> : `Rp ${fmtID(mcSummary.nilaiSaldo)}`} />
                   </>
@@ -7856,6 +8146,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                 ...(mcSummary.totalInterview > 0 ? [{ label: "DSE OJT", value: fmtID(mcSummary.totalInterview), color: t.amber }] : []),
                 ...(tab !== "ar" ? [
                   { label: "Penjualan SP", value: `Rp ${fmtID(mcSummary.nilaiSp)}`, color: t.hi },
+                  { label: "Penjualan FWA", value: `Rp ${fmtID(mcSummary.nilaiFwa)}`, color: t.hi },
                   { label: "Penjualan Voucher", value: `Rp ${fmtID(mcSummary.nilaiVoucher)}`, color: t.hi },
                   { label: "Penjualan Saldo", value: `Rp ${fmtID(mcSummary.nilaiSaldo)}`, color: t.hi },
                   { label: "Total Penjualan", value: `Rp ${fmtID(mcSummary.totalPenjualan)}`, color: t.teal, bold: true },
@@ -8004,7 +8295,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                         AR) + ikon tren di kanan, label kecil di bawahnya. */}
                     {regionSummary.map((r, i) => {
                       const rankColors = ["#D4A017", "#9CA3AF", "#B5651D"];
-                      const primaryValue = tab === "ar" ? r.tunggakan : (r.nilaiSp + r.nilaiVoucher + r.nilaiSaldo);
+                      const primaryValue = tab === "ar" ? r.tunggakan : (r.nilaiSp + r.nilaiFwa + r.nilaiVoucher + r.nilaiSaldo);
                       const primaryLabel = tab === "ar" ? "Total Tunggakan" : "Total Penjualan";
                       return (
                       <div key={r.key} onClick={() => drillInto(r.label)}
@@ -8077,7 +8368,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                       data totalActive/totalVacant yg SAMA persis dari
                       regionSummary (udah dihitung bareng, tinggal
                       ditampilin). */}
-                  <div style={{ display: "grid", gridTemplateColumns: tab === "ar" ? "44px 1.5fr 1fr 1fr 1fr 1fr" : "44px 1.5fr 1fr 1fr 1fr 1fr 1fr", gap: 0, padding: "11px 18px", background: t.sub, fontSize: 10.5, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: tab === "ar" ? "44px 1.5fr 1fr 1fr 1fr 1fr" : "44px 1.5fr 1fr 1fr 1fr 1fr 1fr 1fr", gap: 0, padding: "11px 18px", background: t.sub, fontSize: 10.5, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 4, height: "100%" }}>
                       <span>#</span>
                       {tab !== "ar" && <RankMetricMenu t={t} value={rankMetric} onChange={setRankMetric} />}
@@ -8094,6 +8385,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                       <>
                         <div style={{ textAlign: "right", display: "flex", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>DSE Active / Vacant</div>
                         <div style={{ textAlign: "right" }}>Penjualan SP<div style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1 }}>{periodColumnSubtitle}</div></div>
+                        <div style={{ textAlign: "right" }}>Penjualan FWA<div style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1 }}>{periodColumnSubtitle}</div></div>
                         <div style={{ textAlign: "right" }}>Penjualan Voucher<div style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1 }}>{periodColumnSubtitle}</div></div>
                         <div style={{ textAlign: "right" }}>Penjualan Saldo<div style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1 }}>{periodColumnSubtitle}</div></div>
                         <div style={{ textAlign: "right" }}>Total Penjualan<div style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1 }}>{periodColumnSubtitle}</div></div>
@@ -8102,7 +8394,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                   </div>
                   {regionSummary.map((r, i) => (
                     <div key={r.key} onClick={() => drillInto(r.label)} title={`Lihat detail ${summaryGroupLabel} ${r.label}`}
-                      style={{ display: "grid", gridTemplateColumns: tab === "ar" ? "44px 1.5fr 1fr 1fr 1fr 1fr" : "44px 1.5fr 1fr 1fr 1fr 1fr 1fr", gap: 0, padding: "14px 18px", borderTop: i === 0 ? "none" : `1px solid ${t.line}`, cursor: "pointer", fontSize: 13, fontVariantNumeric: "tabular-nums", transition: "background 0.12s", background: i === 0 ? t.tealBg : "transparent" }}
+                      style={{ display: "grid", gridTemplateColumns: tab === "ar" ? "44px 1.5fr 1fr 1fr 1fr 1fr" : "44px 1.5fr 1fr 1fr 1fr 1fr 1fr 1fr", gap: 0, padding: "14px 18px", borderTop: i === 0 ? "none" : `1px solid ${t.line}`, cursor: "pointer", fontSize: 13, fontVariantNumeric: "tabular-nums", transition: "background 0.12s", background: i === 0 ? t.tealBg : "transparent" }}
                       onMouseEnter={(e) => { e.currentTarget.style.background = t.sub; }}
                       onMouseLeave={(e) => { e.currentTarget.style.background = i === 0 ? t.tealBg : "transparent"; }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -8123,9 +8415,10 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                         <>
                           <div style={{ textAlign: "right", color: t.mid }}>{fmtID(r.totalActive)} / <span style={{ color: r.totalVacant > 0 ? t.red : t.mid, fontWeight: r.totalVacant > 0 ? 700 : 400 }}>{fmtID(r.totalVacant)}</span></div>
                           <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiSp)}</div>
+                          <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiFwa)}</div>
                           <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiVoucher)}</div>
                           <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiSaldo)}</div>
-                          <div style={{ textAlign: "right", fontWeight: 800, color: t.teal }}>Rp {fmtID(r.nilaiSp + r.nilaiVoucher + r.nilaiSaldo)}</div>
+                          <div style={{ textAlign: "right", fontWeight: 800, color: t.teal }}>Rp {fmtID(r.nilaiSp + r.nilaiFwa + r.nilaiVoucher + r.nilaiSaldo)}</div>
                         </>
                       )}
                     </div>
@@ -8179,7 +8472,10 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                   periodSubtitle={periodColumnSubtitle}
                   onPickDate={(iso) => runGuarded(() => { if (tab === "ar") setTab("input"); setPeriodMode("tanggal"); jumpToDay(iso); })}
                   onSwitchPeriodMode={(m) => runGuarded(() => switchPeriodMode(m))}
+                  dailyDisabled={calViewMonth < DAILY_START_DATE.slice(0, 7)}
                   loadingDse={loadingDse}
+                  autoOpenCode={autoOpenCode}
+                  onAutoOpenHandled={() => setAutoOpenCode("")}
                   entry={entries[dse.dse_code]}
                   onEntryChange={handleEntryChange}
                   onIdentityChange={handleIdentityChange}
@@ -8196,7 +8492,14 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
               ))}
             </div>
           ) : (
-            <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden", marginBottom: 20 }}>
+            // UPDATE (permintaan user - "dibawah line ini harusnya ada
+            // gap yang sama dengan atas agar seimbang dan rapi" [maksudnya
+            // di atas header table]): versi mobile (cabang isCardView di
+            // atas) sudah punya marginTop:14 biar ga nempel ke garis
+            // pemisah kartu Ringkasan di atasnya - versi desktop (tabel
+            // ini) kelewatan, nempel LANGSUNG tanpa gap sama sekali.
+            // Disamakan marginTop:14, konsisten sama versi mobile.
+            <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden", marginTop: 14, marginBottom: 20 }}>
               {/* FREEZE HEADER (permintaan user - "untuk setiap header
                   table freeze agar rapi"): container tabel dikasih
                   maxHeight + overflowY:auto biar jadi scroll-area sendiri,
@@ -8204,7 +8507,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                   nempel pas body tabel di-scroll ke bawah - sama persis
                   pola yg sudah dipakai di tabel riwayat AR (lihat
                   <ArPiutangInput>). */}
-              <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "70vh" }}>
+              <div className="noScrollbar" style={{ overflowX: "auto", overflowY: "auto", maxHeight: "70vh", scrollbarWidth: "none" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                   <thead>
                     <tr style={{ background: t.sub }}>
@@ -8240,6 +8543,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                         // & dirender di bawah (lihat col.sub).
                         ...(tab === "ar" ? [] : [
                           { key: "totalSp", label: "Penjualan SP", sub: periodColumnSubtitle },
+                          { key: "totalFwa", label: "Penjualan FWA", sub: periodColumnSubtitle },
                           { key: "totalVoucher", label: "Penjualan Voucher", sub: periodColumnSubtitle },
                           { key: "saldo", label: "Penjualan Saldo", sub: periodColumnSubtitle },
                           { key: "totalPenjualan", label: "Total Penjualan", sub: periodColumnSubtitle },
@@ -8381,7 +8685,10 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                         periodSubtitle={periodColumnSubtitle}
                         onPickDate={(iso) => runGuarded(() => { if (tab === "ar") setTab("input"); setPeriodMode("tanggal"); jumpToDay(iso); })}
                         onSwitchPeriodMode={(m) => runGuarded(() => switchPeriodMode(m))}
+                  dailyDisabled={calViewMonth < DAILY_START_DATE.slice(0, 7)}
                         loadingDse={loadingDse}
+                        autoOpenCode={autoOpenCode}
+                        onAutoOpenHandled={() => setAutoOpenCode("")}
                         entry={entries[dse.dse_code]}
                         onEntryChange={handleEntryChange}
                         onIdentityChange={handleIdentityChange}
@@ -8473,6 +8780,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           {/* ── Ringkasan ── */}
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
             <StatTile t={t} icon={<SimCardIcon size={13} />} label="SP" value={fmtID(totals.qty_sp)} sub={`Rp ${fmtID(totals.nilai_sp)}`} />
+            <StatTile t={t} icon={<Router size={13} />} label="FWA" value={`Rp ${fmtID(totals.nilai_fwa)}`} />
             <StatTile t={t} icon={<Wallet size={13} />} label="Saldo" value={fmtID(totals.qty_saldo)} sub={`Rp ${fmtID(totals.nilai_saldo)}`} />
             <StatTile t={t} icon={<TrendingUp size={13} />} label="Voucher" value={fmtID(totals.qty_voucher)} sub={`Rp ${fmtID(totals.nilai_voucher)}`} />
             <StatTile t={t} icon={<AlertTriangle size={13} />} label="AR / Piutang" value={`Rp ${fmtID(totals.ar_piutang)}`} sub="Total outstanding" />
@@ -8526,8 +8834,9 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                       </div>
                       <div style={{ fontSize: 11.5, color: t.mid, whiteSpace: "nowrap" }}>{r.tanggal}</div>
                     </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, fontSize: 12 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, fontSize: 12 }}>
                       <div><div style={{ color: t.lo, fontSize: 10.5 }}>SP</div><div style={{ fontWeight: 700 }}>{fmtID(r.qty_sp)}</div><div style={{ color: t.mid }}>Rp {fmtID(r.nilai_sp)}</div></div>
+                      <div><div style={{ color: t.lo, fontSize: 10.5 }}>FWA</div><div style={{ fontWeight: 700, color: t.mid }}>-</div><div style={{ color: t.mid }}>Rp {fmtID(r.nilai_fwa)}</div></div>
                       <div><div style={{ color: t.lo, fontSize: 10.5 }}>SALDO</div><div style={{ fontWeight: 700 }}>{fmtID(r.qty_saldo)}</div><div style={{ color: t.mid }}>Rp {fmtID(r.nilai_saldo)}</div></div>
                       <div><div style={{ color: t.lo, fontSize: 10.5 }}>VOUCHER</div><div style={{ fontWeight: 700 }}>{fmtID(r.qty_voucher)}</div><div style={{ color: t.mid }}>Rp {fmtID(r.nilai_voucher)}</div></div>
                     </div>
@@ -8549,16 +8858,16 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                   <thead>
                     <tr style={{ background: t.sub }}>
-                      {["Tanggal", "Kode DSE", "District", "Area", "Qty SP", "Nilai SP", "Qty Saldo", "Nilai Saldo", "Qty Voucher", "Nilai Voucher", "AR/Piutang", "Catatan"].map((h, i) => (
+                      {["Tanggal", "Kode DSE", "District", "Area", "Qty SP", "Nilai SP", "Nilai FWA", "Qty Saldo", "Nilai Saldo", "Qty Voucher", "Nilai Voucher", "AR/Piutang", "Catatan"].map((h, i) => (
                         <th key={i} style={{ textAlign: i >= 4 ? "right" : "left", padding: "9px 12px", color: t.mid, fontWeight: 700, whiteSpace: "nowrap", borderBottom: `1px solid ${t.line}` }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {fetching ? (
-                      <tr><td colSpan={11} style={{ padding: 28, textAlign: "center", color: t.mid }}><Loader2 size={16} className="spin" /></td></tr>
+                      <tr><td colSpan={12} style={{ padding: 28, textAlign: "center", color: t.mid }}><Loader2 size={16} className="spin" /></td></tr>
                     ) : rows.length === 0 ? (
-                      <tr><td colSpan={11} style={{ padding: 28, textAlign: "center", color: t.mid }}>Belum ada data.</td></tr>
+                      <tr><td colSpan={12} style={{ padding: 28, textAlign: "center", color: t.mid }}>Belum ada data.</td></tr>
                     ) : rows.map((r) => (
                       <tr key={r.id} style={{ borderBottom: `1px solid ${t.line}` }}>
                         <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>{r.tanggal}</td>
@@ -8567,6 +8876,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                         <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>{r.branch || "-"}</td>
                         <td style={{ padding: "8px 12px", textAlign: "right" }}>{fmtID(r.qty_sp)}</td>
                         <td style={{ padding: "8px 12px", textAlign: "right" }}>{fmtID(r.nilai_sp)}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "right" }}>{fmtID(r.nilai_fwa)}</td>
                         <td style={{ padding: "8px 12px", textAlign: "right" }}>{fmtID(r.qty_saldo)}</td>
                         <td style={{ padding: "8px 12px", textAlign: "right" }}>{fmtID(r.nilai_saldo)}</td>
                         <td style={{ padding: "8px 12px", textAlign: "right" }}>{fmtID(r.qty_voucher)}</td>
@@ -8592,7 +8902,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       </>
       )}
 
-      <style>{`.spin { animation: spin 0.8s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } } @keyframes loadingSpin { to { transform: rotate(360deg); } } @keyframes loadingPulse { 0%, 100% { opacity: 0.4; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } } @keyframes loadingFadeIn { from { opacity: 0; } to { opacity: 1; } } @keyframes claudeDotWave { 0%, 100% { opacity: 0.22; transform: scale(0.7); } 25% { opacity: 0.55; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } 75% { opacity: 0.55; transform: scale(0.85); } } .periodFade { animation: periodFade 0.22s cubic-bezier(0.16, 1, 0.3, 1); } .noScrollbar::-webkit-scrollbar { display: none; } @keyframes periodFade { from { opacity: 0; transform: translateY(-3px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } } @keyframes modalPopIn { from { opacity: 0; transform: scale(0.94) translateY(6px); } to { opacity: 1; transform: scale(1) translateY(0); } } @keyframes drillCrumbIn { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: translateX(0); } } @keyframes drillContentIn { from { opacity: 0; transform: translateY(8px) scale(0.985); } to { opacity: 1; transform: translateY(0) scale(1); } } @keyframes sheetUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
+      <style>{`button, select, input[type="date"], [tabindex] { outline: none; } button:focus, select:focus, input[type="date"]:focus, [tabindex]:focus, button:focus-visible, select:focus-visible, input[type="date"]:focus-visible, [tabindex]:focus-visible { outline: none; } .spin { animation: spin 0.8s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } } @keyframes loadingSpin { to { transform: rotate(360deg); } } @keyframes loadingPulse { 0%, 100% { opacity: 0.4; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } } @keyframes loadingFadeIn { from { opacity: 0; } to { opacity: 1; } } @keyframes claudeDotWave { 0%, 100% { opacity: 0.22; transform: scale(0.7); } 25% { opacity: 0.55; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } 75% { opacity: 0.55; transform: scale(0.85); } } .periodFade { animation: periodFade 0.22s cubic-bezier(0.16, 1, 0.3, 1); } .noScrollbar::-webkit-scrollbar { display: none; } @keyframes periodFade { from { opacity: 0; transform: translateY(-3px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } } @keyframes modalPopIn { from { opacity: 0; transform: scale(0.94) translateY(6px); } to { opacity: 1; transform: scale(1) translateY(0); } } @keyframes drillCrumbIn { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: translateX(0); } } @keyframes drillContentIn { from { opacity: 0; transform: translateY(8px) scale(0.985); } to { opacity: 1; transform: translateY(0) scale(1); } } @keyframes sheetUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
         /* UPDATE (permintaan user - "pastikan responsive untuk ukuran
            layar kecil untuk menu DSE Prod & AR"): di layar sempit (hp,
            misal iPhone SE 375px) baris kontrol Periode (toggle Full
