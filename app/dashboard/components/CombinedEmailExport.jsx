@@ -35,7 +35,8 @@
 import { useState, useRef } from "react";
 import supabase from "../../../lib/supabase";
 import * as XLSX from "xlsx";
-import { FileSpreadsheet, Upload, Loader2, Check, AlertTriangle, X, ChevronDown, ChevronUp } from "lucide-react";
+import { FileSpreadsheet, Upload, Loader2, Check, AlertTriangle, X, ChevronDown, ChevronUp, BarChart3 } from "lucide-react";
+import UserManagementSummaryModal from "./UserManagementSummaryModal";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif`;
 
@@ -110,6 +111,7 @@ export default function CombinedEmailExport({ theme }) {
   // kuning=dilewati, merah=gagal/tidak ditemukan).
   const [uploadProgress, setUploadProgress] = useState(null); // { done, total, label }
   const [uploadResult, setUploadResult] = useState(null); // { grandAdded, grandSkipped, grandNotFound, sheetsSkipped, sheets: [...] }
+  const [showSummary, setShowSummary] = useState(false); // modal "Lihat Summary User Management"
   const fileRef = useRef(null);
 
   const toggleRole = (k) => setCheckedRoles((prev) => ({ ...prev, [k]: !prev[k] }));
@@ -464,6 +466,9 @@ export default function CombinedEmailExport({ theme }) {
             <button onClick={() => fileRef.current?.click()} disabled={importing} style={{ display: "flex", alignItems: "center", gap: 7, height: 38, padding: "0 14px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.sub, color: t.hi, fontSize: 12.5, fontWeight: 700, cursor: importing ? "default" : "pointer", opacity: importing ? 0.6 : 1 }}>
               {importing ? <Loader2 size={14} className="spin" /> : <Upload size={14} />} {importing ? "Mengupload…" : "Upload Excel"}
             </button>
+            <button onClick={() => setShowSummary(true)} style={{ display: "flex", alignItems: "center", gap: 7, height: 38, padding: "0 14px", borderRadius: 9, border: `1px solid ${t.teal}`, background: t.tealBg, color: t.teal, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+              <BarChart3 size={14} /> Lihat Summary User Management
+            </button>
             <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={(e) => handleUploadFile(e.target.files?.[0])} />
           </div>
           <div style={{ fontSize: 11.5, color: t.mid, lineHeight: 1.5 }}>
@@ -544,6 +549,7 @@ export default function CombinedEmailExport({ theme }) {
           )}
         </div>
       )}
+      {showSummary && <UserManagementSummaryModal theme={theme} onClose={() => setShowSummary(false)} />}
     </div>
   );
 }
