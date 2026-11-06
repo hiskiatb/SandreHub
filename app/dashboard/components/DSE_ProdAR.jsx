@@ -509,7 +509,12 @@ const HISTORY_FIELD_LABEL = {
 //    baris mf_dse_prod_ar di-UPDATE/DELETE: SP/Voucher/Saldo dipisah jelas
 //    dari AR/Piutang & Catatan di card yg sama, biar gampang dibaca mana yg
 //    penjualan mana yg piutang).
-function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose, onBack }) {
+// UPDATE (permintaan user - Admin Area view-only utk DSE Prod & AR): prop
+// `readOnly` baru - saat true (Admin Area), tombol edit (pensil) per
+// tanggal di tab Penjualan & tombol Hapus (+ kotak "ketik HAPUS") di tab
+// Informasi DSE disembunyikan - modal ini jadi murni tampilan riwayat,
+// konsisten dgn <DseInputRow readOnly> di popup form induknya.
+function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose, onBack, readOnly }) {
   // UPDATE (permintaan user - "riwayat perubahan, ini kita akan rework,
   // per masing masing sub menu, jadi ada Riwayat Informasi DSE, Riwayat
   // Penjualan SP, Riwayat Penjualan Voucher, dan juga Penjualan Saldo,
@@ -858,7 +863,7 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose, o
                         Tombol Edit yg tersisa diperbesar (32px -> 38px,
                         ikon 14 -> 16) biar proporsional krn sendirian &
                         lebih gampang di-tap. */}
-                    {!isEditing && (
+                    {!isEditing && !readOnly && (
                       <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
                         <button onClick={() => startEdit(row, kind)} title="Edit nilai hari ini"
                           onMouseEnter={(ev) => { ev.currentTarget.style.background = bg; ev.currentTarget.style.color = color; }}
@@ -1091,7 +1096,7 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose, o
                         icon={<UserCheck size={15} color={newMeta.color} />} iconColor={newMeta.color} iconBg={newMeta.bg}
                         badgeLabel="Status" badgeColor={newMeta.color} badgeBg={newMeta.bg}
                         title="Status DSE diubah" timeLabel={fmtTime(r.changed_at)} changedBy={by}
-                        onDeleteClick={() => { setConfirmTarget({ kind: "info", id: r.id, label: "entri riwayat status ini" }); setConfirmTyped(""); }}>
+                        onDeleteClick={readOnly ? undefined : () => { setConfirmTarget({ kind: "info", id: r.id, label: "entri riwayat status ini" }); setConfirmTyped(""); }}>
                         <div style={{ fontSize: 12.5, color: t.mid, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                           <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 999, background: oldMeta.bg, color: oldMeta.color, fontWeight: 700, fontSize: 11 }}>{oldMeta.label}</span>
                           <ChevronRight size={12} color={t.lo} style={{ flexShrink: 0 }} />
@@ -1105,7 +1110,7 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose, o
                         icon={<UserCheck size={15} color={t.teal} />} iconColor={t.teal} iconBg={t.tealBg}
                         badgeLabel="Nama" badgeColor={t.teal} badgeBg={t.tealBg}
                         title="Nama DSE diubah" timeLabel={fmtTime(r.changed_at)} changedBy={by}
-                        onDeleteClick={() => { setConfirmTarget({ kind: "info", id: r.id, label: "entri riwayat nama ini" }); setConfirmTyped(""); }}>
+                        onDeleteClick={readOnly ? undefined : () => { setConfirmTarget({ kind: "info", id: r.id, label: "entri riwayat nama ini" }); setConfirmTyped(""); }}>
                         <div style={{ fontSize: 12.5, color: t.mid, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                           <span style={{ color: t.red, textDecoration: "line-through" }}>{r.old_value || "(kosong)"}</span>
                           <ChevronRight size={12} color={t.lo} style={{ flexShrink: 0 }} />
@@ -5053,8 +5058,18 @@ export const CATEGORY_OPTIONS = [
 // yg bakal kosong/ga bisa diapa2in, menyesatkan) - sekarang difilter sesuai
 // role. Email yang terdaftar ganda (District + Area) tetap dapat SEMUA tab
 // relevannya krn helper ini dipanggil per-role, bukan exclusive.
+// UPDATE (permintaan user - "untuk admin area selain ar hoa dapat mengisi
+// dan juga monitoring dan melakukan pengisian AR dso/dsp nya district under
+// area tersebut, dan juga prod dse dan ar dse under area tersebut juga bisa
+// dilihat namun dia tidak bisa mengeditnya"): Admin Area sekarang JUGA dapat
+// tab "dso" (full akses isi+monitor, SAMA PERSIS District Admin - tapi
+// datanya dibatasi RLS ke District di bawah Area-nya sendiri, lihat
+// mf_dse_admin_area_has_access_mc di migration) dan tab "dse" (TAPI
+// view-only - lihat prop readOnly yg dipaksa true utk role ini di
+// pemanggilan <DseInputRow>/<DseHistoryModal> di bawah, BUKAN dari sini -
+// helper ini cuma soal tab mana yg KELIHATAN, bukan izin edit di dalamnya).
 export function getCategoryOptionsForRole(role) {
-  if (role === "admin_area") return CATEGORY_OPTIONS.filter((o) => o.k === "hoa");
+  if (role === "admin_area") return CATEGORY_OPTIONS; // hoa (full) + dso (full) + dse (view-only)
   if (role === "finance_mpx") return CATEGORY_OPTIONS.filter((o) => o.k !== "hoa");
   return CATEGORY_OPTIONS; // SPM & role lain yg sudah lolos gate di page.jsx: semua kategori
 }
@@ -7456,6 +7471,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
         </div>
       )}
       {historyFor && <DseHistoryModal t={t} dseCode={historyFor} dse={historyDse} initialTab={historyInitialTab} initialMonth={historyInitialMonth}
+        readOnly={isAdminArea}
         onClose={() => { setHistoryFor(null); setHistoryDse(null); setHistoryOnBack(null); }}
         onBack={() => { historyOnBack?.(); setHistoryFor(null); setHistoryDse(null); setHistoryOnBack(null); }} />}
 
@@ -8545,7 +8561,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                   dirty={!!dirty[dse.dse_code]}
                   prevOutstanding={prevAr[dse.dse_code]}
                   onShowHistory={(dseObj, tab, onBack) => { setHistoryFor(dseObj.dse_code); setHistoryDse(dseObj); setHistoryInitialTab(tab || "info"); setHistoryInitialMonth(entryDate ? entryDate.slice(0, 7) : ""); setHistoryOnBack(() => onBack); }}
-                  readOnly={isRangeMode}
+                  readOnly={isRangeMode || isAdminArea}
                   runGuarded={runGuarded}
                   statusEvents={statusEvents}
                   audit={(() => { const be = entries[dse.dse_code]; return be?.updated_at || be?.uploaded_by ? { updated_at: be.updated_at, uploaded_at: be.uploaded_at, by: profilesMap[be.uploaded_by] } : null; })()} />
@@ -8758,7 +8774,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                         dirty={!!dirty[dse.dse_code]}
                         prevOutstanding={prevAr[dse.dse_code]}
                         onShowHistory={(dseObj, tab, onBack) => { setHistoryFor(dseObj.dse_code); setHistoryDse(dseObj); setHistoryInitialTab(tab || "info"); setHistoryInitialMonth(entryDate ? entryDate.slice(0, 7) : ""); setHistoryOnBack(() => onBack); }}
-                        readOnly={isRangeMode}
+                        readOnly={isRangeMode || isAdminArea}
                         runGuarded={runGuarded}
                         statusEvents={statusEvents}
                         hiddenCols={hiddenCols}

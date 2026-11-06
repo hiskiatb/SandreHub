@@ -85,7 +85,7 @@ import * as XLSX from "xlsx";
 import {
   UserRoundCog, X, Check, AlertTriangle, Loader2, Search,
   RefreshCw, Trash2, ToggleLeft, ToggleRight, Upload,
-  Mail, Plus, ChevronDown, ChevronUp, Pencil,
+  Mail, Plus, ChevronDown, ChevronUp, Pencil, UserCheck,
 } from "lucide-react";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif`;
@@ -591,6 +591,29 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel, roleValue, 
     return active.map((e) => e.email?.toLowerCase() || "").sort().join(",");
   };
 
+  // UPDATE (permintaan user - "dari total email terdaftar yang sudah
+  // pernah login, berapa dari berapa"): summary card di atas tabel -
+  // dihitung dari SEMUA slot email aktif (sama persis yang dirender
+  // sbg baris berisi di tabel, bukan baris "Kosong") lintas SEMUA MC,
+  // dicocokkan ke loginStatusByEmail utk tahu mana yang last_sign_in_at
+  // -nya masih null (belum pernah login sama sekali). Cuma relevan utk
+  // tampilan LIVE (isHistorical tidak punya data login status).
+  const loginSummary = useMemo(() => {
+    if (isHistorical) return null;
+    let total = 0, loggedIn = 0, online = 0;
+    emailsByMc.forEach((emails) => {
+      emails.filter((e) => e.active !== false).forEach((e) => {
+        total++;
+        const ts = loginStatusByEmail.get(e.email?.toLowerCase());
+        if (ts) {
+          loggedIn++;
+          if (Date.now() - new Date(ts).getTime() < ONLINE_WINDOW_MS) online++;
+        }
+      });
+    });
+    return { total, loggedIn, neverLoggedIn: total - loggedIn, online };
+  }, [emailsByMc, loginStatusByEmail, isHistorical]);
+
 
   const filtered = displayRows
     .filter((r) => {
@@ -981,6 +1004,43 @@ const inputStyle = { width: "100%", height: 38, padding: "0 12px", borderRadius:
                 style={{ display: "flex", alignItems: "center", gap: 6, height: 36, padding: "0 12px", borderRadius: 7, border: "none", background: t.teal, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: editBusy ? "not-allowed" : "pointer" }}>
                 {editBusy ? <Loader2 size={13} className="spin" /> : <Check size={13} />} Simpan
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* UPDATE (permintaan user - "dari total email terdaftar yang
+          sudah pernah login, berapa dari berapa"): summary card login -
+          3 angka (Sudah login / Belum pernah login / Sedang online) dari
+          total email yang terdaftar (slot aktif, lintas semua MC),
+          persis rujukan loginSummary di atas. */}
+      {loginSummary && loginSummary.total > 0 && (
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 16 }}>
+          <div style={{ flex: "1 1 200px", borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{ width: 44, height: 44, borderRadius: 12, background: t.tealBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <UserCheck size={20} color={t.teal} />
+            </div>
+            <div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: t.hi, fontVariantNumeric: "tabular-nums" }}>{loginSummary.loggedIn} <span style={{ fontSize: 14, fontWeight: 600, color: t.mid }}>dari {loginSummary.total}</span></div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>Email sudah pernah login</div>
+            </div>
+          </div>
+          <div style={{ flex: "1 1 200px", borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{ width: 44, height: 44, borderRadius: 12, background: t.amberBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <AlertTriangle size={20} color={t.amber} />
+            </div>
+            <div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: t.hi, fontVariantNumeric: "tabular-nums" }}>{loginSummary.neverLoggedIn} <span style={{ fontSize: 14, fontWeight: 600, color: t.mid }}>dari {loginSummary.total}</span></div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>Belum pernah login</div>
+            </div>
+          </div>
+          <div style={{ flex: "1 1 200px", borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{ width: 44, height: 44, borderRadius: 12, background: t.tealBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <span style={{ width: 11, height: 11, borderRadius: 999, background: t.teal }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: t.hi, fontVariantNumeric: "tabular-nums" }}>{loginSummary.online}</div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>Sedang online sekarang</div>
             </div>
           </div>
         </div>
