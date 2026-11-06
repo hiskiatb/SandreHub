@@ -44,6 +44,11 @@ const H_STAT  = ["=status","=payment status","status"];
 // Flow sejak Coupa go-live 11 Oct 2026: PO (Req → PO → Invoice) atau Direct Invoice (tanpa Req/PO).
 const FLOW_PO = "PO", FLOW_DI = "Direct Invoice";
 
+// Saklar fitur dokumen: tab "Document Upload & Merge", tab "Partner Letters" & kolom Documents di Raw Data.
+// false = disembunyikan untuk semua role & tidak ada fetch dokumen. Komponen, API, tabel & data tetap ada;
+// ubah ke true untuk mengaktifkan kembali.
+const SHOW_DOCUMENT_TABS = false;
+
 const SLA_P = [
   { key:"reva_po",   flow:FLOW_PO, label:"Reva → PO",                sla:2, from:["reva date","reva"],                 to:["po date","=po number"] },
   { key:"po_surat",  flow:FLOW_PO, label:"PO → Surat Pemberitahuan",       sla:1, from:["po date"],                         to:H_SURAT },
@@ -1331,7 +1336,7 @@ function RawThCell({k,rawSort,setRawSort,setRawPage,isLeftCol,label,t}) {
 
 function RawDataRow({r,i,rawKeys,isLeftCol,fmtCellT,t,docs,segment}) {
   const [hov,hE]=useHover();
-  return <tr {...hE} style={{borderBottom:`1px solid ${t.line}`,background:hov?t.rowHover:i%2===1?t.rowStripe:"transparent",transition:"background .1s"}}>{rawKeys.map(k=><td key={k} title={String(r[k]||"")} style={{padding:"8px 9px",textAlign:isLeftCol(k)?"left":"center",maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{fmtCellT(r[k],k,t)}</td>)}<td style={{padding:"6px 9px",textAlign:"center",whiteSpace:"nowrap"}}><DocsCell refId={refKey(gstr(r,DOC_REF_COLUMN))} partnerName={gstr(r,["partner name","agency name"])} segment={segment} title={gstr(r,["project title"])} amountText={fmtMoney(gnum(r,["amount"]),false)} docs={docs} t={t}/></td></tr>;
+  return <tr {...hE} style={{borderBottom:`1px solid ${t.line}`,background:hov?t.rowHover:i%2===1?t.rowStripe:"transparent",transition:"background .1s"}}>{rawKeys.map(k=><td key={k} title={String(r[k]||"")} style={{padding:"8px 9px",textAlign:isLeftCol(k)?"left":"center",maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{fmtCellT(r[k],k,t)}</td>)}{SHOW_DOCUMENT_TABS&&<td style={{padding:"6px 9px",textAlign:"center",whiteSpace:"nowrap"}}><DocsCell refId={refKey(gstr(r,DOC_REF_COLUMN))} partnerName={gstr(r,["partner name","agency name"])} segment={segment} title={gstr(r,["project title"])} amountText={fmtMoney(gnum(r,["amount"]),false)} docs={docs} t={t}/></td>}</tr>;
 }
 
 // Milestone tercapai? (PO & Surat hanya relevan untuk Flow PO)
@@ -1398,7 +1403,8 @@ function DashScreen(props) {
   const isAg = src === "agency";
 
   // Dokumen per PO (Partner & Agency): dipakai kolom Dokumen di Raw Data & tab Upload & Merge Dokumen
-  const docs = usePartnerDocStats(profile);
+  // profile null → hook tidak aktif (docs.enabled=false), tidak ada fetch dokumen/approval
+  const docs = usePartnerDocStats(SHOW_DOCUMENT_TABS ? profile : null);
   // 1 entri per (pemilik, PO): baris dobel → amount dijumlah, records dihitung. Baris tanpa PO dihitung terpisah.
   // ym = periode PO (YYYY-MM) dari program date; ptype = MPC/MP3 dari kolom Partner Type/Entity (untuk generator BAST/Letter)
   const buildDocPOs = useCallback((rowsIn) => {
@@ -1417,9 +1423,9 @@ function DashScreen(props) {
     });
     return { list: [...m.values()].map(p => ({...p, amountText: fmtMoney(p.amount,false)})), noRef };
   }, [src]);
-  const { docPOs, docNoRef } = useMemo(() => { const x = buildDocPOs(filtRaw); return { docPOs: x.list, docNoRef: x.noRef }; }, [filtRaw, buildDocPOs]);
+  const { docPOs, docNoRef } = useMemo(() => { const x = buildDocPOs(SHOW_DOCUMENT_TABS ? filtRaw : []); return { docPOs: x.list, docNoRef: x.noRef }; }, [filtRaw, buildDocPOs]);
   // Semua PO segment ini (tanpa filter dashboard) — dipakai generator untuk mencocokkan PO
-  const docPOsAll = useMemo(() => buildDocPOs(curRaw).list, [curRaw, buildDocPOs]);
+  const docPOsAll = useMemo(() => buildDocPOs(SHOW_DOCUMENT_TABS ? curRaw : []).list, [curRaw, buildDocPOs]);
   const docPOsDone = docPOs.filter(p => doneCount(docs.byRef[statKey(src,p.partner,p.ref)]) === DOC_TYPES.length).length;
 
   const isMobile = w < 640;
@@ -1527,7 +1533,7 @@ function DashScreen(props) {
       )}
 
       <div style={{display:"flex",gap:24,borderBottom:`1px solid ${t.line}`,marginBottom:18,overflowX:"auto"}}>
-        {[{id:"dash",label:"Dashboard"},{id:"raw",label:"Raw Data",count:filtRaw.length},...(docs.enabled?[{id:"docs",label:"Document Upload & Merge",count:docPOsDone}]:[]),...(docs.enabled&&docs.canManageApprovals?[{id:"letters",label:"Partner Letters"}]:[])].map(tab=>(
+        {[{id:"dash",label:"Dashboard"},{id:"raw",label:"Raw Data",count:filtRaw.length},...(SHOW_DOCUMENT_TABS&&docs.enabled?[{id:"docs",label:"Document Upload & Merge",count:docPOsDone}]:[]),...(SHOW_DOCUMENT_TABS&&docs.enabled&&docs.canManageApprovals?[{id:"letters",label:"Partner Letters"}]:[])].map(tab=>(
           <TabBtn key={tab.id} label={tab.label} count={tab.count} active={activeTab===tab.id} onClick={()=>setActiveTab(tab.id)} t={t}/>
         ))}
       </div>
@@ -1614,8 +1620,8 @@ function DashScreen(props) {
         <>
           {activeTab==="dash" && <DashTab {...props} t={t} w={w}/>}
           {activeTab==="raw"  && <RawTab  {...props} t={t} w={w} docs={docs}/>}
-          {activeTab==="letters" && docs.enabled && docs.canManageApprovals && <PartnerLettersTab docs={docs} partnerNames={src==="partner"?[...new Set(docPOsAll.map(p=>p.partner).filter(Boolean))].sort():[]} t={t}/>}
-          {activeTab==="docs" && docs.enabled && <PoDocsTab pos={docPOs} allPos={docPOsAll} segment={src} docs={docs} noRefCount={docNoRef} fmtAmount={n=>fmtMoney(n)} onGoLetters={docs.canManageApprovals?()=>setActiveTab("letters"):undefined} t={t}/>}
+          {SHOW_DOCUMENT_TABS && activeTab==="letters" && docs.enabled && docs.canManageApprovals && <PartnerLettersTab docs={docs} partnerNames={src==="partner"?[...new Set(docPOsAll.map(p=>p.partner).filter(Boolean))].sort():[]} t={t}/>}
+          {SHOW_DOCUMENT_TABS && activeTab==="docs" && docs.enabled && <PoDocsTab pos={docPOs} allPos={docPOsAll} segment={src} docs={docs} noRefCount={docNoRef} fmtAmount={n=>fmtMoney(n)} onGoLetters={docs.canManageApprovals?()=>setActiveTab("letters"):undefined} t={t}/>}
         </>
       )}
 
@@ -2173,10 +2179,10 @@ function RawTab(props) {
 
       <div style={{overflowX:"auto"}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:11.5,minWidth:narrow?Math.max(720,rawKeys.length*110):undefined}}>
-          <thead><tr>{rawKeys.map(k=><RawThCell key={k} k={k} rawSort={rawSort} setRawSort={setRawSort} setRawPage={setRawPage} isLeftCol={isLeftCol} t={t}/>)}<th style={{position:"sticky",top:0,zIndex:2,fontFamily:MONO,fontSize:10,letterSpacing:"0.08em",textTransform:"uppercase",color:t.muted,fontWeight:500,background:t.surf2,padding:"9px",textAlign:"center",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap"}}>Documents</th></tr></thead>
+          <thead><tr>{rawKeys.map(k=><RawThCell key={k} k={k} rawSort={rawSort} setRawSort={setRawSort} setRawPage={setRawPage} isLeftCol={isLeftCol} t={t}/>)}{SHOW_DOCUMENT_TABS&&<th style={{position:"sticky",top:0,zIndex:2,fontFamily:MONO,fontSize:10,letterSpacing:"0.08em",textTransform:"uppercase",color:t.muted,fontWeight:500,background:t.surf2,padding:"9px",textAlign:"center",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap"}}>Documents</th>}</tr></thead>
           <tbody>
             {pageRaw.length===0
-              ? <tr><td colSpan={rawKeys.length+1} style={{padding:"28px",textAlign:"center",color:t.muted,fontFamily:MONO,fontSize:12}}>No records match the current filters</td></tr>
+              ? <tr><td colSpan={rawKeys.length+(SHOW_DOCUMENT_TABS?1:0)} style={{padding:"28px",textAlign:"center",color:t.muted,fontFamily:MONO,fontSize:12}}>No records match the current filters</td></tr>
               : pageRaw.map((r,i)=><RawDataRow key={i} r={r} i={i} rawKeys={rawKeys} isLeftCol={isLeftCol} fmtCellT={fmtCellT} t={t} docs={docs} segment={src}/>)}
           </tbody>
         </table>
