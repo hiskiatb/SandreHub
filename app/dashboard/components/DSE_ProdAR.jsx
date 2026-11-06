@@ -5233,18 +5233,42 @@ function ArDsoHoaPanel({ t, d, profile, entryDate, arMonth, dseMeta, kind }) {
   const [editingCode, setEditingCode] = useState(null);
   const [editingVal, setEditingVal] = useState("");
   const [savingName, setSavingName] = useState(false);
-  const startEditName = (code) => { setEditingCode(code); setEditingVal(identityMap[code]?.dso_name || ""); };
+  // FIX (laporan user - "AR HoA, mengapa tidak bisa melakukan pengisian
+  // nama"): dulu nama HoA (g.hoaName, sumbernya mf_dse_database.hoa_name)
+  // CUMA ditampilkan sbg <span> polos, ga ada UI edit sama sekali (beda
+  // dgn DSO/DSP yg punya tombol pensil + tabel dso_dsp_identity sendiri) -
+  // komentar lama bilang "HoA ga butuh ini krn hoa_name udah ada per
+  // baris mf_dse_database", padahal kenyataannya kolom itu emang ga
+  // pernah diisi dari mana pun di aplikasi ini (dicek: cuma di-ORDER BY,
+  // ga pernah di-UPDATE). hoaNameOverride dipakai nyimpen hasil edit
+  // lokal (optimistic) biar langsung kelihatan tanpa reload - hoa_name
+  // di-update utk SEMUA baris mf_dse_database yg Area/branch-nya sama
+  // (1 Area = 1 nama HoA, dipakai bareng semua DSE di bawahnya).
+  const [hoaNameOverride, setHoaNameOverride] = useState({});
+  const startEditName = (code) => {
+    setEditingCode(code);
+    setEditingVal(isDso ? (identityMap[code]?.dso_name || "") : (hoaNameOverride[code] ?? (groups.find((g) => g.code === code)?.hoaName || "")));
+  };
   const cancelEditName = () => { setEditingCode(null); setEditingVal(""); };
   const saveEditName = async (code) => {
     setSavingName(true);
     try {
-      const patch = { mc: code, dso_name: editingVal.trim() || null, updated_by: profile?.id || null, updated_by_name: profile?.full_name || null, updated_at: new Date().toISOString() };
-      const { data, error } = await supabase.from("dso_dsp_identity").upsert(patch, { onConflict: "mc" }).select("*").single();
-      if (error) throw error;
-      setIdentityMap((prev) => ({ ...prev, [code]: data }));
+      if (isDso) {
+        const patch = { mc: code, dso_name: editingVal.trim() || null, updated_by: profile?.id || null, updated_by_name: profile?.full_name || null, updated_at: new Date().toISOString() };
+        const { data, error } = await supabase.from("dso_dsp_identity").upsert(patch, { onConflict: "mc" }).select("*").single();
+        if (error) throw error;
+        setIdentityMap((prev) => ({ ...prev, [code]: data }));
+      } else {
+        const val = editingVal.trim() || null;
+        const { error } = await supabase.from("mf_dse_database").update({ hoa_name: val }).eq("branch", code);
+        if (error) throw error;
+        setHoaNameOverride((prev) => ({ ...prev, [code]: val }));
+      }
       setEditingCode(null);
     } catch {
-      // diam2 gagal - field nama DSO/DSP bukan data kritikal piutang, ga perlu blokir UI
+      // diam2 gagal (sama pola dgn nama DSO/DSP) - nama HoA bukan data
+      // kritikal piutang, ga perlu blokir UI; `showToast` parent komponen
+      // ga ada di scope ArDsoHoaPanel ini.
     } finally {
       setSavingName(false);
     }
@@ -5375,11 +5399,25 @@ function ArDsoHoaPanel({ t, d, profile, entryDate, arMonth, dseMeta, kind }) {
                           <Pencil size={11} color={t.lo} />
                         </button>
                       )
+                    ) : editingCode === g.code ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <input autoFocus value={editingVal} onChange={(ev) => setEditingVal(ev.target.value)} onKeyDown={(ev) => { if (ev.key === "Enter") saveEditName(g.code); if (ev.key === "Escape") cancelEditName(); }}
+                          placeholder="Nama HoA" style={{ height: 30, borderRadius: 7, border: `1px solid ${t.teal}`, background: t.inputBg, color: t.hi, fontSize: 12, padding: "0 8px", width: 150, fontFamily: FONT }} />
+                        <button type="button" onClick={() => saveEditName(g.code)} disabled={savingName} title="Simpan" style={{ width: 26, height: 26, borderRadius: 6, border: "none", background: t.teal, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: savingName ? "default" : "pointer", flexShrink: 0 }}>
+                          {savingName ? <Loader2 size={12} className="spin" /> : <Save size={12} />}
+                        </button>
+                        <button type="button" onClick={cancelEditName} title="Batal" style={{ width: 26, height: 26, borderRadius: 6, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                          <X size={12} />
+                        </button>
+                      </div>
                     ) : (
-                      <span style={{ fontSize: 12.5, fontWeight: 600, color: g.hoaName ? t.hi : t.lo, fontStyle: g.hoaName ? "normal" : "italic" }}>{g.hoaName || "Belum diisi"}</span>
+                      <button type="button" onClick={() => startEditName(g.code)} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: FONT, color: (hoaNameOverride[g.code] ?? g.hoaName) ? t.hi : t.lo, fontStyle: (hoaNameOverride[g.code] ?? g.hoaName) ? "normal" : "italic", fontSize: 12.5, fontWeight: 600 }}>
+                        {(hoaNameOverride[g.code] ?? g.hoaName) || "Belum diisi"}
+                        <Pencil size={11} color={t.lo} />
+                      </button>
                     )}
                   </td>
-                  <ArPiutangInput t={t} readOnly={false} dseCode={g.code} dseCode3id={null} dseName={isDso ? (identityMap[g.code]?.dso_name || "") : g.hoaName} mc={isDso ? g.code : (g.mc || "")} branch={isDso ? (g.branch || "") : g.code}
+                  <ArPiutangInput t={t} readOnly={false} dseCode={g.code} dseCode3id={null} dseName={isDso ? (identityMap[g.code]?.dso_name || "") : (hoaNameOverride[g.code] ?? g.hoaName)} mc={isDso ? g.code : (g.mc || "")} branch={isDso ? (g.branch || "") : g.code}
                     entryDate={entryDate} arMonth={arMonth} profile={profile} outstanding={0}
                     onApplyLedger={() => {}} onConfirmSave={() => {}} saving={false}
                     itemsTable={itemsTable} paymentsTable={paymentsTable} codeField={codeField} idPrefix={idPrefix} entityNoun={entityNoun} />
@@ -7304,8 +7342,22 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       {periodOpen && periodMode === "tanggal" && periodPopPos && typeof document !== "undefined" && createPortal(
         <div ref={periodMenuRef} className="periodFade" style={{ position: "fixed", top: periodPopPos.top, left: periodPopPos.left - 264, zIndex: 300, width: 264, maxWidth: "calc(100vw - 32px)", borderRadius: 16, border: `1px solid ${t.line}`, background: t.card, boxShadow: "0 16px 40px rgba(0,0,0,0.22)", padding: 14 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-            <button onClick={() => setCalViewMonth(shiftMonth(calViewMonth, -1))} disabled={calViewMonth <= DAILY_START_DATE.slice(0, 7)} title={calViewMonth <= DAILY_START_DATE.slice(0, 7) ? "Pencatatan Daily baru dimulai November 2026" : undefined}
-              style={{ width: 28, height: 28, borderRadius: 7, border: "none", background: t.sub, color: calViewMonth <= DAILY_START_DATE.slice(0, 7) ? t.line : t.mid, cursor: calViewMonth <= DAILY_START_DATE.slice(0, 7) ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {/* UPDATE (permintaan user - sama alasan dgn panah kiri utama
+                di periodnav, lihat UPDATE di prevNavBtnRef di atas): panah
+                kiri di kalender Daily ini jg dulu ke-disable total pas
+                sampai November 2026 - sekarang tetap bisa diklik, tapi
+                klik-nya pindah ke mode Full Month + bulan sebelumnya
+                (Oktober), sekalian nutup popup kalender ini (krn Full
+                Month ga pakai kalender hari, pakai label bulan polos). */}
+            <button onClick={() => {
+                if (calViewMonth <= DAILY_START_DATE.slice(0, 7)) {
+                  runGuarded(() => { setPeriodMode("bulan"); jumpToMonth(shiftMonth(calViewMonth, -1)); setPeriodOpen(false); });
+                  return;
+                }
+                setCalViewMonth(shiftMonth(calViewMonth, -1));
+              }}
+              title={calViewMonth <= DAILY_START_DATE.slice(0, 7) ? "Bulan sebelumnya (Oktober & seterusnya hanya Full Month)" : "Bulan sebelumnya"}
+              style={{ width: 28, height: 28, borderRadius: 7, border: "none", background: t.sub, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <ChevronDown size={13} style={{ transform: "rotate(90deg)" }} />
             </button>
             <div style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>
