@@ -5852,6 +5852,22 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   const [entries, setEntries] = useState({});     // { [dse_code]: {...} } — satu entry per DSE (tidak lagi per brand)
   const [identity, setIdentity] = useState({});   // { [dse_code]: { ds_name, mc } }
   const [dirty, setDirty] = useState({});         // { [dse_code]: true }
+  // FIX (laporan user - "kadang datanya tidak tersimpan"): loadDseAndEntries
+  // (efek di bawah) nge-reload ulang `entries`/`dirty` dari DB tiap kali
+  // filter (Region/Branch/Partner/District) atau tanggal entri berubah -
+  // SEBELUM fix ini, reload itu nimpa TOTAL state `entries`/`dirty` pakai
+  // data fresh dari DB, jadi kalau admin lagi ketik nilai di 1+ DSE (belum
+  // sempat klik Simpan) terus pindah filter/tanggal (sengaja atau ga
+  // sengaja kepencet), input yg belum disimpan itu HILANG DIAM-DIAM tanpa
+  // peringatan apa pun - persis gejala "kadang datanya tidak tersimpan".
+  // Ref ini (selalu sinkron ke state terbaru lewat useEffect di bawah)
+  // dipakai loadDseAndEntries utk tau draft mana yg masih dirty SAAT
+  // reload terjadi, supaya draft itu bisa DIPERTAHANKAN (bukan ditimpa).
+  const dirtyRef = useRef({});
+  const entriesRef = useRef({});
+  const lastEntryContextKeyRef = useRef(null);
+  useEffect(() => { dirtyRef.current = dirty; }, [dirty]);
+  useEffect(() => { entriesRef.current = entries; }, [entries]);
   const [savingCode, setSavingCode] = useState(null);
   const [showImport, setShowImport] = useState(false);
   const [prevAr, setPrevAr] = useState({});       // { dse_code: lastOutstandingAmount }
@@ -6270,6 +6286,23 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
 
   const loadDseAndEntries = useCallback(async () => {
     setLoadingDse(true);
+    // FIX (lanjutan - lihat komentar di deklarasi dirtyRef/entriesRef di
+    // atas): cuma aman mempertahankan draft yg belum disimpan kalau
+    // KONTEKS tanggal entrinya SAMA dgn pemanggilan sebelumnya (filter
+    // Region/Branch/Partner/District berubah, tapi tanggalnya tetap) -
+    // kalau tanggal/mode periode-nya yg berubah, draft lama itu memang
+    // milik tanggal LAIN, jadi tidak relevan dipertahankan ke tanggal baru.
+    const entryContextKey = isRangeMode ? `range:${sortedSelectedDates.join(",")}` : `single:${entryDate}`;
+    const preserveDirtyDrafts = lastEntryContextKeyRef.current === entryContextKey;
+    lastEntryContextKeyRef.current = entryContextKey;
+    const mergeWithDirtyDrafts = (freshMap) => {
+      if (!preserveDirtyDrafts) return freshMap;
+      const merged = { ...freshMap };
+      Object.keys(dirtyRef.current).forEach((code) => {
+        if (dirtyRef.current[code] && entriesRef.current[code] !== undefined) merged[code] = entriesRef.current[code];
+      });
+      return merged;
+    };
     try {
       let q = supabase.from("mf_dse_database").select("dse_code, dse_code_3id, ds_name, mc, branch, region, mdi, is_revoked, dse_status, join_date").eq("is_revoked", false).order("dse_code", { ascending: true });
       if (isSPM) {
@@ -6330,7 +6363,8 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
             map[r.dse_code] = acc;
             if (r.uploaded_by) uploaderIds.add(r.uploaded_by);
           });
-          setEntries(map);
+          setEntries((prevE) => mergeWithDirtyDrafts(map));
+          if (!preserveDirtyDrafts) setDirty({});
           setPrevAr({});
           if (uploaderIds.size) {
             const { data: profs } = await supabase.from("profiles").select("id, full_name").in("id", Array.from(uploaderIds));
@@ -6341,7 +6375,6 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
             setProfilesMap({});
           }
           setIdentity({});
-          setDirty({});
           return;
         }
 
@@ -6383,7 +6416,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           };
           if (r.uploaded_by) uploaderIds.add(r.uploaded_by);
         });
-        setEntries(map);
+        setEntries(mergeWithDirtyDrafts(map));
 
         const prevMap = {};
         (prev || []).forEach((r) => {
@@ -6400,12 +6433,12 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           setProfilesMap({});
         }
       } else {
-        setEntries({});
+        setEntries((preserveDirtyDrafts && Object.keys(dirtyRef.current).length) ? mergeWithDirtyDrafts({}) : {});
         setPrevAr({});
         setProfilesMap({});
       }
       setIdentity({});
-      setDirty({});
+      if (!preserveDirtyDrafts) setDirty({});
     } catch (e) {
       showToast(e.message || "Gagal memuat daftar DSE.", "error");
     } finally {
@@ -7153,13 +7186,30 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           tooltip biar user tau KENAPA dia nonaktif/pudar, bukan cuma
           diem aja. */}
       {(() => {
-        const atPrevLimit = periodMode === "tanggal" && entryDate <= DAILY_START_DATE;
+        // UPDATE (permintaan user - "saat 1 November, klik panah kiri
+        // harusnya tetap bisa, tapi yg tampil bukan tanggal terakhir
+        // Oktober, melainkan Oktober dalam mode Full Month (krn Oktober
+        // cuma bisa diisi per-bulan, bukan per-hari)"): dulu nge-mentok
+        // total di sini (tombol dibikin "disabled" + bubble penjelasan,
+        // onClick cuma munculin bubble tanpa pindah apa2). Sekarang kalau
+        // lagi di Daily & udah di batas bawah (1 Nov 2026), klik panah
+        // kiri TETAP jalan - tapi otomatis pindah ke mode Full Month &
+        // nampilin bulan sebelumnya (Oktober), bukan diam di tempat.
+        // Toggle Daily/Full Month di bulan itu sendiri sudah otomatis
+        // ke-disable ke Full Month doang (lihat `dailyDisabled` /
+        // DAILY_START_DATE check di toggle), jadi konsisten.
+        const atDailyFloor = periodMode === "tanggal" && entryDate <= DAILY_START_DATE;
+        const atPrevLimit = false; // tombol panah kiri tidak pernah mentok lagi (lihat UPDATE di atas)
         return (
-          <button ref={prevNavBtnRef} className="dseprod-navbtn" title={periodMode === "bulan" ? "Bulan sebelumnya" : "Hari sebelumnya"}
-            onMouseEnter={() => { if (atPrevLimit) showPrevLimitHint(); }}
-            onMouseLeave={() => { if (atPrevLimit) setPrevLimitHint(false); }}
-            onClick={() => { if (atPrevLimit) { flashPrevLimitHint(); return; } runGuarded(() => (periodMode === "bulan" ? jumpToMonth(shiftMonth(calViewMonth, -1)) : jumpToDay(shiftDay(entryDate, -1)))); }}
-            style={{ width: width < 400 ? 30 : 36, height: width < 400 ? 30 : 36, borderRadius: 10, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: atPrevLimit ? t.line : t.hi, cursor: atPrevLimit ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <button ref={prevNavBtnRef} className="dseprod-navbtn" title={periodMode === "bulan" ? "Bulan sebelumnya" : (atDailyFloor ? "Bulan sebelumnya (Oktober & seterusnya hanya Full Month)" : "Hari sebelumnya")}
+            onClick={() => {
+              if (atDailyFloor) {
+                runGuarded(() => { setPeriodMode("bulan"); jumpToMonth(shiftMonth(calViewMonth, -1)); });
+                return;
+              }
+              runGuarded(() => (periodMode === "bulan" ? jumpToMonth(shiftMonth(calViewMonth, -1)) : jumpToDay(shiftDay(entryDate, -1))));
+            }}
+            style={{ width: width < 400 ? 30 : 36, height: width < 400 ? 30 : 36, borderRadius: 10, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
             <ChevronDown size={14} style={{ transform: "rotate(90deg)" }} />
           </button>
         );

@@ -91,25 +91,41 @@ export async function POST(req) {
       );
     }
 
-    // ── 3. Tandai OTP sudah dipakai (tidak bisa dipakai ulang) ─────────────
-    await supabaseAdmin
-      .from("email_otps")
-      .update({ verified: true })
-      .eq("id", otpData.id);
-
-    // ── 4. Buat sesi Supabase Auth yang sah lewat Admin API resmi ──────────
-    const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
-      type: "magiclink",
-      email: cleanEmail,
-    });
+    // ── 3. Buat sesi Supabase Auth yang sah lewat Admin API resmi ──────────
+    // Dipanggil SEBELUM OTP ditandai terpakai, dan dgn retry singkat - supaya
+    // hiccup sesaat di Supabase Auth (transient, pernah terjadi di produksi -
+    // bukan masalah OTP-nya) langsung tertangani sendiri di percobaan
+    // pertama user, tanpa perlu Kirim Ulang OTP. Kalau tetap gagal setelah
+    // retry, OTP TIDAK ditandai terpakai (lihat di bawah) supaya user bisa
+    // langsung coba masukkan kode yang sama lagi tanpa minta kode baru.
+    const MAX_ATTEMPTS = 3;
+    let linkData = null;
+    let linkError = null;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const res = await supabaseAdmin.auth.admin.generateLink({
+        type: "magiclink",
+        email: cleanEmail,
+      });
+      linkData = res.data;
+      linkError = res.error;
+      if (!linkError && linkData?.properties?.hashed_token) break;
+      console.error(`❌ [GENERATE LINK ERROR] percobaan ${attempt}/${MAX_ATTEMPTS}`, linkError);
+      if (attempt < MAX_ATTEMPTS) await new Promise((r) => setTimeout(r, 400 * attempt));
+    }
 
     if (linkError || !linkData?.properties?.hashed_token) {
-      console.error("❌ [GENERATE LINK ERROR]", linkError);
       return NextResponse.json(
         { success: false, error: "Gagal membuat sesi login. Coba lagi." },
         { status: 500 }
       );
     }
+
+    // ── 4. Tandai OTP sudah dipakai (tidak bisa dipakai ulang) ─────────────
+    // Baru dilakukan SETELAH sesi berhasil dibuat.
+    await supabaseAdmin
+      .from("email_otps")
+      .update({ verified: true })
+      .eq("id", otpData.id);
 
     return NextResponse.json({
       success: true,
