@@ -89,6 +89,8 @@ export default function CombinedEmailExport({ theme }) {
     mid: d ? "#8A8A96" : "#5A5A68", lo: d ? "#5A5A68" : "#8A8A96",
     inputBd: d ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.12)",
     teal: d ? "#32BCAD" : "#1A9E90", tealBg: d ? "rgba(50,188,173,0.10)" : "rgba(26,158,144,0.07)",
+    red: d ? "#F87171" : "#DC2626", redBg: d ? "rgba(248,113,113,0.12)" : "rgba(220,38,38,0.08)",
+    amber: d ? "#FBBF24" : "#D97706", amberBg: d ? "rgba(251,191,36,0.12)" : "rgba(217,119,6,0.08)",
     shadowSm: d ? "0 1px 4px rgba(0,0,0,0.4)" : "0 1px 3px rgba(0,0,0,0.07)",
   };
 
@@ -97,6 +99,17 @@ export default function CombinedEmailExport({ theme }) {
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [toast, setToast] = useState(null);
+  // UPDATE (permintaan user - "buat progress penguploadannya ... dan
+  // summary penambahan dan yang gagal berapa"): dulu cuma 1 spinner polos
+  // "Mengupload..." tanpa progress, hasil cuma muncul sekilas di Toast lalu
+  // hilang (6 detik) - skrg progress per-sheet (nama sheet yg lagi
+  // diproses + bar X/Y) tampil LIVE saat upload jalan, dan setelah selesai
+  // hasilnya jadi PANEL RINGKASAN yg tetap nempel di layar (bukan cuma
+  // toast sekilas) - total email ditambahkan, total gagal/tidak ditemukan,
+  // total dilewati, dirinci per sheet dgn warna (hijau=berhasil,
+  // kuning=dilewati, merah=gagal/tidak ditemukan).
+  const [uploadProgress, setUploadProgress] = useState(null); // { done, total, label }
+  const [uploadResult, setUploadResult] = useState(null); // { grandAdded, grandSkipped, grandNotFound, sheetsSkipped, sheets: [...] }
   const fileRef = useRef(null);
 
   const toggleRole = (k) => setCheckedRoles((prev) => ({ ...prev, [k]: !prev[k] }));
@@ -351,34 +364,59 @@ export default function CombinedEmailExport({ theme }) {
   const handleUploadFile = async (file) => {
     if (!file) return;
     setImporting(true);
+    setUploadResult(null);
     try {
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array" });
       if (!wb.SheetNames.length) throw new Error("File kosong.");
 
-      const summaryLines = [];
-      let grandAdded = 0, grandNotFound = 0, sheetsSkipped = 0;
+      const totalSheets = wb.SheetNames.length;
+      setUploadProgress({ done: 0, total: totalSheets, label: "Membaca file…" });
+
+      const sheets = []; // ringkasan per sheet, dipakai utk panel hasil
+      let grandAdded = 0, grandSkipped = 0, grandNotFound = 0, sheetsSkipped = 0;
+      let doneCount = 0;
       for (const name of wb.SheetNames) {
+        setUploadProgress({ done: doneCount, total: totalSheets, label: `Memproses "${name}"…` });
         const lower = name.toLowerCase();
         const role = EXPORT_ROLES.find((r) => lower.startsWith(r.sheetPrefix.toLowerCase()));
-        if (!role) { sheetsSkipped++; continue; }
+        if (!role) {
+          sheetsSkipped++;
+          sheets.push({ name, status: "unrecognized" });
+          doneCount++;
+          continue;
+        }
         const ws = wb.Sheets[name];
         const rowsRaw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
-        if (!rowsRaw.length) { summaryLines.push(`"${name}": kosong, dilewati.`); continue; }
+        if (!rowsRaw.length) {
+          sheets.push({ name, status: "empty", role: role.label });
+          doneCount++;
+          continue;
+        }
         const res = await processSheet(role.k, rowsRaw);
-        if (!res.ok) { summaryLines.push(`"${name}": GAGAL — ${res.error}`); continue; }
-        grandAdded += res.addedCount; grandNotFound += res.notFoundCount;
-        const parts = [`${res.addedCount} email pada ${res.touched} ${role.k === "finance_mpx" ? "MC" : "Area"}`];
-        if (res.skippedCount) parts.push(`${res.skippedCount} dilewati`);
-        if (res.notFoundCount) parts.push(`${res.notFoundCount} tidak ditemukan (${res.notFoundSample.join(", ")}${res.notFoundCount > res.notFoundSample.length ? ", ..." : ""})`);
-        summaryLines.push(`"${name}": ${parts.join(", ")}.`);
+        doneCount++;
+        if (!res.ok) {
+          sheets.push({ name, status: "failed", role: role.label, error: res.error });
+          continue;
+        }
+        grandAdded += res.addedCount; grandSkipped += res.skippedCount; grandNotFound += res.notFoundCount;
+        sheets.push({
+          name, status: "done", role: role.label,
+          added: res.addedCount, touched: res.touched, skipped: res.skippedCount,
+          notFound: res.notFoundCount, notFoundSample: res.notFoundSample,
+        });
       }
-      if (sheetsSkipped) summaryLines.push(`${sheetsSkipped} sheet tidak dikenali (nama harus diawali "Admin MC" atau "Admin Area"), dilewati.`);
-      setToast({ msg: `Upload selesai.\n${summaryLines.join("\n")}`, type: grandNotFound ? "warn" : "ok" });
+      setUploadProgress({ done: totalSheets, total: totalSheets, label: "Selesai." });
+      setUploadResult({ grandAdded, grandSkipped, grandNotFound, sheetsSkipped, sheets });
+      setToast({
+        msg: `Upload selesai — ${grandAdded} email ditambahkan${grandNotFound ? `, ${grandNotFound} baris gagal (MC/Area tidak ditemukan)` : ""}${grandSkipped ? `, ${grandSkipped} baris dilewati` : ""}. Lihat rincian di bawah.`,
+        type: grandNotFound ? "warn" : "ok",
+      });
     } catch (e) {
       setToast({ msg: e.message || "Gagal mengupload file.", type: "error" });
     } finally {
       setImporting(false);
+      setUploadProgress(null);
       if (fileRef.current) fileRef.current.value = "";
     }
   };
@@ -416,6 +454,79 @@ export default function CombinedEmailExport({ theme }) {
           <div style={{ fontSize: 11.5, color: t.mid, lineHeight: 1.5 }}>
             Export akan membuat 1 file Excel berisi beberapa sheet — 1 sheet per Region untuk setiap role yang dicentang. Upload menerima file dengan format yang sama (nama sheet harus diawali &quot;Admin MC&quot; atau &quot;Admin Area&quot;) — baris dengan MC/Branch yang tidak ditemukan akan dilewati, tidak membuat MC/Branch baru.
           </div>
+
+          {/* UPDATE (permintaan user - "buat progress penguploadannya"):
+              progress bar LIVE per-sheet, tampil selama handleUploadFile
+              jalan - nama sheet yg lagi diproses + fraksi X/Y sheet, bukan
+              cuma spinner polos di tombol. */}
+          {uploadProgress && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "12px 14px", borderRadius: 10, background: t.sub, border: `1px solid ${t.inputBd}` }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{uploadProgress.label}</span>
+                <span style={{ fontSize: 11.5, fontWeight: 700, color: t.teal, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{uploadProgress.done}/{uploadProgress.total} sheet</span>
+              </div>
+              <div style={{ height: 6, borderRadius: 999, background: t.inputBd, overflow: "hidden" }}>
+                <div style={{ height: "100%", borderRadius: 999, background: t.teal, width: `${uploadProgress.total ? Math.round((uploadProgress.done / uploadProgress.total) * 100) : 0}%`, transition: "width 0.2s ease" }} />
+              </div>
+            </div>
+          )}
+
+          {/* UPDATE (permintaan user - "dan summary penambahan dan yang
+              gagal berapa"): panel ringkasan hasil upload - dulu cuma
+              lewat Toast (hilang otomatis 6 detik, teks polos digabung
+              jadi 1 paragraf) - sekarang jadi panel yg TETAP nempel di
+              layar (sampai upload berikutnya/komponen ditutup), 3 angka
+              besar (Ditambahkan/Dilewati/Tidak ditemukan) + rincian per
+              sheet berwarna (hijau=berhasil, kuning=dilewati/kosong,
+              merah=gagal/tidak dikenali), termasuk contoh nama MC/Branch
+              yg gagal supaya gampang dicek & diperbaiki di file. */}
+          {uploadResult && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 14, borderRadius: 12, background: t.sub, border: `1px solid ${t.inputBd}` }}>
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: t.hi }}>Ringkasan upload</div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <div style={{ flex: "1 1 120px", borderRadius: 10, background: t.tealBg, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: t.teal, fontVariantNumeric: "tabular-nums" }}>{uploadResult.grandAdded}</div>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>Email ditambahkan</div>
+                </div>
+                <div style={{ flex: "1 1 120px", borderRadius: 10, background: t.amberBg, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: t.amber, fontVariantNumeric: "tabular-nums" }}>{uploadResult.grandSkipped}</div>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>Baris dilewati</div>
+                </div>
+                <div style={{ flex: "1 1 120px", borderRadius: 10, background: t.redBg, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: t.red, fontVariantNumeric: "tabular-nums" }}>{uploadResult.grandNotFound}</div>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>MC/Area tidak ditemukan</div>
+                </div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {uploadResult.sheets.map((sh, i) => {
+                  const color = sh.status === "done" ? (sh.notFound ? t.amber : t.teal) : sh.status === "empty" ? t.mid : t.red;
+                  const bg = sh.status === "done" ? (sh.notFound ? t.amberBg : t.tealBg) : sh.status === "empty" ? t.inputBd : t.redBg;
+                  let detail;
+                  if (sh.status === "done") {
+                    const parts = [`${sh.added} email pada ${sh.touched} ${sh.role === "Admin MC" ? "MC" : "Area"}`];
+                    if (sh.skipped) parts.push(`${sh.skipped} dilewati`);
+                    if (sh.notFound) parts.push(`${sh.notFound} tidak ditemukan${sh.notFoundSample?.length ? ` (${sh.notFoundSample.join(", ")}${sh.notFound > sh.notFoundSample.length ? ", ..." : ""})` : ""}`);
+                    detail = parts.join(" · ");
+                  } else if (sh.status === "empty") {
+                    detail = "Sheet kosong, dilewati.";
+                  } else if (sh.status === "unrecognized") {
+                    detail = `Nama sheet tidak dikenali (harus diawali "Admin MC" atau "Admin Area").`;
+                  } else {
+                    detail = sh.error;
+                  }
+                  return (
+                    <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 10px", borderRadius: 8, background: t.card }}>
+                      <span style={{ flexShrink: 0, marginTop: 2, width: 7, height: 7, borderRadius: 999, background: color }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: t.hi }}>{sh.name}</div>
+                        <div style={{ fontSize: 11.5, color: t.mid, marginTop: 1 }}>{detail}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
