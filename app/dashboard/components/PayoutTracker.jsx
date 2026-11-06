@@ -412,14 +412,18 @@ async function dbSave(payload) {
   }
 }
 
+// Melempar error bila gagal baca — dipakai publish agar "gagal baca" tidak dianggap "data kosong".
+async function dbFetch() {
+  const { data, error } = await supabase.from("payout_data")
+    .select("*").order("created_at",{ascending:false}).limit(1).maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return { fileName:data.file_name||"", rowCount:data.row_count||0, publishedAt:data.published_at||"", rows:data.raw_data||[] };
+}
+
 async function dbLoad() {
-  try {
-    const { data, error } = await supabase.from("payout_data")
-      .select("*").order("created_at",{ascending:false}).limit(1).maybeSingle();
-    if (error) throw error;
-    if (!data) return null;
-    return { fileName:data.file_name||"", rowCount:data.row_count||0, publishedAt:data.published_at||"", rows:data.raw_data||[] };
-  } catch (e) { console.error(e); return null; }
+  try { return await dbFetch(); }
+  catch (e) { console.error(e); return null; }
 }
 
 async function dbDelete() {
@@ -429,51 +433,57 @@ async function dbDelete() {
 
 // Workbook baru punya banyak sheet (Panduan, Temuan, Outstanding Payment, Accrual Summary,
 // Lists, Coupa_*, SAP…). Ambil sheet "Partner Prepaid"/"Agency Prepaid": exact → startsWith → includes.
+// Tidak ketemu → null (bukan sheet pertama): sheet yang salah bisa mengganti data live.
 function pickSheet(names, src) {
   const want = src==="agency" ? "agency prepaid" : "partner prepaid";
   const n = names.map(s=>({ s, k:normKey(s) }));
   const hit = n.find(x=>x.k===want)
     || n.find(x=>x.k.startsWith(want))
-    || n.find(x=>x.k.startsWith(src))
-    || n.find(x=>x.k.includes(want))
-    || n.find(x=>x.k.includes(src) && !/coupa|sap|accrual|outstanding|summary|list|panduan|temuan/.test(x.k));
-  return hit ? hit.s : names[0];
+    || n.find(x=>x.k.includes(want) && !/coupa|sap|accrual|outstanding|summary|list|panduan|temuan/.test(x.k));
+  return hit ? hit.s : null;
 }
 
-async function readXLSX(file, src) {
+function sheetRows(XLSX, ws, src) {
+  const arr = XLSX.utils.sheet_to_json(ws,{header:1,defval:""});
+  const hints = src==="agency"
+    ? ["agency name","program type","#req","amount","po number","invoice number","flow","status"]
+    : ["partner name","program type","#req","amount","po number","invoice number","flow","status","reva date"];
+  let hdr = 0;
+  for (let i=0;i<Math.min(arr.length,12);i++) {
+    const row = arr[i].map(c=>String(c).toLowerCase()).join(" ");
+    if (hints.filter(h=>row.includes(h)).length>=2) { hdr=i; break; }
+  }
+  const rawRows = XLSX.utils.sheet_to_json(ws,{defval:null,range:hdr});
+  return rawRows.map(row=>{
+    const clean={};
+    Object.keys(row).forEach(k=>{
+      const v=row[k];
+      clean[k.trim()] = v instanceof Date ? (isNaN(v)?null:v.toISOString()) : v;
+    });
+    clean._source=src;
+    return clean;
+  }).filter(r=>isRawRow(r,src)); // baris Total/kosong tidak ikut dipublish
+}
+
+// Baca satu workbook → { partner:{sheet,rows}|null, agency:{sheet,rows}|null }.
+// File satu sheet tanpa nama yang cocok (mis. CSV) dikenali dari header kolomnya.
+async function readWorkbook(file) {
   const XLSX = await getXLSX();
-  return new Promise((resolve,reject)=>{
-    const rd = new FileReader();
-    rd.onload = e => {
-      try {
-        const wb  = XLSX.read(e.target.result,{type:"array",cellDates:true});
-        const sn  = pickSheet(wb.SheetNames, src);
-        const ws  = wb.Sheets[sn];
-        const arr = XLSX.utils.sheet_to_json(ws,{header:1,defval:""});
-        const hints = src==="agency"
-          ? ["agency name","program type","#req","amount","po number","invoice number","flow","status"]
-          : ["partner name","program type","#req","amount","po number","invoice number","flow","status","reva date"];
-        let hdr = 0;
-        for (let i=0;i<Math.min(arr.length,12);i++) {
-          const row = arr[i].map(c=>String(c).toLowerCase()).join(" ");
-          if (hints.filter(h=>row.includes(h)).length>=2) { hdr=i; break; }
-        }
-        const rawRows = XLSX.utils.sheet_to_json(ws,{defval:null,range:hdr});
-        const processed = rawRows.map(row=>{
-          const clean={};
-          Object.keys(row).forEach(k=>{
-            const v=row[k];
-            clean[k.trim()] = v instanceof Date ? (isNaN(v)?null:v.toISOString()) : v;
-          });
-          clean._source=src;
-          return clean;
-        });
-        resolve(processed);
-      } catch(err) { reject(err); }
-    };
-    rd.onerror = ()=>reject(new Error("File could not be read"));
-    rd.readAsArrayBuffer(file);
-  });
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf,{type:"array",cellDates:true});
+  const names = wb.SheetNames;
+  const found = { partner:pickSheet(names,"partner"), agency:pickSheet(names,"agency") };
+  if (!found.partner && !found.agency && names.length===1) {
+    const head = XLSX.utils.sheet_to_json(wb.Sheets[names[0]],{header:1,defval:""}).slice(0,12).flat().map(c=>normKey(c));
+    if (head.includes("agency name")) found.agency = names[0];
+    else if (head.includes("partner name")) found.partner = names[0];
+  }
+  const side = (src) => {
+    if (!found[src]) return null;
+    const rows = sheetRows(XLSX, wb.Sheets[found[src]], src);
+    return rows.length ? { sheet:found[src], rows } : null;
+  };
+  return { partner:side("partner"), agency:side("agency") };
 }
 
 const LIGHT = {
@@ -770,10 +780,8 @@ export default function PayoutTracker({
   const [toast, setToast]            = useState({ msg:"", type:"", show:false });
   const [allRaw, setAllRaw]          = useState([]);
   const [pubMeta, setPubMeta]        = useState(null);
-  const [adminPartnerRaw, setAdminPartnerRaw] = useState([]);
-  const [adminAgencyRaw,  setAdminAgencyRaw]  = useState([]);
-  const [partnerFile, setPartnerFile] = useState("");
-  const [agencyFile,  setAgencyFile]  = useState("");
+  // Hasil upload per sisi: { file, sheet, rows } atau null
+  const [upload, setUpload] = useState({ partner:null, agency:null });
 
   const [showAllCols, setShowAllCols] = useState(false);
 
@@ -802,7 +810,6 @@ export default function PayoutTracker({
   const [rawPageSize]                 = useState(100);
   // Status collapse Monthly Summary: { sig, map } — map hanya berlaku untuk set bulan (sig) saat itu.
   const [collapseState, setCollapseState] = useState({ sig:null, map:{} });
-  const [dragOver, setDragOver]       = useState({ partner:false, agency:false });
   const [searchFocus, setSearchFocus] = useState(false);
   const [searchIdx, setSearchIdx]     = useState(-1);
   const searchRef                     = useRef(null);
@@ -874,23 +881,39 @@ export default function PayoutTracker({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
 
-  async function handleFile(file, s) {
+  async function handleFile(file) {
     if (!file) return;
     try {
-      const rows = await readXLSX(file, s);
-      if (s==="partner") { setAdminPartnerRaw(rows); setPartnerFile(file.name); }
-      else               { setAdminAgencyRaw(rows);  setAgencyFile(file.name); }
-      showToast(`${s==="partner"?"Partner":"Agency"} file read: ${rows.length.toLocaleString()} rows`,"success");
+      const res = await readWorkbook(file);
+      if (!res.partner && !res.agency) { showToast('No "Partner Prepaid" or "Agency Prepaid" sheet with data found in this file',"error"); return; }
+      // Sisi yang tidak ada di file ini tetap dari upload sebelumnya → dua file terpisah tetap bisa
+      setUpload(u=>({
+        partner: res.partner ? { ...res.partner, file:file.name } : u.partner,
+        agency:  res.agency  ? { ...res.agency,  file:file.name } : u.agency,
+      }));
+      const lbl = [res.partner&&`Partner ${res.partner.rows.length.toLocaleString()}`, res.agency&&`Agency ${res.agency.rows.length.toLocaleString()}`].filter(Boolean).join(" · ");
+      showToast(`File read: ${lbl} rows`,"success");
     } catch(e) { showToast("Failed to read file: "+e.message,"error"); }
   }
 
   async function publish() {
-    const total = adminPartnerRaw.length + adminAgencyRaw.length;
-    if (!total) { showToast("Please upload a file first","error"); return; }
-    const merged = [...adminPartnerRaw.map(r=>({...r,_source:"partner"})),...adminAgencyRaw.map(r=>({...r,_source:"agency"}))];
-    const ts = new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});
-    const fnames = [partnerFile,agencyFile].filter(Boolean).join(", ")||"Data";
+    const { partner, agency } = upload;
+    if (!partner && !agency) { showToast("Please upload a file first","error"); return; }
     startLoad("Uploading to cloud…");
+    // Semua data tersimpan di SATU baris payout_data, dan dbSave mengganti baris itu.
+    // Sisi yang tidak di-upload disalin dari data live supaya tidak ikut hilang.
+    let keepPartner = [], keepAgency = [], kept = "";
+    if (!partner || !agency) {
+      let live;
+      try { live = await dbFetch(); }
+      catch (e) { stopLoad(); showToast("Could not read live data, nothing was published: "+(e?.message||e),"error"); return; }
+      const liveRows = live?.rows || [];
+      if (!partner) { keepPartner = liveRows.filter(r=>r._source==="partner"||!r._source); kept = "Partner"; }
+      else          { keepAgency  = liveRows.filter(r=>r._source==="agency"); kept = "Agency"; }
+    }
+    const merged = [...(partner?partner.rows:keepPartner),...(agency?agency.rows:keepAgency)];
+    const ts = new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});
+    const fnames = unique([partner?.file,agency?.file]).join(", ")+(kept?` (${kept} unchanged)`:"");
     const res = await dbSave({ fileName:fnames, rowCount:merged.length, publishedAt:ts, rows:merged });
     stopLoad();
     if (res.ok) { const meta={fileName:fnames,rowCount:merged.length,publishedAt:ts}; setPubMeta(meta); setCache({...meta,rows:merged}); setAllRaw(merged); showToast("✓ Published — all viewers auto-updated","success"); }
@@ -1140,13 +1163,12 @@ export default function PayoutTracker({
     regionView,setRegionView,regionOptions,
     partnerName,filterMpxType,regionFilter:effectiveRegion,
     screen,setScreen,loading,loadText,toast,
-    partnerRaw:adminPartnerRaw,agencyRaw:adminAgencyRaw,
+    upload,setUpload,
     viewPartnerRaw:partnerRaw, viewAgencyRaw:agencyRaw,
-    partnerFile,agencyFile,setPartnerRaw:setAdminPartnerRaw,setAgencyRaw:setAdminAgencyRaw,
-    setPartnerFile,setAgencyFile,pubMeta,
+    pubMeta,
     filters,setFilters,opts,tblSort,setTblSort,rawSort,setRawSort,
     rawPage,setRawPage,rawPageSize,collapsed,setCollapsed,
-    dragOver,setDragOver,searchFocus,setSearchFocus,searchIdx,setSearchIdx,
+    searchFocus,setSearchFocus,searchIdx,setSearchIdx,
     searchRef,searchSuggestions,allSuggestions,searchInput,setSearchInput,
     funnelExp,setFunnelExp,bnExp,setBnExp,
     src,setSrc,flowSel,activeTab,setActiveTab,heatMetric,setHeatMetric,
@@ -1190,9 +1212,18 @@ function ThemeWrapper(props) {
   );
 }
 
-function AdminScreen({ t, pubMeta, partnerFile, agencyFile, partnerRaw, agencyRaw, setPartnerRaw, setAgencyRaw, setPartnerFile, setAgencyFile, dragOver, setDragOver, handleFile, publish, viewDash, clearData }) {
+function AdminScreen({ t, pubMeta, upload, setUpload, handleFile, publish, viewDash, clearData }) {
   const w = useWidth();
   const [confirmDel, setConfirmDel] = useState(false);
+  const [confirmPub, setConfirmPub] = useState(false);
+  const [drag, setDrag] = useState(false);
+  const sides = useMemo(()=>[["partner","Partner Prepaid",C.teal],["agency","Agency Prepaid",C.magenta]].map(([k,label,ac])=>{
+    const u = upload[k];
+    return { k, label, ac, u, n:u?u.rows.length:0, amt:u?u.rows.reduce((a,r)=>a+gnum(r,["amount","nilai"]),0):0 };
+  }),[upload]);
+  const ready = sides.filter(x=>x.u), missing = sides.filter(x=>!x.u);
+  const confirmText = `This will replace ${ready.map(x=>`${x.label} (${x.n.toLocaleString()} rows)`).join(" and ")} for everyone.${missing.length&&ready.length?` ${missing[0].label} stays as it is.`:""}`;
+  const pick = (file) => { setConfirmPub(false); handleFile(file); };
   return (
     <div style={{maxWidth:1200,margin:"0 auto",padding:w<480?"18px 14px 44px":w<768?"20px 16px 48px":"24px 20px 56px"}}>
       <div style={{marginBottom:28}}>
@@ -1202,7 +1233,7 @@ function AdminScreen({ t, pubMeta, partnerFile, agencyFile, partnerRaw, agencyRa
           <span style={{fontFamily:MONO,fontSize:10,color:C.teal,letterSpacing:"0.1em"}}>Realtime</span>
         </div>
         <h1 style={{fontWeight:800,fontSize:"clamp(1.8rem,4vw,2.8rem)",letterSpacing:"-0.03em",color:t.ink,margin:"0 0 8px",lineHeight:1.05}}>Upload &amp; Publish Data</h1>
-        <p style={{color:t.muted,fontSize:14,maxWidth:"52ch",lineHeight:1.65,margin:0}}>Upload Partner Prepaid &amp; Agency Prepaid files (the sheet named &ldquo;Partner Prepaid&rdquo; / &ldquo;Agency Prepaid&rdquo; is read; other sheets are ignored), then publish. All viewers update automatically via realtime sync.</p>
+        <p style={{color:t.muted,fontSize:14,maxWidth:"60ch",lineHeight:1.65,margin:0}}>Upload one workbook. The &ldquo;Partner Prepaid&rdquo; and &ldquo;Agency Prepaid&rdquo; sheets are read together; other sheets are ignored. All viewers update automatically after you publish.</p>
         <div style={{display:"flex",gap:8,marginTop:14,flexWrap:"wrap"}}>
           {[{l:"Partner SLA 2/1/2/2/3 WD (Working Days)",c:C.teal},{l:"Agency SLA 2/2/2/3 WD (Working Days)",c:C.magenta},{l:"Direct Invoice SLA 4/5 WD (Working Days)",c:C.yellowD}].map((b,i)=>(
             <span key={i} style={{display:"inline-flex",alignItems:"center",padding:"5px 12px",borderRadius:99,background:`${b.c}18`,color:b.c,border:`1px solid ${b.c}40`,fontFamily:MONO,fontSize:10.5,fontWeight:600}}>{b.l}</span>
@@ -1234,47 +1265,51 @@ function AdminScreen({ t, pubMeta, partnerFile, agencyFile, partnerRaw, agencyRa
           </div>
         </div>
       )}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",gap:14,marginBottom:16}}>
-        {["partner","agency"].map(s=>{
-          const fname=s==="partner"?partnerFile:agencyFile, rws=s==="partner"?partnerRaw:agencyRaw, ac=s==="partner"?C.teal:C.magenta, drag=dragOver[s];
-          return (
-            <div key={s}
-              style={{background:drag?`${ac}12`:fname?t.goodBg:t.surf,border:`2px dashed ${drag?ac:fname?t.goodBd:t.line2}`,borderRadius:18,padding:w<480?"26px 18px 22px":"32px 24px 26px",textAlign:"center",cursor:"pointer",position:"relative",transition:"all .18s",boxShadow:t.shadow1}}
-              onDrop={e=>{e.preventDefault();setDragOver(d=>({...d,[s]:false}));handleFile(e.dataTransfer.files[0],s);}}
-              onDragOver={e=>{e.preventDefault();setDragOver(d=>({...d,[s]:true}));}}
-              onDragLeave={()=>setDragOver(d=>({...d,[s]:false}))}
-              onClick={()=>document.getElementById(`pt-f-${s}`).click()}
-              {...kbd(()=>document.getElementById(`pt-f-${s}`).click())}>
-              <span style={{position:"absolute",top:14,left:14,display:"inline-flex",padding:"3px 10px",borderRadius:99,background:`${ac}18`,color:ac,border:`1px solid ${ac}40`,fontFamily:MONO,fontSize:9.5,letterSpacing:"0.1em",textTransform:"uppercase"}}>{s==="partner"?"Partner Prepaid":"Agency Prepaid"}</span>
-              <div style={{width:54,height:54,borderRadius:15,background:ac,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}>
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              </div>
-              <div style={{fontWeight:700,fontSize:15,color:t.ink,marginBottom:5}}>{s==="partner"?"Drop Partner file here":"Drop Agency file here"}</div>
-              <div style={{fontFamily:MONO,fontSize:10.5,color:t.muted}}>or click to browse · .xlsx · .xls · .csv</div>
-              <input type="file" id={`pt-f-${s}`} accept=".xlsx,.xls,.csv" onChange={e=>handleFile(e.target.files[0],s)} style={{display:"none"}}/>
-              {fname&&(
-                <div style={{marginTop:14,padding:"7px 14px",background:t.goodBg,color:t.goodDark,border:`1px solid ${t.goodBd}`,borderRadius:10,fontSize:11.5,fontWeight:600,display:"inline-flex",alignItems:"center",gap:7,maxWidth:"100%",wordBreak:"break-all",lineHeight:1.3}}>
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
-                  {fname} · {rws.length.toLocaleString()} rows
-                </div>
-              )}
-            </div>
-          );
-        })}
+      <div
+        style={{background:drag?`${C.teal}12`:t.surf,border:`2px dashed ${drag?C.teal:ready.length?t.goodBd:t.line2}`,borderRadius:18,padding:w<480?"26px 18px 22px":"32px 24px 26px",textAlign:"center",cursor:"pointer",transition:"all .18s",boxShadow:t.shadow1,marginBottom:14}}
+        onDrop={e=>{e.preventDefault();setDrag(false);pick(e.dataTransfer.files[0]);}}
+        onDragOver={e=>{e.preventDefault();setDrag(true);}}
+        onDragLeave={()=>setDrag(false)}
+        onClick={()=>document.getElementById("pt-f-upload").click()}
+        {...kbd(()=>document.getElementById("pt-f-upload").click())}>
+        <div style={{width:54,height:54,borderRadius:15,background:C.teal,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
+        <div style={{fontWeight:700,fontSize:15,color:t.ink,marginBottom:5}}>Drop the payout workbook here</div>
+        <div style={{fontFamily:MONO,fontSize:10.5,color:t.muted}}>or click to browse · .xlsx · .xls · .csv</div>
+        <input id="pt-f-upload" type="file" accept=".xlsx,.xls,.csv" onClick={e=>e.stopPropagation()} onChange={e=>{pick(e.target.files[0]);e.target.value="";}} style={{display:"none"}}/>
       </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",gap:14,marginBottom:10}}>
+        {sides.map(x=>(
+          <div key={x.k} style={{background:x.u?t.goodBg:t.surf,border:`1px solid ${x.u?t.goodBd:t.line}`,borderLeft:`3px solid ${x.ac}`,borderRadius:14,padding:"12px 16px",minWidth:0}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+              <span style={{fontWeight:700,fontSize:13.5,color:t.ink}}>{x.label}</span>
+              <span style={{fontFamily:MONO,fontSize:10,fontWeight:600,color:x.u?t.goodDark:t.muted}}>{x.u?"✓ Found":"Not found"}</span>
+            </div>
+            {x.u
+              ? <>
+                  <div style={{fontWeight:800,fontSize:18,color:t.ink,marginTop:4}}>{x.n.toLocaleString()} rows · {fmtRp(x.amt)}</div>
+                  <div style={{fontFamily:MONO,fontSize:10.5,color:t.muted,marginTop:2,wordBreak:"break-word"}}>{fmtRpFull(x.amt)} · sheet &ldquo;{x.u.sheet}&rdquo; · {x.u.file}</div>
+                </>
+              : <div style={{fontSize:12.5,color:t.muted,marginTop:4,lineHeight:1.5}}>{ready.length?"Live data for this side stays unchanged. You can also drop a second file for it.":"Waiting for a file."}</div>}
+          </div>
+        ))}
+      </div>
+      {confirmPub&&ready.length>0&&(
+        <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",padding:"10px 14px",background:t.warnBg,border:`1px solid ${t.warnBd}`,borderRadius:12,marginBottom:12}}>
+          <span style={{flex:"1 1 260px",fontSize:13,fontWeight:600,color:t.ink}}>{confirmText}</span>
+          <Btn t={t} variant="primary" sm onClick={()=>{setConfirmPub(false);publish();}}>Yes, Publish</Btn>
+          <Btn t={t} variant="ghost" sm onClick={()=>setConfirmPub(false)}>Cancel</Btn>
+        </div>
+      )}
       <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:12}}>
-        <Btn t={t} variant="primary" onClick={publish}>
+        <Btn t={t} variant="primary" disabled={!ready.length} style={ready.length?{}:{opacity:.5,cursor:"not-allowed"}} onClick={()=>setConfirmPub(true)}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
           Publish to Cloud
         </Btn>
-        <Btn t={t} variant="outline" onClick={viewDash}>Preview Dashboard</Btn>
-        <Btn t={t} variant="ghost" onClick={()=>{setPartnerRaw([]);setAgencyRaw([]);setPartnerFile("");setAgencyFile("");}}>Reset Upload</Btn>
+        <Btn t={t} variant="outline" onClick={viewDash}>View Live Dashboard</Btn>
+        <Btn t={t} variant="ghost" onClick={()=>{setConfirmPub(false);setUpload({partner:null,agency:null});}}>Reset Upload</Btn>
       </div>
-      {(partnerRaw.length>0||agencyRaw.length>0)&&(
-        <div style={{fontFamily:MONO,fontSize:11,color:t.muted,padding:"8px 14px",background:t.surf2,borderRadius:10,border:`1px solid ${t.line}`,marginTop:2,wordBreak:"break-word"}}>
-          Ready to publish: {[partnerRaw.length&&`Partner ${partnerRaw.length.toLocaleString()}`,agencyRaw.length&&`Agency ${agencyRaw.length.toLocaleString()}`].filter(Boolean).join(" · ")} · Total {(partnerRaw.length+agencyRaw.length).toLocaleString()} rows
-        </div>
-      )}
     </div>
   );
 }
