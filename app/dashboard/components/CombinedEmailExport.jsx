@@ -326,9 +326,24 @@ export default function CombinedEmailExport({ theme }) {
 
     let addedCount = 0, skippedCount = 0, notFoundCount = 0, touched = 0;
     const notFoundSample = [];
+    // BUG FIX (audit user - "di filenya ada email ... mengapa belum ada ya
+    // untuk ini", padahal baris itu ADA di file): kolom District/MC (atau
+    // Branch/Area) di file export ini di-MERGE vertikal 4 baris per MC/Area
+    // (lihat handleExport/buildSheet - persis rowSpan di tabel layar) -
+    // SheetJS cuma nyimpen value itu di baris PERTAMA tiap blok, baris ke-
+    // 2/3/4 beneran KOSONG di data mentahnya walau SECARA VISUAL kelihatan
+    // "nyambung" ke atas. Tanpa forward-fill ini, codeRaw baris 2/3/4 selalu
+    // "" -> kena `if (!codeRaw) continue` di awal -> baris itu HILANG TOTAL
+    // tanpa pernah dihitung sbg skipped/notFound (makanya 1 slot admin bisa
+    // "ngilang" diam2 dari upload walau MC/Area-nya valid & emailnya benar).
+    // lastCode dibawa dari baris terakhir yang terisi, direset otomatis tiap
+    // kali ketemu baris dengan kolom District/MC/Branch/Area terisi lagi.
+    let lastCode = "";
     for (let i = 1; i < sheetRowsRaw.length; i++) {
       const line = sheetRowsRaw[i];
-      const codeRaw = String(line[idxCode] || "").trim();
+      const codeCell = String(line[idxCode] || "").trim();
+      if (codeCell) lastCode = codeCell;
+      const codeRaw = codeCell || lastCode;
       if (!codeRaw) continue;
       const codeKey = codeRaw.toLowerCase();
       const code = knownByKey.get(codeKey);

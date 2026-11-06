@@ -796,9 +796,19 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel, roleValue, 
       displayRows.forEach((r) => { if (r.mc) knownMcByKey.set(r.mc.toLowerCase(), r.mc); });
       let addedCount = 0, skippedCount = 0, mcNotFoundCount = 0, mcTouched = 0;
       const notFoundSample = [];
+      // BUG FIX (audit user - email di slot ke-2/3/4 "ngilang" dari upload):
+      // kolom MC/District hasil Download di sini di-merge vertikal 4 baris
+      // per MC (lihat handleDownloadEmails) - baris ke-2/3/4 beneran KOSONG
+      // di data mentah SheetJS walau kelihatan "nyambung" secara visual.
+      // Forward-fill dari baris terakhir yang terisi, supaya baris2 itu
+      // tetap dikenali milik MC yang sama, bukan hilang diam2 lewat
+      // `if (!mcRaw) continue` di bawah.
+      let lastMc = "";
       for (let i = 1; i < rowsRaw.length; i++) {
         const line = rowsRaw[i];
-        const mcRaw = String(line[idxMc] || "").trim();
+        const mcCell = String(line[idxMc] || "").trim();
+        if (mcCell) lastMc = mcCell;
+        const mcRaw = mcCell || lastMc;
         if (!mcRaw) continue;
         const mcKey = mcRaw.toLowerCase();
         const mc = knownMcByKey.get(mcKey);

@@ -577,9 +577,18 @@ export default function AdminAreaMapping({ theme, asOfDate, asOfLabel, roleValue
       displayRows.forEach((r) => { if (r.branch) knownBranchByKey.set(r.branch.toLowerCase(), r.branch); });
       let addedCount = 0, skippedCount = 0, branchNotFoundCount = 0, branchTouched = 0;
       const notFoundSample = [];
+      // BUG FIX (audit user - email di slot ke-2/3/4 "ngilang" dari upload):
+      // kolom Branch hasil Download di sini di-merge vertikal 4 baris per
+      // Branch - baris ke-2/3/4 beneran KOSONG di data mentah SheetJS walau
+      // kelihatan "nyambung" secara visual. Forward-fill dari baris
+      // terakhir yang terisi, supaya baris2 itu tetap dikenali milik Branch
+      // yang sama, bukan hilang diam2 lewat `if (!branchRaw) continue`.
+      let lastBranch = "";
       for (let i = 1; i < rowsRaw.length; i++) {
         const line = rowsRaw[i];
-        const branchRaw = String(line[idxBranch] || "").trim();
+        const branchCell = String(line[idxBranch] || "").trim();
+        if (branchCell) lastBranch = branchCell;
+        const branchRaw = branchCell || lastBranch;
         if (!branchRaw) continue;
         const branchKey = branchRaw.toLowerCase();
         const branch = knownBranchByKey.get(branchKey);
