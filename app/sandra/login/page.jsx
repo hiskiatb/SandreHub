@@ -236,14 +236,26 @@ function SandraLoginInner() {
     try {
       const { error } = await supabase.auth.signInWithPassword({ email: form.email.trim().toLowerCase(), password: form.password });
       if (error) {
+        // FIX (laporan user - layar login nampilin pesan error "{}" yg
+        // ga jelas): dulu langsung `error.message` tanpa jaga2 - kalau
+        // error-nya AuthRetryableFetchError (fetch ke server Auth
+        // Supabase gagal krn gangguan jaringan sesaat, BUKAN kata sandi
+        // salah), `.message`-nya bisa kosong/bukan string biasa, jadi
+        // yg ke-render ke layar jadi objek mentah "{}" - bikin bingung
+        // dikira field password yg salah format. Sekarang dicek
+        // `error.name` dulu: utk error retryable/network, kasih pesan
+        // jelas + saranin coba lagi, bukan nampilin isi error mentah.
+        const isNetworkIssue = error.name === "AuthRetryableFetchError" || !error.message || typeof error.message !== "string";
         setErrors(["password"]);
-        setErrMsg(error.message.includes("Invalid login") ? "Email atau kata sandi tidak sesuai." : error.message);
+        setErrMsg(isNetworkIssue
+          ? "Koneksi ke server terganggu sesaat. Silakan coba masuk lagi."
+          : (error.message.includes("Invalid login") ? "Email atau kata sandi tidak sesuai." : error.message));
         return;
       }
       try { await supabase.rpc("sdp_login_apply"); } catch { /* best-effort */ }
       router.refresh();
       router.push("/dashboard");
-    } catch { setErrMsg("Terjadi gangguan pada sistem."); }
+    } catch (e) { setErrMsg(e?.name === "AuthRetryableFetchError" ? "Koneksi ke server terganggu sesaat. Silakan coba masuk lagi." : "Terjadi gangguan pada sistem."); }
     finally  { setLoading(false); }
   };
 
