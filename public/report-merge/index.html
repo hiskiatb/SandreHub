@@ -2846,6 +2846,7 @@ function renderMailCard(){
       </div>
     </div>
     <div class="mail-body">${buildEmailBodyHtml(group)}</div>
+    <div class="attach-row" style="padding-bottom:16px;"><span class="attach-chip">📎 <span class="ac-name">${escapeHtml(groupExcelFilename(group))}</span></span></div>
   `;
 }
 
@@ -2916,34 +2917,42 @@ function logRow(name, status, message){
 // — supaya tabelnya tidak cuma keliatan di badan email, tapi juga bisa
 // dibuka/diolah sendiri sama penerimanya sebagai file Excel terpisah.
 // Dipakai SheetJS (XLSX) yang sama seperti buat baca file upload.
+function groupExcelFilename(group){
+  const safeName = String(group.name || 'Laporan').replace(/[\\/:*?"<>|]/g, '-').trim().slice(0, 80) || 'Laporan';
+  return `${safeName}.xlsx`;
+}
+
 function buildGroupExcelAttachment(group){
-  try{
-    // Kolom lampiran HARUS sama persis dengan kolom yang tampil di tabel
-    // badan email (state.tableCols yang included, urutan & labelnya sesuai
-    // pengaturan tabel di UI) — bukan semua kolom mentah dari Excel asli.
-    // Ini supaya penerima yang buka lampirannya melihat data yang sama
-    // dengan yang mereka baca di email, tidak ada kolom tersembunyi yang
-    // tiba-tiba muncul (atau sebaliknya, kolom yang ditampilkan malah hilang).
-    const visibleCols = (state.tableCols || []).filter(c=>c.included);
-    const cols = visibleCols.length
-      ? visibleCols
-      : (state.columns || Object.keys(group.rows[0] || {})).map(c=>({ key:c, label:c }));
-    const sheetRows = group.rows.map(r=>{
-      const o = {};
-      cols.forEach(c=>{ o[c.label] = r[c.key] ?? ''; });
-      return o;
-    });
-    const header = cols.map(c=>c.label);
-    const ws = XLSX.utils.json_to_sheet(sheetRows, { header });
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Data');
-    const base64 = XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
-    const safeName = String(group.name || 'Laporan').replace(/[\\/:*?"<>|]/g, '-').trim().slice(0, 80) || 'Laporan';
-    return { filename: `${safeName}.xlsx`, content: base64 };
-  }catch(err){
-    console.error('Gagal bikin lampiran Excel:', err);
-    return null;
-  }
+  // Kolom lampiran HARUS sama persis dengan kolom yang tampil di tabel
+  // badan email (state.tableCols yang included, urutan & labelnya sesuai
+  // pengaturan tabel di UI) — bukan semua kolom mentah dari Excel asli.
+  // Ini supaya penerima yang buka lampirannya melihat data yang sama
+  // dengan yang mereka baca di email, tidak ada kolom tersembunyi yang
+  // tiba-tiba muncul (atau sebaliknya, kolom yang ditampilkan malah hilang).
+  const visibleCols = (state.tableCols || []).filter(c=>c.included);
+  const cols = visibleCols.length
+    ? visibleCols
+    : (state.columns || Object.keys(group.rows[0] || {})).map(c=>({ key:c, label:c }));
+  // Kolom angka ditulis sebagai angka sungguhan (bukan teks seperti "1,000")
+  // supaya penerima bisa langsung jumlahkan/olah di Excel.
+  const cellValue = (r, c)=>{
+    const raw = r[c.key] ?? '';
+    if(!c.numeric || String(raw).trim() === '') return raw;
+    const num = Number(String(raw).trim().replace(/,/g,''));
+    return Number.isFinite(num) ? num : raw;
+  };
+  const sheetRows = [
+    cols.map(c=>c.label),
+    ...group.rows.map(r=>cols.map(c=>cellValue(r, c))),
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(sheetRows);
+  ws['!cols'] = cols.map((_, i)=>({
+    wch: Math.min(40, Math.max(...sheetRows.map(row=>String(row[i]).length)) + 2),
+  }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Data');
+  const base64 = XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
+  return { filename: groupExcelFilename(group), content: base64 };
 }
 
 async function sendGroupViaResend(group){
@@ -2951,21 +2960,34 @@ async function sendGroupViaResend(group){
   const html = buildEmailBodyHtml(group);
   const account = ''; // pemilihan akun pengirim tidak didukung di versi Mac
   const mode = 'send'; // mode terkunci permanen: selalu kirim langsung ke penerima asli
-  const attachment = (group.rows && group.rows.length) ? buildGroupExcelAttachment(group) : null;
+  // Kalau lampiran gagal dibuat, penerima ini dicatat gagal — jangan sampai
+  // email terkirim tanpa lampiran tanpa ada yang sadar.
+  let attachment;
+  try{
+    attachment = buildGroupExcelAttachment(group);
+  }catch(err){
+    throw new Error('Gagal membuat lampiran Excel: ' + err.message);
+  }
   const payload = {
     to: group.emails.join('; '),
     cc: group.ccs.join('; '),
     subject, html, account, mode,
-    attachment: attachment || undefined,
+    attachment,
   };
   const res = await fetch('/api/send', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify(payload)
   });
+  if(res.status === 413) throw new Error('Data penerima ini terlalu besar untuk dikirim sebagai email.');
   const data = await res.json();
   if(!data.ok) throw new Error(data.error || 'gagal mengirim');
   return data;
+}
+
+function sendResultNote(data){
+  const base = data.mode === 'send' ? 'terkirim' : 'terkirim ke alamat tes';
+  return data.attachmentCount ? `${base} + lampiran Excel` : base;
 }
 
 async function sendCurrent(){
@@ -2975,7 +2997,7 @@ async function sendCurrent(){
   try{
     const data = await sendGroupViaResend(group);
     row.remove();
-    logRow(group.name, 'ok', data.mode === 'send' ? 'terkirim' : 'terkirim ke alamat tes');
+    logRow(group.name, 'ok', sendResultNote(data));
     toast(data.mode === 'send' ? 'Email terkirim.' : 'Email uji coba terkirim ke alamat tes.');
     const batch = await logArchiveBatch({
       judul: state.narrative.judul, periode: state.narrative.periode, subjectTemplate: state.narrative.subjectTpl,
@@ -3101,7 +3123,7 @@ async function sendAllSequential(startIndex){
     try{
       const data = await sendGroupViaResend(group);
       row.remove();
-      logRow(group.name, 'ok', data.mode === 'send' ? 'terkirim' : 'terkirim ke alamat tes');
+      logRow(group.name, 'ok', sendResultNote(data));
       sendAllTotals.ok++;
       logArchiveRecipient(currentArchiveBatchId, buildRecipientArchivePayload(group, 'ok'));
     }catch(err){
