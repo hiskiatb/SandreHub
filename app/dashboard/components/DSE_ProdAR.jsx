@@ -197,10 +197,23 @@ function resolveInfoAsOf(dseCode, period, periodsByDse, liveRow) {
   let prior = null;
   for (const r of rows) { if (r.period < period) prior = r; else break; }
   if (prior) return { ds_name: prior.ds_name ?? "", dse_status: prior.dse_status ?? "", join_date: prior.join_date ?? "", source: "carried", sourcePeriod: prior.period };
-  // Semua snapshot yg ada justru period-nya LEBIH BARU dari yg diminta
-  // (mis. buka Oktober padahal snapshot pertama yg pernah dibuat itu
-  // Desember) -> ga ada referensi relevan, fallback live.
-  return { ds_name: liveRow?.ds_name ?? "", dse_status: liveRow?.dse_status ?? "", join_date: liveRow?.join_date ?? "", source: "live", sourcePeriod: null };
+  // BUGFIX (laporan user - "pas pengisian di bulan november sudah
+  // berubah, tapi di bulan oktobernya juga ikut berubah seperti yg
+  // november"): semua snapshot yg ADA justru period-nya LEBIH BARU dari
+  // yg diminta (mis. buka Oktober padahal snapshot PERTAMA yg pernah
+  // dibuat itu November) - dulu fallback ke `liveRow` di sini, PADAHAL
+  // `liveRow` (mf_dse_database) SELALU disinkronkan ke snapshot period
+  // paling baru tiap kali disimpan (lihat handleSaveDse - isLatestOrOnly),
+  // jadi begitu November disimpan, liveRow ikut keisi nilai November -
+  // Oktober yg "ga py snapshot & ga py prior" ikut nampilin nilai
+  // November itu via fallback ini, PADAHAL November itu period yg LEBIH
+  // BARU, bukan referensi yg relevan buat Oktober (harusnya KOSONG, bukan
+  // "nyambung ke masa depan"). liveRow cuma aman dipakai sbg fallback
+  // kalau DSE ini BELUM PUNYA snapshot period SAMA SEKALI (rows.length
+  // === 0, dicek di awal fungsi) - begitu snapshot period APAPUN sudah
+  // mulai ada, liveRow BUKAN LAGI representasi "baseline lama" yg netral,
+  // jadi di sini (ada snapshot tapi semuanya lebih baru) harus KOSONG.
+  return { ds_name: "", dse_status: "", join_date: "", source: "blank", sourcePeriod: null };
 }
 // Period (bulan) TERBARU yg SUDAH py snapshot tersimpan utk 1 dse_code -
 // dipakai handleSaveDse utk nentuin apakah simpan ke period X ini perlu
@@ -4104,7 +4117,7 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
                 footer) yg nyimpen SEMUA perubahan (info + penjualan)
                 sekaligus - panel ini tinggal info teks aja. */}
             <div style={{ fontSize: 11.5, color: t.teal, fontWeight: 700, lineHeight: 1.45 }}>
-              Mengisi data untuk periode <b>{periodSubtitle || infoPeriod}</b>. {infoResolved.source === "period" ? "Data ini sudah tersimpan khusus untuk periode ini." : infoResolved.source === "carried" ? `Nilai di bawah masih dibawa dari periode ${infoResolved.sourcePeriod} - simpan (tombol Simpan di bawah) untuk menjadikannya milik ${periodSubtitle || infoPeriod} sendiri (tidak akan mengubah data periode lain).` : "Belum ada data tersimpan untuk periode manapun - nilai di bawah masih data terkini."}
+              Mengisi data untuk periode <b>{periodSubtitle || infoPeriod}</b>. {infoResolved.source === "period" ? "Data ini sudah tersimpan khusus untuk periode ini." : infoResolved.source === "carried" ? `Nilai di bawah masih dibawa dari periode ${infoResolved.sourcePeriod} - simpan (tombol Simpan di bawah) untuk menjadikannya milik ${periodSubtitle || infoPeriod} sendiri (tidak akan mengubah data periode lain).` : infoResolved.source === "blank" ? "Belum ada data untuk periode ini maupun periode sebelumnya - silakan isi dari awal (tidak akan mengubah data periode lain yang lebih baru)." : "Belum ada data tersimpan untuk periode manapun - nilai di bawah masih data terkini."}
             </div>
           </div>
         )}
