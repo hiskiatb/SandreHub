@@ -2858,9 +2858,24 @@ async function checkSenderStatus(){
       <div class="sc-title">${title}</div>${sub ? `<div class="sc-sub">${sub}</div>` : ''}
     </div>`;
   };
+  // Kalau pengirim tidak bisa diambil dari server, field terkunci diberi
+  // keterangan jelas, bukan dibiarkan selamanya di "Memuat dari server…".
+  const markSenderUnavailable = (reason)=>{
+    const nameEl = document.getElementById('senderName');
+    const emailEl = document.getElementById('senderEmail');
+    if(nameEl.value || emailEl.value) return;
+    nameEl.placeholder = '⚠️ Pengirim tidak bisa dimuat dari server';
+    emailEl.placeholder = reason || 'Coba muat ulang halaman.';
+    emailEl.title = reason || '';
+  };
   try{
-    const res = await fetch('/api/status');
-    const data = await res.json();
+    const res = await fetch('/api/status', { signal: AbortSignal.timeout(20000) });
+    let data;
+    try{
+      data = await res.json();
+    }catch(_){
+      throw new Error(`Server membalas HTTP ${res.status} tanpa data`);
+    }
     // Field "Pengirim (Terkunci)" diisi dari data.sender KAPAN PUN itu ada
     // di respons — bukan cuma waktu data.ok true — supaya nama & alamat
     // pengirim (dari .env di server) tetap tampil walau cek verifikasi
@@ -2876,6 +2891,8 @@ async function checkSenderStatus(){
       document.getElementById('senderName').value = realName;
       document.getElementById('senderEmail').value = realEmail;
       refreshAllFilledStates();
+    } else {
+      markSenderUnavailable(data.error);
     }
     if(data.ok){
       if(data.domainVerified){
@@ -2895,7 +2912,9 @@ async function checkSenderStatus(){
       bar.classList.add('status-err');
     }
   }catch(err){
-    setCard('⚠️', 'Tidak bisa menghubungi server', `${escapeHtml(err.message)} — pastikan server sedang berjalan.`);
+    const msg = err.name === 'TimeoutError' ? 'Server tidak menjawab dalam 20 detik' : err.message;
+    markSenderUnavailable(msg);
+    setCard('⚠️', 'Tidak bisa menghubungi server', `${escapeHtml(msg)} — pastikan server sedang berjalan.`);
     bar.classList.add('status-err');
   }
 }
