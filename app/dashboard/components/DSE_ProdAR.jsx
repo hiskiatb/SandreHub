@@ -48,13 +48,14 @@ import * as XLSX from "xlsx";
 import lottie from "lottie-web";
 import successAnimData from "../../../public/promotor/success-animation.json";
 import SDP_DseDatabase from "./SDP_DseDatabase";
+import DSE_ControlCenter from "./DSE_ControlCenter";
 import ExcelFilter from "./ExcelFilter";
 import {
   Upload, FileSpreadsheet, X, Check, AlertTriangle, Loader2, FileDown,
   Search, RefreshCw, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, Wallet, TrendingUp, Calendar, Info,
   Pencil, Save, ListChecks, History, Database, Trash2,
   Users, UserCheck, UserX, Ticket, CircleDollarSign, Clock, Router,
-  SlidersHorizontal, Crown, Medal, MapPin, ArrowUpDown, Plus, RotateCcw, Copy, Printer, EyeOff, Eye, Minus,
+  SlidersHorizontal, Crown, Medal, MapPin, ArrowUpDown, Plus, RotateCcw, Copy, Printer, EyeOff, Eye, Minus, Layers,
   FileImage, FileText,
 } from "lucide-react";
 
@@ -621,7 +622,7 @@ const HISTORY_FIELD_LABEL = {
 // tanggal di tab Penjualan & tombol Hapus (+ kotak "ketik HAPUS") di tab
 // Informasi DSE disembunyikan - modal ini jadi murni tampilan riwayat,
 // konsisten dgn <DseInputRow readOnly> di popup form induknya.
-function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose, onBack, readOnly }) {
+function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose, onBack, readOnly, onInfoPeriodDeleted }) {
   // UPDATE (permintaan user - "riwayat perubahan, ini kita akan rework,
   // per masing masing sub menu, jadi ada Riwayat Informasi DSE, Riwayat
   // Penjualan SP, Riwayat Penjualan Voucher, dan juga Penjualan Saldo,
@@ -662,6 +663,17 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose, o
   const salesScrollRef = useRef(null);
   const [nameRows, setNameRows] = useState([]);
   const [prodRows, setProdRows] = useState([]);
+  // UPDATE (permintaan user - "pada riwayat informasi DSE, kita bisa
+  // betul betul hapus informasi dan riwayat di periode tersebut"): dulu
+  // snapshot per-bulan (mf_dse_info_periods, fitur edit Full Month
+  // pra-November) SAMA SEKALI ga ditampilin di popup Riwayat ini - cuma
+  // log perubahan field (mf_dse_database_history) yg kelihatan & bisa
+  // dihapus SATU-SATU per entri. Sekarang snapshot per periode dimuat
+  // juga & ditampilkan sbg daftar terpisah di atas, tiap periode bisa
+  // dihapus TOTAL (snapshot period-nya + semua entri log riwayat yg
+  // jatuh di bulan itu) dalam SEKALI aksi, pakai pola konfirmasi "ketik
+  // HAPUS" yg sama persis dgn penghapusan lain di popup ini.
+  const [infoPeriodRows, setInfoPeriodRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errMsg, setErrMsg] = useState("");
   const [names, setNames] = useState({});
@@ -683,15 +695,18 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose, o
     (async () => {
       setLoading(true); setErrMsg("");
       try {
-        const [{ data: idData, error: idErr }, { data: prodData, error: prodErr }] = await Promise.all([
+        const [{ data: idData, error: idErr }, { data: prodData, error: prodErr }, { data: periodData, error: periodErr }] = await Promise.all([
           supabase.from("mf_dse_database_history").select("*").eq("dse_code", dseCode).in("field_name", ["ds_name", "_created", "dse_status"]).order("changed_at", { ascending: false }).limit(150),
           supabase.from("mf_dse_prod_ar").select("*").eq("dse_code", dseCode).order("tanggal", { ascending: false }).limit(366),
+          supabase.from("mf_dse_info_periods").select("*").eq("dse_code", dseCode).order("period", { ascending: false }),
         ]);
         if (idErr) throw idErr;
         if (prodErr) throw prodErr;
+        if (periodErr) throw periodErr;
         if (!alive) return;
         setNameRows(idData || []);
         setProdRows(prodData || []);
+        setInfoPeriodRows(periodData || []);
         const ids = Array.from(new Set((idData || []).map((r) => r.changed_by).filter(Boolean)));
         if (ids.length) {
           const { data: profs } = await supabase.from("profiles").select("id, full_name").in("id", ids);
@@ -796,6 +811,26 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose, o
         const { error } = await supabase.from("mf_dse_database_history").delete().eq("id", confirmTarget.id);
         if (error) throw error;
         setNameRows((rows) => rows.filter((r) => r.id !== confirmTarget.id));
+      } else if (confirmTarget.kind === "infoPeriod") {
+        // Hapus TOTAL 1 periode (bulan): snapshot-nya sendiri di
+        // mf_dse_info_periods, DITAMBAH semua entri log riwayat
+        // (mf_dse_database_history, field ds_name/dse_status - BUKAN
+        // "_created", itu catatan DSE-nya pertama kali terdaftar, bukan
+        // spesifik ke 1 periode, jadi ga ikut kehapus) yg jatuh tempo di
+        // bulan periode itu - "betul-betul hapus informasi DAN riwayat
+        // di periode tersebut" persis spt diminta, bukan cuma hapus
+        // snapshot-nya doang.
+        const period = confirmTarget.id; // "YYYY-MM"
+        const monthStart = `${period}-01`;
+        const [py, pm] = period.split("-").map(Number);
+        const nextMonth = new Date(Date.UTC(py, pm, 1)).toISOString().slice(0, 10); // bulan berikutnya, tgl 1
+        const { error: eDelPeriod } = await supabase.from("mf_dse_info_periods").delete().eq("dse_code", dseCode).eq("period", period);
+        if (eDelPeriod) throw eDelPeriod;
+        const { error: eDelLog } = await supabase.from("mf_dse_database_history").delete().eq("dse_code", dseCode).in("field_name", ["ds_name", "dse_status"]).gte("changed_at", monthStart).lt("changed_at", nextMonth);
+        if (eDelLog) throw eDelLog;
+        setInfoPeriodRows((rows) => rows.filter((r) => r.period !== period));
+        setNameRows((rows) => rows.filter((r) => !(r.field_name !== "_created" && r.changed_at >= monthStart && r.changed_at < nextMonth)));
+        onInfoPeriodDeleted?.(dseCode, period);
       } else {
         // Reset NILAI metric itu sendiri jadi 0 di tanggal tsb (qty_* TIDAK
         // disentuh lagi, lihat UPDATE di startEdit/saveEdit) - baris
@@ -1167,9 +1202,49 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose, o
           ) : errMsg ? (
             <div style={{ padding: 20, textAlign: "center", color: t.red, fontSize: 12.5 }}>{errMsg}</div>
           ) : historyTab === "info" ? (
-            nameRows.length === 0 ? (
-              <div style={{ padding: 20, textAlign: "center", color: t.mid, fontSize: 12.5 }}>Belum ada riwayat perubahan identitas.</div>
-            ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {/* UPDATE (permintaan user - "pada riwayat informasi DSE,
+                  kita bisa betul betul hapus informasi dan riwayat di
+                  periode tersebut"): bagian BARU ini nampilin snapshot
+                  per-bulan (mf_dse_info_periods, dari fitur isi Full
+                  Month pra-November) - tiap periode bisa dihapus TOTAL
+                  (snapshot + semua log riwayat ds_name/dse_status yg
+                  jatuh di bulan itu, lihat handleConfirmDelete kind
+                  "infoPeriod") dalam SEKALI klik, pakai konfirmasi "ketik
+                  HAPUS" yg sama. Dipisah dari daftar log individual di
+                  bawahnya (yg masih bisa dihapus satu-satu spt biasa). */}
+              {infoPeriodRows.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 10.5, fontWeight: 800, color: t.lo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>Data Tersimpan per Periode</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                    {infoPeriodRows.map((r) => {
+                      const meta = statusMetaOf(r.dse_status);
+                      const [py, pm] = r.period.split("-").map(Number);
+                      const periodLabel = `${MONTH_NAMES[pm - 1]} ${py}`;
+                      const isConfirmingPeriod = confirmTarget?.kind === "infoPeriod" && confirmTarget?.id === r.period;
+                      return (
+                        <div key={r.period}>
+                          <HistoryCard
+                            icon={<Calendar size={15} color={t.teal} />} iconColor={t.teal} iconBg={t.tealBg}
+                            badgeLabel="Periode" badgeColor={t.teal} badgeBg={t.tealBg}
+                            title={periodLabel} timeLabel={r.updated_at ? fmtTime(r.updated_at) : ""} changedBy={r.updated_by_name || null}
+                            onDeleteClick={readOnly ? undefined : () => { setConfirmTarget({ kind: "infoPeriod", id: r.period, label: `seluruh data periode ${periodLabel}` }); setConfirmTyped(""); }}>
+                            <div style={{ fontSize: 12.5, color: t.mid, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                              <span style={{ fontWeight: 700, color: t.hi }}>{r.ds_name || "(nama kosong)"}</span>
+                              <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 999, background: meta.bg, color: meta.color, fontWeight: 700, fontSize: 11 }}>{meta.label}</span>
+                              {r.join_date && <span style={{ color: t.lo }}>Join {fmtDayMonth(r.join_date)}</span>}
+                            </div>
+                          </HistoryCard>
+                          {isConfirmingPeriod && <ConfirmHapusBox />}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              {nameRows.length === 0 ? (
+                infoPeriodRows.length === 0 && <div style={{ padding: 20, textAlign: "center", color: t.mid, fontSize: 12.5 }}>Belum ada riwayat perubahan identitas.</div>
+              ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
                 {nameRows.map((r) => {
                   const by = r.changed_by ? (names[r.changed_by] || "—") : null;
@@ -1234,7 +1309,8 @@ function DseHistoryModal({ t, dseCode, dse, initialTab, initialMonth, onClose, o
                   );
                 })}
               </div>
-            )
+              )}
+            </div>
           ) : historyTab === "sp" ? (
             renderSalesTab("sp", "SP", t.red, t.redBg, SimCardIcon)
           ) : historyTab === "fwa" ? (
@@ -3593,6 +3669,18 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
   // dicegat popup konfirmasi juga sebelum beneran disimpan.
   const [ojtConfirmOpen, setOjtConfirmOpen] = useState(false);
   const [ojtSaving, setOjtSaving] = useState(false);
+  // UPDATE (permintaan user - "ada opsi untuk HAPUS NAMA, dan juga ketika
+  // di set statusnya sebagai vacant, nama langsung menjadi vacant juga"):
+  // dulu SAMA SEKALI ga ada cara mengosongkan ds_name lagi begitu sudah
+  // pernah diisi (handleSaveName nolak draft kosong, `if (!draft) return`)
+  // - cek ke database nemuin bukti nyata: beberapa DSE yg di-Vacant-kan
+  // namanya LITERAL diketik "VACANT" oleh admin sbg akal-akalan, krn
+  // emang ga ada opsi hapus nama beneran. Ditambahkan tombol "Hapus Nama"
+  // (cuma muncul kalau namaVal udah keisi) + konfirmasi ringan (pola sama
+  // persis dgn vacantConfirmModal/ojtConfirmModal) yg beneran ngosongin
+  // ds_name jadi null, bukan nyuruh ketik teks workaround lagi.
+  const [hapusNamaConfirmOpen, setHapusNamaConfirmOpen] = useState(false);
+  const [hapusNamaSaving, setHapusNamaSaving] = useState(false);
   // UPDATE (permintaan user - "harusnya saat Join Date di klik maka dia
   // akan menampilkan informasi, Isi nama terlebih dahulu"): field Join
   // Date dikunci (disabled) selama Nama DSE kosong - tapi elemen disabled
@@ -3680,6 +3768,15 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
       setOjtSaving(false);
     }
   };
+  const confirmHapusNama = async () => {
+    setHapusNamaSaving(true);
+    try {
+      const ok = await onSave(dse.dse_code, { ds_name: "" }, { identityOnly: infoFullMonthPreNov });
+      if (ok) { onIdentityChange(dse.dse_code, "ds_name", ""); setHapusNamaConfirmOpen(false); }
+    } finally {
+      setHapusNamaSaving(false);
+    }
+  };
   // Popup konfirmasi "tandai Vacant" - dipakai BARENG oleh StatusSelect
   // (di-share tabel desktop & popup mobile), makanya di-portal biar aman
   // muncul di atas elemen apapun yg lagi nampung StatusSelect-nya.
@@ -3748,6 +3845,36 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
           <button onClick={confirmOjt} disabled={ojtSaving}
             style={{ flex: 1, height: 36, borderRadius: 9, border: "none", background: t.amber, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, opacity: ojtSaving ? 0.7 : 1 }}>
             {ojtSaving ? <Loader2 size={13} className="spin" /> : <UserCheck size={13} />} Ya, Tandai OJT
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+  const hapusNamaConfirmModal = hapusNamaConfirmOpen && typeof document !== "undefined" && createPortal(
+    <div style={{ position: "fixed", inset: 0, zIndex: 9800, background: "rgba(15,23,32,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+      onClick={(ev) => { if (ev.target === ev.currentTarget && !hapusNamaSaving) setHapusNamaConfirmOpen(false); }}>
+      <div style={{ width: "100%", maxWidth: 380, background: t.card, borderRadius: 16, boxShadow: "0 24px 60px rgba(0,0,0,0.35)", padding: 20, fontFamily: FONT }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 999, background: t.redBg, color: t.red, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <Trash2 size={16} />
+          </div>
+          <div style={{ fontSize: 14.5, fontWeight: 800, color: t.hi }}>Hapus Nama DSE?</div>
+        </div>
+        <div style={{ fontSize: 12.5, color: t.mid, lineHeight: 1.6, marginBottom: 10 }}>
+          Nama <strong style={{ color: t.hi }}>{namaVal}</strong> akan dikosongkan lagi (bukan diganti teks lain spt "VACANT") untuk periode yang sedang dibuka di popup ini. Berguna kalau slot ini memang belum/tidak ada orangnya, tanpa perlu mengetik nama akal-akalan.
+        </div>
+        <div style={{ fontSize: 11, color: t.lo, lineHeight: 1.6, marginBottom: 16 }}>
+          Status DSE (Active/Vacant/OJT) TIDAK ikut berubah oleh aksi ini - kalau slot ini memang kosong, ubah Status-nya secara terpisah lewat dropdown Status. Perubahan ini otomatis tercatat di Riwayat Informasi.
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setHapusNamaConfirmOpen(false)} disabled={hapusNamaSaving}
+            style={{ flex: 1, height: 36, borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+            Batal
+          </button>
+          <button onClick={confirmHapusNama} disabled={hapusNamaSaving}
+            style={{ flex: 1, height: 36, borderRadius: 9, border: "none", background: t.red, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, opacity: hapusNamaSaving ? 0.7 : 1 }}>
+            {hapusNamaSaving ? <Loader2 size={13} className="spin" /> : <Trash2 size={13} />} Ya, Hapus Nama
           </button>
         </div>
       </div>
@@ -4132,6 +4259,12 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
                 style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 12px", borderRadius: 7, border: "none", background: t.teal, color: "#fff", fontSize: 11.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
                 <Pencil size={12} />
                 {namaVal ? "Ubah Nama" : "Isi Nama"}
+              </button>
+            )}
+            {!infoReadOnly && namaVal && (
+              <button type="button" onClick={() => setHapusNamaConfirmOpen(true)} title="Hapus Nama (kosongkan lagi)"
+                style={{ flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", width: 34, height: 34, borderRadius: 7, border: `1px solid ${t.red}40`, background: t.redBg, color: t.red, cursor: "pointer" }}>
+                <Trash2 size={13} />
               </button>
             )}
           </div>
@@ -4839,6 +4972,7 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
       {nameChangeModal}
       {vacantConfirmModal}
       {ojtConfirmModal}
+      {hapusNamaConfirmModal}
       </>
     );
   }
@@ -4946,6 +5080,7 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
     {nameChangeModal}
     {vacantConfirmModal}
     {ojtConfirmModal}
+    {hapusNamaConfirmModal}
     </>
   );
 }
@@ -5239,6 +5374,13 @@ export const CATEGORY_OPTIONS = [
   { k: "dse", label: "DSE Prod. & AR", shortLabel: "DSE", icon: Wallet, desc: "Produksi harian & piutang per Kode DSE" },
   { k: "dso", label: "DSO/DSP AR", shortLabel: "DSO", icon: Wallet, desc: "Piutang level District (Distributor/DSO)" },
   { k: "hoa", label: "HoA AR", shortLabel: "HoA", icon: Wallet, desc: "Piutang level HoA" },
+  // UPDATE (permintaan user - "buat seperti PNL control center... hanya
+  // bisa dilihat oleh role spm sumatera"): tab baru "Control Center" -
+  // monitoring pengisian penjualan harian + Informasi DSE per District
+  // (MC), KHUSUS role spm_sumatera (difilter di getCategoryOptionsForRole
+  // di bawah, BUKAN di array ini - array ini cuma daftar master semua
+  // opsi yg ADA, filteringnya per-role).
+  { k: "control-center", label: "Control Center", shortLabel: "CC", icon: Layers, desc: "Monitoring pengisian penjualan & Informasi DSE per District (khusus SPM Sumatera)" },
 ];
 
 // FIX AKSES (audit user - "pastikan 100persen tidak ada bug" utk District
@@ -5262,9 +5404,13 @@ export const CATEGORY_OPTIONS = [
 // pemanggilan <DseInputRow>/<DseHistoryModal> di bawah, BUKAN dari sini -
 // helper ini cuma soal tab mana yg KELIHATAN, bukan izin edit di dalamnya).
 export function getCategoryOptionsForRole(role) {
-  if (role === "admin_area") return CATEGORY_OPTIONS; // hoa (full) + dso (full) + dse (view-only)
-  if (role === "finance_mpx") return CATEGORY_OPTIONS.filter((o) => o.k !== "hoa");
-  return CATEGORY_OPTIONS; // SPM & role lain yg sudah lolos gate di page.jsx: semua kategori
+  // UPDATE (permintaan user - "ini hanya bisa dilihat oleh role spm
+  // sumatera"): tab "Control Center" cuma utk spm_sumatera - role lain
+  // (admin_area/finance_mpx) difilter keluar di sini.
+  if (role === "admin_area") return CATEGORY_OPTIONS.filter((o) => o.k !== "control-center"); // hoa (full) + dso (full) + dse (view-only)
+  if (role === "finance_mpx") return CATEGORY_OPTIONS.filter((o) => o.k !== "hoa" && o.k !== "control-center");
+  if (role === "spm_sumatera") return CATEGORY_OPTIONS; // SPM Sumatera: semua kategori termasuk Control Center
+  return CATEGORY_OPTIONS.filter((o) => o.k !== "control-center"); // role lain yg lolos gate di page.jsx: semua KECUALI Control Center
 }
 
 
@@ -6824,6 +6970,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
     try {
       const dse = dseList.find((x) => x.dse_code === code);
       const idEdit = overridePatch ? { ...identity[code], ...overridePatch } : identity[code];
+      let hasInfoChange = false;
       if (idEdit && (idEdit.ds_name !== undefined || idEdit.mc !== undefined || idEdit.dse_status !== undefined || idEdit.join_date !== undefined)) {
         // UPDATE (permintaan user - "khusus bulan oktober perbaiki total
         // dia bisa diedit di full month" + "jika november sudah diisi
@@ -6838,7 +6985,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           const { error: eMc } = await supabase.from("mf_dse_database").update({ mc: idEdit.mc }).eq("dse_code", code);
           if (eMc) throw eMc;
         }
-        const hasInfoChange = idEdit.ds_name !== undefined || idEdit.dse_status !== undefined || idEdit.join_date !== undefined;
+        hasInfoChange = idEdit.ds_name !== undefined || idEdit.dse_status !== undefined || idEdit.join_date !== undefined;
         if (hasInfoChange) {
           const period = entryDate.slice(0, 7);
           const resolved = resolveInfoAsOf(code, period, infoPeriodsByDse, dse);
@@ -6892,6 +7039,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
         }
       }
 
+      let savedMoney = false;
       if (!opts.identityOnly) {
         const e = entries[code];
         if (e) {
@@ -6906,6 +7054,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           };
           const { error } = await supabase.from("mf_dse_prod_ar").upsert([row], { onConflict: "tanggal,dse_code" });
           if (error) throw error;
+          savedMoney = true;
         }
       }
       setDirty((prev) => ({ ...prev, [code]: false }));
@@ -6918,8 +7067,25 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       // bisa nyimpen banyak DSE sekaligus saat guard dialog "Simpan &
       // Lanjutkan" - itu tetap pakai toast biasa, ga perlu overlay full-
       // screen berulang-ulang per DSE dalam 1 aksi).
+      // UPDATE (permintaan user - "perbaiki tampilan ini agar menjadi
+      // lebih bagus dan informatif"): overlay dulu cuma kasih ID+tanggal
+      // mentah (IM3/3ID digabung 1 baris sempit jadi kepotong 2 baris
+      // berantakan, badge District juga ngepas kepotong) - sekarang
+      // dikirim data lebih kaya (dse_code & dse_code_3id TERPISAH biar
+      // masing2 dirender sbg chip sendiri yg jelas labelnya, district,
+      // RINGKASAN APA AJA YG BARU DISIMPAN [Informasi DSE / Penjualan],
+      // & periode aktif [Daily/Full Month]) - overlay-nya sendiri
+      // dirombak (lihat JSX overlay) biar semua info ini kebaca rapi.
       if (!opts.silentSuccessAnim) {
-        setDseSaveSuccess({ code, label: dseIdLabel, mc: dse?.mc || null, at: new Date().toISOString() });
+        const savedParts = [];
+        if (hasInfoChange) savedParts.push("Informasi DSE");
+        if (savedMoney) savedParts.push("Penjualan");
+        setDseSaveSuccess({
+          code, code3id: dse?.dse_code_3id || null, label: dseIdLabel,
+          mc: dse?.mc || null, branch: dse?.branch || null,
+          savedParts, periodLabel: periodColumnSubtitle,
+          periodMode, at: new Date().toISOString(),
+        });
         playDseSuccessTone();
       }
       return true;
@@ -7183,8 +7349,26 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
     if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [autoOpenCode, filteredDseList]);
 
+  // UPDATE (permintaan user - "seharusnya saat saya melakukan pencarian
+  // namun level masih di partner, dia akan langsung mengarahkan ke dse
+  // dan menampilkan popup seperti seharusnya"): dulu milih saran
+  // pencarian CUMA ngisi kotak search + minta autoOpenCode - itu
+  // asumsinya tabel level DSE SUDAH kebuka (baris `dse-row-{code}` ada
+  // di DOM). Kalau summaryGroupBy masih di level lain (Partner/Region/
+  // Area/District), baris DSE itu SAMA SEKALI ga di-render (tabelnya
+  // beda, tabel ringkasan ter-grouping, bukan roster per-DSE) - jadi
+  // autoOpenCode ga pernah ketemu elemennya, popup ga pernah kebuka.
+  // Sekarang milih saran pencarian SEKALIGUS set filter Partner/Region/
+  // Area/District ke hirarki milik DSE itu sendiri (biar DSE-nya pasti
+  // kelihatan/ga ketutup filter manapun) & langsung lompat ke level DSE
+  // (applyGroupBy("dse")) apapun level yg lagi aktif sebelumnya.
   const pickSearchSuggestion = (dse) => {
     runGuarded(() => {
+      setPartnerFilter(dse.mdi || "");
+      setRegionFilter(dse.region || "");
+      setBranchFilter(dse.branch || "");
+      setMcFilter(dse.mc || "");
+      applyGroupBy("dse");
       setDseSearch(dse.dse_code);
       setSearchSuggestOpen(false);
       setAutoOpenCode(dse.dse_code);
@@ -7782,6 +7966,27 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
     </button>
   );
 
+  // UPDATE (permintaan user - "buat seperti PNL control center... ini
+  // dibuat disub menu Control Center di menu Prod & AR, namun ini hanya
+  // bisa dilihat oleh role spm sumatera"): category "control-center"
+  // dirender sbg EARLY RETURN terpisah total dari layout dse/dso/hoa di
+  // bawah (semua hooks di atas titik ini TETAP jalan tiap render, sesuai
+  // Rules of Hooks - cuma JSX hasil akhirnya yg beda). Akses sudah
+  // dipastikan ganda: getCategoryOptionsForRole (dipakai page.jsx utk
+  // nunjukin/nyembunyiin pill-nya) + isSPM check di sini juga, biar ga
+  // bisa diakses via URL/state manipulasi oleh role lain.
+  if (category === "control-center") {
+    return (
+      <div style={{ fontFamily: FONT, color: t.hi }}>
+        {!isSPM ? (
+          <div style={{ padding: 40, textAlign: "center", color: t.mid, fontSize: 13 }}>Fitur ini khusus untuk role SPM Sumatera.</div>
+        ) : (
+          <DSE_ControlCenter theme={theme} profile={profile} />
+        )}
+      </div>
+    );
+  }
+
   return (
     <div style={{ fontFamily: FONT, color: t.hi }}>
       {/* Span pengukur teks label tanggal (lihat measureLabelPx di atas) -
@@ -7899,24 +8104,58 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           kelihatan nimpa popup yg masih kebuka. */}
       {dseSaveSuccess && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9950, background: "rgba(17,18,22,0.38)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 26 }}>
+          {/* UPDATE (permintaan user - "perbaiki tampilan ini agar menjadi
+              lebih bagus dan informatif"): dulu ID IM3/3ID DIGABUNG 1
+              baris sempit ("KODE / KODE3ID") - kepotong jadi 2 baris
+              acak-acakan, badge District juga ikut kepotong krn lebar
+              modal cuma 280px. Dirombak: modal dilebarkan dikit (320),
+              IM3 & 3ID jadi 2 CHIP TERPISAH DGN LABEL (dot kuning/pink,
+              persis gaya DualIdChips di popup form - konsisten), badge
+              District dikasih ikon MapPin + nowrap+ellipsis (ga pernah
+              kepotong lagi), DITAMBAH info baru yg lebih informatif: apa
+              aja yg baru disimpan (Informasi DSE / Penjualan, badge
+              teal) & periode aktifnya (Daily tanggal X / Full Month
+              bulan Y) - bukan cuma timestamp mentah spt sebelumnya. */}
           <div style={{
-            width: "100%", maxWidth: 280, background: "#FFFFFF", borderRadius: 26, padding: "20px 24px 26px",
+            width: "100%", maxWidth: 320, background: "#FFFFFF", borderRadius: 26, padding: "22px 24px 24px",
             display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center",
             boxShadow: "0 30px 80px rgba(23,24,28,0.28), 0 4px 14px rgba(23,24,28,0.1)",
             animation: "dseSuccessPop .52s cubic-bezier(.19,1.28,.32,1.02) both",
           }}>
-            <div style={{ position: "relative", width: 120, height: 120, marginBottom: 2, flexShrink: 0 }}>
-              <div style={{ position: "absolute", inset: 8, borderRadius: "50%", background: "radial-gradient(circle, rgba(26,158,90,0.22), transparent 72%)", animation: "dseSuccessGlow 1s ease-out .05s both" }} />
+            <div style={{ position: "relative", width: 96, height: 96, marginBottom: 0, flexShrink: 0 }}>
+              <div style={{ position: "absolute", inset: 6, borderRadius: "50%", background: "radial-gradient(circle, rgba(26,158,90,0.22), transparent 72%)", animation: "dseSuccessGlow 1s ease-out .05s both" }} />
               <div style={{ position: "relative" }}><DseSuccessLottieIcon /></div>
             </div>
             <div style={{ fontSize: 17.5, fontWeight: 800, letterSpacing: "-0.02em", color: "#17181C", animation: "dseSuccessUp .32s .5s both" }}>Data Tersimpan</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, animation: "dseSuccessUp .32s .56s both" }}>
-              <span style={{ fontSize: 14.5, fontFamily: "monospace", fontWeight: 800, color: "#17181C", background: "#F2F3F5", borderRadius: 10, padding: "6px 12px" }}>{dseSaveSuccess.label}</span>
-              {dseSaveSuccess.mc && (
-                <span style={{ fontSize: 10.5, fontWeight: 800, color: "#92400E", background: "rgba(217,119,6,0.14)", border: "1px solid rgba(217,119,6,0.3)", borderRadius: 999, padding: "3px 9px" }}>{dseSaveSuccess.mc}</span>
+            {dseSaveSuccess.savedParts?.length > 0 && (
+              <div style={{ fontSize: 12, fontWeight: 600, color: "#1A9E5A", marginTop: 3, animation: "dseSuccessUp .32s .53s both" }}>{dseSaveSuccess.savedParts.join(" & ")}</div>
+            )}
+            <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 6, marginTop: 14, animation: "dseSuccessUp .32s .56s both" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "8px 11px", borderRadius: 11, background: "#F2F3F5" }}>
+                <span style={{ width: 6, height: 6, borderRadius: 999, background: "#D97706", flexShrink: 0 }} />
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#92400E", flexShrink: 0 }}>IM3</span>
+                <span style={{ fontSize: 13, fontFamily: "monospace", fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left", flex: 1 }}>{dseSaveSuccess.code}</span>
+              </div>
+              {dseSaveSuccess.code3id && (
+                <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "8px 11px", borderRadius: 11, background: "#F2F3F5" }}>
+                  <span style={{ width: 6, height: 6, borderRadius: 999, background: "#BE185D", flexShrink: 0 }} />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#9D174D", flexShrink: 0 }}>3ID</span>
+                  <span style={{ fontSize: 13, fontFamily: "monospace", fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left", flex: 1 }}>{dseSaveSuccess.code3id}</span>
+                </div>
               )}
             </div>
-            <div style={{ fontSize: 11.5, color: "#80838B", marginTop: 9, animation: "dseSuccessUp .32s .62s both" }}>{fmtDayMonthFull(dseSaveSuccess.at.slice(0, 10))}, {new Date(dseSaveSuccess.at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}</div>
+            {dseSaveSuccess.mc && (
+              <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 10, maxWidth: "100%", animation: "dseSuccessUp .32s .59s both" }}>
+                <MapPin size={11} color="#92400E" style={{ flexShrink: 0 }} />
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#92400E", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dseSaveSuccess.mc}</span>
+              </div>
+            )}
+            <div style={{ width: "100%", height: 1, background: "#EEEFF1", margin: "14px 0 10px" }} />
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 11, color: "#80838B", animation: "dseSuccessUp .32s .62s both" }}>
+              <Calendar size={11} />
+              <span>{dseSaveSuccess.periodMode === "bulan" ? `Full Month · ${dseSaveSuccess.periodLabel}` : `Daily · ${dseSaveSuccess.periodLabel}`}</span>
+            </div>
+            <div style={{ fontSize: 10.5, color: "#AEB0B6", marginTop: 4, animation: "dseSuccessUp .32s .65s both" }}>Disimpan {fmtDayMonthFull(dseSaveSuccess.at.slice(0, 10))}, {new Date(dseSaveSuccess.at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}</div>
           </div>
           <style>{`
             @keyframes dseSuccessPop{0%{opacity:0;transform:scale(.8) translateY(8px)}100%{opacity:1;transform:scale(1) translateY(0)}}
@@ -7928,7 +8167,15 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       {historyFor && <DseHistoryModal t={t} dseCode={historyFor} dse={historyDse} initialTab={historyInitialTab} initialMonth={historyInitialMonth}
         readOnly={isAdminArea}
         onClose={() => { setHistoryFor(null); setHistoryDse(null); setHistoryOnBack(null); }}
-        onBack={() => { historyOnBack?.(); setHistoryFor(null); setHistoryDse(null); setHistoryOnBack(null); }} />}
+        onBack={() => { historyOnBack?.(); setHistoryFor(null); setHistoryDse(null); setHistoryOnBack(null); }}
+        onInfoPeriodDeleted={(code, period) => {
+          // Sinkronkan cache infoPeriodsByDse di induk juga (dipakai
+          // resolveInfoAsOf) begitu 1 periode dihapus TOTAL dari popup
+          // Riwayat - biar tampilan Informasi DSE di popup input (Full
+          // Month pra-November dkk) langsung akurat tanpa perlu reload
+          // halaman penuh.
+          setInfoPeriodsByDse((prev) => ({ ...prev, [code]: (prev[code] || []).filter((r) => r.period !== period) }));
+        }} />}
 
       {/* ── Selector 3 modul tracking (DSE / DSO / HoA) — permintaan user
           "nanti akan ada 3 yang kita tracking: 1. Penjualan dan AR DSE,
