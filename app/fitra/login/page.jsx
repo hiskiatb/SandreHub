@@ -16,6 +16,7 @@ import { Loader2, AlertCircle, ArrowLeft, UserRound, ChevronRight, Sun, Moon } f
 import { motion } from "framer-motion";
 import supabase from "../../../lib/supabase";
 import { HubLogo } from "../../../components/HubLogo";
+import { PwaInstallBanner } from "../../../components/PwaInstallBanner";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const RED  = "#ED1C24";
@@ -48,14 +49,14 @@ function GoogleG() {
 
 function FitraLoginInner() {
   const router = useRouter();
-  const [d, setD] = useState(true);
+  const [d, setD] = useState(false);
   const [checking, setChecking] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const t = mk(d);
 
   useEffect(() => {
-    setD(localStorage.getItem("hub-theme") !== "light");
+    setD(localStorage.getItem("hub-theme") === "dark");
     let alive = true;
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!alive) return;
@@ -172,6 +173,8 @@ function FitraLoginInner() {
           </span>
           <ChevronRight size={18} style={{ color: RED, flexShrink: 0 }} />
         </button>
+
+        <PwaInstallBanner dark={d} />
 
         <div style={{ marginTop: 18, textAlign: "center", fontSize: 10.5, letterSpacing: "0.12em", textTransform: "uppercase", color: t.lo, opacity: 0.35, fontWeight: 600 }}>
           © 2026 FitraHub · Finance Sumatera

@@ -32,7 +32,7 @@ const mk = (d) => ({
 // di login berikutnya karena supabase client persistSession:true).
 function CseRseRegisterInner() {
   const router = useRouter();
-  const [d, setD] = useState(true);
+  const [d, setD] = useState(false);
   const [stage, setStage] = useState("email"); // email | otp
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
@@ -44,7 +44,7 @@ function CseRseRegisterInner() {
   const [errMsg, setErrMsg] = useState("");
   const t = mk(d);
 
-  useEffect(() => { setD(localStorage.getItem("hub-theme") !== "light"); }, []);
+  useEffect(() => { setD(localStorage.getItem("hub-theme") === "dark"); }, []);
 
   // OTP di-generate & disimpan DI SERVER (app/api/send-otp/route.js, pakai
   // service role) — bukan di client lagi, lihat catatan keamanan di sana.

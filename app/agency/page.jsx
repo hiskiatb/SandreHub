@@ -48,7 +48,7 @@ function brandBadge(b) {
 
 export default function AgencyPortal() {
   const router = useRouter();
-  const [d, setD] = useState(true);
+  const [d, setD] = useState(false);
   const t = mk(d);
   const [ready, setReady] = useState(false);
   const [profile, setProfile] = useState(null);
@@ -65,7 +65,7 @@ export default function AgencyPortal() {
   const [showHelp, setShowHelp] = useState(true);
   const [mpFilters, setMpFilters] = useState({}); const [mpOpenCol, setMpOpenCol] = useState(""); const [mpRect, setMpRect] = useState(null);
 
-  useEffect(() => { setD(localStorage.getItem("hub-theme") !== "light"); }, []);
+  useEffect(() => { setD(localStorage.getItem("hub-theme") === "dark"); }, []);
 
   useEffect(() => {
     (async () => {

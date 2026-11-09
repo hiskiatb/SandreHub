@@ -15,16 +15,40 @@ function Body() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // FITUR (permintaan user - "di tampilan level lebih tinggi misal pada
+  // leaderboard kita bisa lihat bahwa si DMO tersebut memiliki orang lain
+  // yang juga turut berpartisipasi"): DMP (mh_profile_slots.mc
+  // terisi - lihat app/martahub/assignments/page.jsx) tetap dihitung
+  // kumulatif ke branch yang sama, jadi di leaderboard ini TIDAK perlu
+  // baris/branch terpisah - cukup badge kecil di baris DMO utama branch
+  // itu, menandai dia didampingi N DMP (+ daftar MC-nya lewat tooltip).
+  const [helpersByBranch, setHelpersByBranch] = useState(new Map()); // branch_id -> [{full_name, mc}]
+  const [mainNamesByBranch, setMainNamesByBranch] = useState(new Map()); // branch_id -> Set(full_name lowercase)
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await supabaseMarta
-        .from("mh_leaderboard_summary")
-        .select("*")
-        .order("final_score", { ascending: false })
-        .limit(100);
+      const [{ data }, { data: slots }] = await Promise.all([
+        supabaseMarta.from("mh_leaderboard_summary").select("*").order("final_score", { ascending: false }).limit(100),
+        supabaseMarta.from("mh_profile_slots").select("full_name, branch_id, mc").eq("role", "bme_rge").eq("status", "active"),
+      ]);
       setRows(data || []);
-    } catch (_) { setRows([]); }
+      const helpers = new Map();
+      const mains = new Map();
+      for (const s of slots || []) {
+        if (!s.branch_id) continue;
+        const key = (s.full_name || "").trim().toLowerCase();
+        if (s.mc) {
+          if (!helpers.has(s.branch_id)) helpers.set(s.branch_id, []);
+          helpers.get(s.branch_id).push({ full_name: s.full_name, mc: s.mc });
+        } else if (key) {
+          if (!mains.has(s.branch_id)) mains.set(s.branch_id, new Set());
+          mains.get(s.branch_id).add(key);
+        }
+      }
+      setHelpersByBranch(helpers);
+      setMainNamesByBranch(mains);
+    } catch (_) { setRows([]); setHelpersByBranch(new Map()); setMainNamesByBranch(new Map()); }
     finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -46,7 +70,20 @@ function Body() {
               {!loading && rows.map((r, i) => (
                 <tr key={r.id || i} style={{ borderTop: `1px solid ${T.line}` }}>
                   <td style={{ padding: "10px 14px", fontWeight: 800 }}>{medal(i)}</td>
-                  <td style={{ padding: "10px 14px", fontWeight: 700 }}>{r.user_name || r.user_id || "-"}</td>
+                  <td style={{ padding: "10px 14px", fontWeight: 700 }}>
+                    {r.user_name || r.user_id || "-"}
+                    {(() => {
+                      const isMain = r.branch_id && mainNamesByBranch.get(r.branch_id)?.has((r.user_name || "").trim().toLowerCase());
+                      const helpers = isMain ? (helpersByBranch.get(r.branch_id) || []) : [];
+                      if (!helpers.length) return null;
+                      return (
+                        <span title={`DMP: ${helpers.map((h) => `${h.full_name} (${h.mc})`).join(", ")}`}
+                          style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 800, padding: "1px 6px", borderRadius: 999, background: "rgba(15,110,86,0.12)", color: "#0F6E56", cursor: "default" }}>
+                          +{helpers.length} DMP
+                        </span>
+                      );
+                    })()}
+                  </td>
                   <td style={{ padding: "10px 14px", color: T.mid }}>{r.branch_name || r.branch_id || "-"}</td>
                   <td style={{ padding: "10px 14px", color: T.mid }}>{brandLabel(r.brand)}</td>
                   <td style={{ padding: "10px 14px", color: T.mid }}>{r.total_activities ?? 0}</td>

@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { Info, Loader2, ArrowLeft } from "lucide-react";
 import supabase from "../../../lib/supabase";
 import { HubLogo } from "../../../components/HubLogo";
+import { PwaInstallBanner } from "../../../components/PwaInstallBanner";
 import { WhatsAppIcon } from "../../../components/WhatsAppIcon";
 import { buildWaLink, fetchCallCenterSetting } from "../../../lib/whatsapp";
 
@@ -140,6 +141,8 @@ export default function PromotorLogin() {
               )}
             </div>
           </div>
+
+          <PwaInstallBanner dark={false} />
         </div>
       </div>
     </div>

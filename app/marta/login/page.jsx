@@ -5,6 +5,8 @@ import { supabase } from "../../../lib/supabase";
 import { canViewMarta } from "../../../lib/martaAccess";
 import { useOtpResendCooldown } from "../../../lib/otpCooldown";
 import { HubLogo } from "../../../components/HubLogo";
+// PwaInstallBanner sengaja tidak dipakai di sini - MartaHub punya aplikasi
+// mobile terpisah sendiri, bukan lewat PWA installer ini.
 import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, ChevronRight, ChevronDown, Camera, LayoutDashboard, LayoutGrid, QrCode, Store, CheckCircle2, KeyRound } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -29,7 +31,7 @@ const mk = (d) => ({
 function MartaLoginInner() {
   const router       = useRouter();
   const searchParams = useSearchParams();
-  const [d, setD]    = useState(true);
+  const [d, setD]    = useState(false);
   // Sama pola dgn /sandra/login: email dulu (satu langkah), password baru
   // muncul di langkah berikutnya - BUKAN dua field sekaligus di satu layar
   // spt sebelumnya. Halaman ini tetap KHUSUS SPM Sumatera (tidak digabung
@@ -80,7 +82,7 @@ function MartaLoginInner() {
   const redirect = searchParams.get("redirect") || "/martahub";
 
   useEffect(() => {
-    setD(localStorage.getItem("hub-theme") !== "light");
+    setD(localStorage.getItem("hub-theme") === "dark");
     if (searchParams.get("e") === "forbidden") {
       setErrMsg("Akun ini tidak memiliki akses ke MartaHub.");
     }

@@ -30,7 +30,7 @@ const mk = (d) => ({
 
 // Katalog role yang bisa diatur (SPM tak diatur — selalu penuh).
 const ROLE_CATALOG = [
-  { role: "finance_mpx",             label: "Finance MPX" },
+  { role: "finance_mpx",             label: "District Admin" },
   { role: "internal_ioh",            label: "IOH Sumatera" },
   { role: "ioh_north_sumatera",      label: "IOH North Sumatera" },
   { role: "ioh_central_sumatera",    label: "IOH Central Sumatera" },
