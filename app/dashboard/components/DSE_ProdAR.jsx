@@ -40,6 +40,13 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
 import supabase from "../../../lib/supabase";
 import * as XLSX from "xlsx";
+// UPDATE (permintaan user - "animasi berhasilnya apakah bisa sperti
+// animasi berhasil di promotor tracking system"): dipakai ULANG PERSIS
+// aset Lottie + sound effect yg sama dgn overlay sukses di app/promotor/
+// page.jsx ("Berhasil Diajukan") - bukan dibikin ulang dari nol, biar
+// konsisten se-sistem.
+import lottie from "lottie-web";
+import successAnimData from "../../../public/promotor/success-animation.json";
 import SDP_DseDatabase from "./SDP_DseDatabase";
 import ExcelFilter from "./ExcelFilter";
 import {
@@ -52,6 +59,52 @@ import {
 } from "lucide-react";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif`;
+
+// UPDATE (sama konteks - animasi sukses ala Promotor Tracking System):
+// helper suara + ikon Lottie DISALIN LANGSUNG dari app/promotor/page.jsx
+// (playSuccessTone/SuccessLottieIcon), cuma file sound-nya tetap di-fetch
+// dari path public yg sama ("/promotor/success-sound.mp3" - 1 file dipakai
+// bersama, ga perlu digandakan ke folder lain).
+let _dseSuccessCtx = null;
+let _dseSuccessBufferPromise = null;
+function playDseSuccessTone() {
+  try {
+    if (typeof window === "undefined") return;
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    if (!_dseSuccessCtx) _dseSuccessCtx = new AC();
+    if (_dseSuccessCtx.state === "suspended") _dseSuccessCtx.resume().catch(() => {});
+    if (!_dseSuccessBufferPromise) {
+      _dseSuccessBufferPromise = fetch("/promotor/success-sound.mp3")
+        .then((r) => r.arrayBuffer())
+        .then((buf) => _dseSuccessCtx.decodeAudioData(buf));
+    }
+    _dseSuccessBufferPromise.then((buffer) => {
+      const src = _dseSuccessCtx.createBufferSource();
+      src.buffer = buffer;
+      src.loop = false;
+      const gain = _dseSuccessCtx.createGain();
+      gain.gain.value = 0.9;
+      src.connect(gain); gain.connect(_dseSuccessCtx.destination);
+      src.start(0);
+    }).catch(() => {});
+  } catch { /* abaikan */ }
+}
+function DseSuccessLottieIcon() {
+  const hostRef = useRef(null);
+  useEffect(() => {
+    if (!hostRef.current) return;
+    const anim = lottie.loadAnimation({
+      container: hostRef.current,
+      renderer: "svg",
+      loop: false,
+      autoplay: true,
+      animationData: successAnimData,
+    });
+    return () => anim.destroy();
+  }, []);
+  return <div ref={hostRef} style={{ width: 120, height: 120 }} />;
+}
+
 const PAGE_SIZE = 50;
 const TABLE_BP = 860; // di bawah ini → tampilan card (mobile, fold, layar sempit)
 // UPDATE (permintaan user - "tidak perlu dipisah untuk IM3 dan 3ID, cukup
@@ -117,6 +170,47 @@ function resolveStatusAsOf(dseCode, dateStr, statusEvents, liveStatus) {
   // Semua perubahan tercatat terjadi SETELAH tanggal yg diminta -> status
   // pada tanggal itu = status SEBELUM perubahan tercatat paling awal.
   return events[0].old_value || liveStatus;
+}
+// UPDATE (permintaan user - "khusus bulan oktober perbaiki total dia bisa
+// diedit di full month" + "jika november sudah diisi datanya, maka ketika
+// yang periode oktober diisi dia ga akan mengubah data informasi dse
+// bulan november"): resolver snapshot Informasi DSE (Nama/Status/Join
+// Date) PER BULAN, dari index infoPeriodsByDse (lihat deklarasinya) -
+// 1) ada snapshot PERSIS utk period yg diminta -> pakai itu apa adanya.
+// 2) ga ada -> cari snapshot period TERDEKAT SEBELUM yg diminta (yg
+//    terbaru di antara yg lebih lama) -> dipakai sbg NILAI AWAL/REFERENSI
+//    (ditampilkan, tapi belum "milik" period ini sampai eksplisit disimpan
+//    - lihat handleSaveDse: simpan utk period lama TIDAK pernah menimpa
+//    snapshot period yg lebih baru).
+// 3) kalau belum py snapshot period SAMA SEKALI (DSE lama dari sblm fitur
+//    ini ada) -> fallback ke baris live mf_dse_database apa adanya,
+//    PERSIS perilaku lama (backward compatible, ga ada data yg "hilang").
+function resolveInfoAsOf(dseCode, period, periodsByDse, liveRow) {
+  const rows = periodsByDse?.[dseCode];
+  if (!rows || rows.length === 0) {
+    return { ds_name: liveRow?.ds_name ?? "", dse_status: liveRow?.dse_status ?? "", join_date: liveRow?.join_date ?? "", source: "live", sourcePeriod: null };
+  }
+  const exact = rows.find((r) => r.period === period);
+  if (exact) return { ds_name: exact.ds_name ?? "", dse_status: exact.dse_status ?? "", join_date: exact.join_date ?? "", source: "period", sourcePeriod: period };
+  // rows sudah terurut ASC by period (query .order("period")) -> ambil yg
+  // TERAKHIR di antara yg period-nya < yg diminta (paling dekat/baru).
+  let prior = null;
+  for (const r of rows) { if (r.period < period) prior = r; else break; }
+  if (prior) return { ds_name: prior.ds_name ?? "", dse_status: prior.dse_status ?? "", join_date: prior.join_date ?? "", source: "carried", sourcePeriod: prior.period };
+  // Semua snapshot yg ada justru period-nya LEBIH BARU dari yg diminta
+  // (mis. buka Oktober padahal snapshot pertama yg pernah dibuat itu
+  // Desember) -> ga ada referensi relevan, fallback live.
+  return { ds_name: liveRow?.ds_name ?? "", dse_status: liveRow?.dse_status ?? "", join_date: liveRow?.join_date ?? "", source: "live", sourcePeriod: null };
+}
+// Period (bulan) TERBARU yg SUDAH py snapshot tersimpan utk 1 dse_code -
+// dipakai handleSaveDse utk nentuin apakah simpan ke period X ini perlu
+// ikut nyinkron ke mf_dse_database (live) juga - CUMA kalau X adalah
+// period PALING BARU (atau belum ada period lain sama sekali), BUKAN
+// backdated-fill ke bulan yg sudah dilewati period yg lebih baru.
+function latestInfoPeriod(dseCode, periodsByDse) {
+  const rows = periodsByDse?.[dseCode];
+  if (!rows || rows.length === 0) return null;
+  return rows.reduce((max, r) => (!max || r.period > max ? r.period : max), null);
 }
 // UPDATE (permintaan user - "pada status ini akan ada umurnya juga
 // otomatis... buat uinya sangat bagus"): badge "umur status" di sebelah pill
@@ -3390,7 +3484,7 @@ function ArPiutangInput({ t, dseCode, dseCode3id, dseName, mc, branch, entryDate
     </>
   );
 }
-function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChange, identityEdit, onSave, saving, dirty, prevOutstanding, audit, onShowHistory, readOnly, mode, rank, isToday, entryDate, onPickDate, onSwitchPeriodMode, periodMode, periodSubtitle, profile, arMonth, runGuarded, statusEvents, hiddenCols = {}, loadingDse, dailyDisabled = false, autoOpenCode, onAutoOpenHandled }) {
+function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChange, identityEdit, onSave, saving, dirty, prevOutstanding, audit, onShowHistory, readOnly, isAdminAreaRole = false, infoPeriodsByDse, mode, rank, isToday, entryDate, onPickDate, onSwitchPeriodMode, onDailyFloorPrev, periodMode, periodSubtitle, profile, arMonth, runGuarded, statusEvents, hiddenCols = {}, loadingDse, dailyDisabled = false, autoOpenCode, onAutoOpenHandled }) {
   // UPDATE (permintaan user - "pisahkan data ar dse dan penjualan dse ke
   // menu terpisah"): 1 komponen yg sama dipakai utk 2 menu terpisah -
   // mode="sales" (tab "Penjualan DSE": SP/Voucher/Saldo/Total) & mode="ar"
@@ -3504,9 +3598,28 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
   // dikasih overlay+bubble yg sama persis buat ngejelasin alasannya.
   const [nextDateHint, setNextDateHint] = useState(false);
   const showNextDateHint = () => { setNextDateHint(true); setTimeout(() => setNextDateHint(false), 2200); };
-  const status = identityEdit?.dse_status ?? dse.dse_status ?? "";
-  const joinDate = identityEdit?.join_date ?? dse.join_date ?? "";
-  const namaVal = identityEdit?.ds_name ?? dse.ds_name ?? "";
+  // UPDATE (permintaan user - "khusus bulan oktober perbaiki total dia
+  // bisa diedit di full month" + snapshot per-bulan): nilai dasar
+  // Nama/Status/Join Date sekarang di-resolve dari snapshot PER BULAN yg
+  // lagi dibuka (resolveInfoAsOf, lihat deklarasinya) - bukan langsung
+  // dari baris live dse.* apa adanya spt dulu. identityEdit (draft blm
+  // disimpan) tetap PRIORITAS PALING ATAS kalau user lagi nge-edit.
+  const infoPeriod = entryDate ? entryDate.slice(0, 7) : "";
+  const infoResolved = resolveInfoAsOf(dse.dse_code, infoPeriod, infoPeriodsByDse, dse);
+  const status = identityEdit?.dse_status ?? infoResolved.dse_status ?? "";
+  const joinDate = identityEdit?.join_date ?? infoResolved.join_date ?? "";
+  const namaVal = identityEdit?.ds_name ?? infoResolved.ds_name ?? "";
+  // UPDATE (permintaan user - "khusus bulan oktober perbaiki total dia
+  // bisa diedit di full month karena mereka tidak bisa akses data
+  // daily"): `readOnly` (prop) ngegabung 2 alasan beda (mode Full Month
+  // ATAU role admin_area) - utk field Informasi DSE spesifik, Full Month
+  // di bulan2 SEBELUM November (Daily emang BELUM ADA/dailyDisabled)
+  // DIBOLEHKAN edit langsung (infoFullMonthPreNov), supaya user yg
+  // "tidak bisa akses data daily" tetap bisa isi data DSE-nya. role
+  // admin_area TETAP selalu readOnly apapun periodenya (isAdminAreaRole),
+  // ga ikut dilonggarkan oleh pengecualian ini.
+  const infoFullMonthPreNov = periodMode === "bulan" && !!infoPeriod && infoPeriod < DAILY_START_DATE.slice(0, 7);
+  const infoReadOnly = isAdminAreaRole ? true : (readOnly && !infoFullMonthPreNov);
   const sm = statusMetaOf(status);
   const ageInfo = statusAgeInfo(dse.dse_code, status, statusEvents, joinDate);
 
@@ -3526,7 +3639,7 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
   const selectStyle = { ...textInputStyle, cursor: "pointer", color: sm.color, fontWeight: 700, background: sm.bg, border: `1px solid ${sm.color}61`, appearance: "none", WebkitAppearance: "none", paddingRight: 28 };
   const labelStyle = { fontSize: 10, color: t.lo, marginBottom: 3, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.2 };
   const handleStatusChange = (val) => {
-    if (readOnly) return;
+    if (infoReadOnly) return;
     if (val === "Vacant" && status !== "Vacant") { setVacantConfirmOpen(true); return; }
     if (val === "Interview" && status !== "Interview") { setOjtConfirmOpen(true); return; }
     onIdentityChange(dse.dse_code, "dse_status", val);
@@ -3534,7 +3647,12 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
   const confirmVacant = async () => {
     setVacantSaving(true);
     try {
-      const ok = await onSave(dse.dse_code, { dse_status: "Vacant" });
+      // UPDATE (permintaan user - Informasi DSE editable di Full Month
+      // pre-November): di konteks ini `entryDate` cuma placeholder
+      // "tanggal 1" (bukan hari sungguhan), jadi identityOnly:true biar
+      // ga ikut nulis baris mf_dse_prod_ar palsu (lihat komentar di
+      // handleSaveDse) - Daily (Nov dst.) TETAP gabung spt semula.
+      const ok = await onSave(dse.dse_code, { dse_status: "Vacant" }, { identityOnly: infoFullMonthPreNov });
       if (ok) { onIdentityChange(dse.dse_code, "dse_status", "Vacant"); setVacantConfirmOpen(false); }
     } finally {
       setVacantSaving(false);
@@ -3543,7 +3661,7 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
   const confirmOjt = async () => {
     setOjtSaving(true);
     try {
-      const ok = await onSave(dse.dse_code, { dse_status: "Interview" });
+      const ok = await onSave(dse.dse_code, { dse_status: "Interview" }, { identityOnly: infoFullMonthPreNov });
       if (ok) { onIdentityChange(dse.dse_code, "dse_status", "Interview"); setOjtConfirmOpen(false); }
     } finally {
       setOjtSaving(false);
@@ -3660,7 +3778,11 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
       const isFirstFill = !namaVal;
       const overridePatch = { ds_name: draft };
       if (isFirstFill || (namaVal && nmIsNewPerson === true)) overridePatch.join_date = nmJoinDate;
-      const ok = await onSave(dse.dse_code, overridePatch);
+      // UPDATE (permintaan user - Informasi DSE editable di Full Month
+      // pre-November): sama alasannya kaya confirmVacant/confirmOjt di
+      // atas - identityOnly:true KHUSUS pas lagi di Full Month bulan
+      // sebelum November, biar ga ikut nulis baris mf_dse_prod_ar palsu.
+      const ok = await onSave(dse.dse_code, overridePatch, { identityOnly: infoFullMonthPreNov });
       if (ok) {
         onIdentityChange(dse.dse_code, "ds_name", draft);
         if (isFirstFill || (namaVal && nmIsNewPerson === true)) onIdentityChange(dse.dse_code, "join_date", nmJoinDate);
@@ -3863,7 +3985,7 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
   // beda 4px & setengah ukuran font dari tombol "Batal" di sebelahnya
   // (34px/12.5px, lihat footer editPopupPortal) jadi 2 tombol ga sejajar
   // persis. Disamain ke 34px/12.5px biar footer-nya rapi & konsisten.
-  const renderSaveButton = (full, onAfterSaved) => !readOnly && (
+  const renderSaveButton = (full, onAfterSaved) => (!readOnly || infoFullMonthPreNov) && (
     <button onClick={async () => { const ok = await onSave(dse.dse_code); if (ok && onAfterSaved) onAfterSaved(); }} disabled={saving || !dirty}
       style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 12px", borderRadius: 8, border: "none", background: dirty ? t.teal : t.inputBg, color: dirty ? "#fff" : t.lo, fontSize: 12.5, fontWeight: 700, cursor: dirty && !saving ? "pointer" : "default", opacity: saving ? 0.6 : 1, flexShrink: 0, width: full ? "100%" : undefined, justifyContent: full ? "center" : undefined }}>
       {saving ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Simpan
@@ -3949,7 +4071,18 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
             sekarang ditambah banner + tombol "Catat Hari Ini" yg sama
             persis pola di tab Penjualan, taruh plaing atas biar
             langsung kelihatan sebelum nyoba isi field manapun. */}
-        {periodMode === "bulan" && (
+        {/* UPDATE (permintaan user - "khusus bulan oktober perbaiki total
+            dia bisa diedit di full month karena mereka tidak bisa akses
+            data daily"): banner redirect-ke-Daily ini sekarang CUMA
+            muncul di Full Month bulan yg Daily-nya MEMANG tersedia
+            (November 2026 dst - !infoFullMonthPreNov) - itu masih
+            masuk akal krn Daily beneran bisa dipakai. Utk bulan SEBELUM
+            November (Oktober dst, infoFullMonthPreNov true) banner ini
+            DIGANTI info-box netral (bukan blocker) yg nunjukkin bulan
+            mana yg lagi diisi - field di bawahnya langsung aktif
+            (infoReadOnly false), konsisten sama snapshot per-bulan yg
+            baru (lihat infoResolved/infoFullMonthPreNov). */}
+        {periodMode === "bulan" && !infoFullMonthPreNov && (
           <div style={{ marginBottom: 14, padding: 12, borderRadius: 12, border: `1px dashed ${t.inputBd}`, background: t.sub }}>
             <div style={{ fontSize: 11.5, color: t.mid, marginBottom: 8, lineHeight: 1.45 }}>Untuk mengubah data DSE (Nama, Status, atau Join Date), silakan beralih ke menu <b>Daily</b> dan pilih tanggal yang sesuai untuk melakukan perubahan.</div>
             <button onClick={() => onPickDate?.(todayISO())}
@@ -3958,13 +4091,30 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
             </button>
           </div>
         )}
+        {infoFullMonthPreNov && !isAdminAreaRole && (
+          <div style={{ marginBottom: 14, padding: 12, borderRadius: 12, border: `1px dashed ${t.tealBd}`, background: t.tealBg }}>
+            {/* UPDATE (permintaan user - "membingungkan tombol simpan di
+                bawah"): dulu panel ini punya tombol Simpan SENDIRI,
+                terpisah dari tombol Simpan utama di footer popup
+                (renderSaveButton) yg SEKARANG JUGA muncul utk kondisi
+                Full Month pra-November ini (lihat perubahan
+                `!readOnly || infoFullMonthPreNov` di renderSaveButton) -
+                dua tombol Simpan nongol bareng = bingung mana yg harus
+                diklik. Tombol lokal dihapus, cukup 1 tombol Simpan (di
+                footer) yg nyimpen SEMUA perubahan (info + penjualan)
+                sekaligus - panel ini tinggal info teks aja. */}
+            <div style={{ fontSize: 11.5, color: t.teal, fontWeight: 700, lineHeight: 1.45 }}>
+              Mengisi data untuk periode <b>{periodSubtitle || infoPeriod}</b>. {infoResolved.source === "period" ? "Data ini sudah tersimpan khusus untuk periode ini." : infoResolved.source === "carried" ? `Nilai di bawah masih dibawa dari periode ${infoResolved.sourcePeriod} - simpan (tombol Simpan di bawah) untuk menjadikannya milik ${periodSubtitle || infoPeriod} sendiri (tidak akan mengubah data periode lain).` : "Belum ada data tersimpan untuk periode manapun - nilai di bawah masih data terkini."}
+            </div>
+          </div>
+        )}
         <div style={{ marginBottom: 14 }}>
           <div style={labelStyle}>Nama DSE</div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <div style={{ flex: 1, minWidth: 0, height: 34, padding: "0 10px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: t.sub, display: "flex", alignItems: "center", overflow: "hidden" }}>
               <span style={{ fontSize: 13, fontWeight: namaVal ? 700 : 400, fontStyle: namaVal ? "normal" : "italic", color: namaVal ? t.hi : t.lo, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{namaVal || "Belum diisi"}</span>
             </div>
-            {!readOnly && (
+            {!infoReadOnly && (
               <button type="button" onClick={() => { setNmDraft(namaVal); setNmIsNewPerson(null); setNmJoinDate(joinDate || ""); setNameModalOpen(true); }}
                 style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 12px", borderRadius: 7, border: "none", background: t.teal, color: "#fff", fontSize: 11.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
                 <Pencil size={12} />
@@ -3982,8 +4132,8 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
           <div>
             <div style={labelStyle}>Join Date</div>
             <div style={{ position: "relative" }}>
-              <input type="date" onClick={(ev) => { if (!ev.currentTarget.disabled) ev.currentTarget.showPicker?.(); }} disabled={readOnly || !namaVal} value={joinDate || ""} onChange={(ev) => onIdentityChange(dse.dse_code, "join_date", ev.target.value)} style={{ ...textInputStyle, ...(!namaVal ? { opacity: 0.5, cursor: "not-allowed" } : null) }} />
-              {!namaVal && !readOnly && (
+              <input type="date" onClick={(ev) => { if (!ev.currentTarget.disabled) ev.currentTarget.showPicker?.(); }} disabled={infoReadOnly || !namaVal} value={joinDate || ""} onChange={(ev) => onIdentityChange(dse.dse_code, "join_date", ev.target.value)} style={{ ...textInputStyle, ...(!namaVal ? { opacity: 0.5, cursor: "not-allowed" } : null) }} />
+              {!namaVal && !infoReadOnly && (
                 <div onClick={showJoinDateHint} style={{ position: "absolute", inset: 0, cursor: "not-allowed" }} />
               )}
               {joinDateHint && (
@@ -4137,7 +4287,7 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
             <span style={{ fontSize: 14.5, fontWeight: 800, color: t.hi }}>Penjualan {label}</span>
             {renderHistoryLink(tabKey, "Riwayat Penjualan")}
           </div>
-          {isBulanMode ? (
+          {isBulanMode && !infoFullMonthPreNov ? (
             <>
               <div>
                 <div style={labelStyle}>Total Penjualan {label} {periodSubtitle || fmtDayMonthFull(entryDate)}</div>
@@ -4181,13 +4331,13 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
                   (entryDate, format sama kyk header popup) biar jelas
                   angka yg lagi diinput/dilihat itu punya tanggal berapa,
                   ga ketuker sama tanggal lain pas klik2 nav tanggal. */}
-              <div style={labelStyle}>Total Penjualan {label} {fmtDayMonthFull(entryDate)}</div>
+              <div style={labelStyle}>Total Penjualan {label} {isBulanMode ? (periodSubtitle || fmtDayMonthFull(entryDate)) : fmtDayMonthFull(entryDate)}</div>
               {loadingDse ? (
                 <div style={{ width: "100%", height: 48, borderRadius: 11, border: `1px solid ${t.inputBd}`, background: t.sub, display: "flex", alignItems: "center", padding: "0 14px", boxSizing: "border-box" }}>
                   <NumSkeleton t={t} width="55%" height={17} />
                 </div>
               ) : (
-                <MoneyInput t={t} disabled={readOnly} value={value} onChange={onChange} accent={color} big prefix="Rp" />
+                <MoneyInput t={t} disabled={infoReadOnly} value={value} onChange={onChange} accent={color} big prefix="Rp" />
               )}
             </div>
           )}
@@ -4244,7 +4394,11 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
     const atTodayLimit = entryDate >= todayISO();
     const periodDateNavInline = onPickDate && entryDate && (
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, width: "100%", minWidth: 0 }}>
-        <button onClick={(ev) => { ev.stopPropagation(); onPickDate(shiftDay(entryDate, -1)); }} title="Hari sebelumnya"
+        <button onClick={(ev) => {
+            ev.stopPropagation();
+            if (periodMode === "tanggal" && entryDate <= DAILY_START_DATE) { onDailyFloorPrev?.(); return; }
+            onPickDate(shiftDay(entryDate, -1));
+          }} title={periodMode === "tanggal" && entryDate <= DAILY_START_DATE ? "Bulan sebelumnya (Oktober & seterusnya hanya Full Month)" : "Hari sebelumnya"}
           style={{ width: 38, height: 38, borderRadius: 11, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           <ChevronLeft size={17} />
         </button>
@@ -4626,10 +4780,36 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
               </div>
             </div>
             <div style={{ padding: "12px 18px", borderTop: `1px solid ${t.line}`, background: t.card, flexShrink: 0, display: "flex", gap: 8 }}>
-              <button onClick={requestClosePopup} style={{ flex: readOnly ? undefined : 1, width: readOnly ? "100%" : undefined, height: 34, borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-                Batal
-              </button>
-              {!readOnly && <div style={{ flex: 1 }}>{renderSaveButton(true, () => setCardOpen(false))}</div>}
+              {/* UPDATE (permintaan user - "tombol simpan di samping tombol
+                  batal"): sebelumnya tombol Batal full-width & Simpan
+                  cuma nongol kalau `!readOnly` APA ADANYA - padahal utk
+                  Full Month bulan pra-November (infoFullMonthPreNov),
+                  readOnly msh true walaupun field2 udah bisa diedit
+                  (lihat infoReadOnly/renderSaveButton yg udah ngijinin
+                  infoFullMonthPreNov), jadi Simpan ga pernah nongol &
+                  Batal keliatan full-width sendirian = bingung. Dibikin
+                  1 kondisi gabungan (canEdit) dipakai KONSISTEN di Batal
+                  (lebar) & Simpan (muncul/nggaknya), biar 2 tombol
+                  selalu sejajar berdampingan begitu row ini editable. */}
+              {(() => {
+                const canEdit = !readOnly || infoFullMonthPreNov;
+                return (
+                  <>
+                    <button onClick={requestClosePopup} style={{ flex: canEdit ? 1 : undefined, width: canEdit ? undefined : "100%", height: 34, borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                      Batal
+                    </button>
+                    {/* UPDATE (permintaan user - "ketika disimpan jangan
+                        langsung ditutup"): dulu popup OTOMATIS NUTUP
+                        (setCardOpen(false)) begitu Simpan sukses - user
+                        ga sempat liat konfirmasi tersimpan atau lanjut
+                        ngisi tab lain di DSE yg sama. Sekarang Simpan
+                        CUMA nyimpen (toast "tersimpan" tetap muncul),
+                        popup TETAP TERBUKA - user yg nutup manual lewat
+                        tombol Batal/X kalau emang udah selesai. */}
+                    {canEdit && <div style={{ flex: 1 }}>{renderSaveButton(true)}</div>}
+                  </>
+                );
+              })()}
             </div>
           </div>
         </div>,
@@ -5233,18 +5413,42 @@ function ArDsoHoaPanel({ t, d, profile, entryDate, arMonth, dseMeta, kind }) {
   const [editingCode, setEditingCode] = useState(null);
   const [editingVal, setEditingVal] = useState("");
   const [savingName, setSavingName] = useState(false);
-  const startEditName = (code) => { setEditingCode(code); setEditingVal(identityMap[code]?.dso_name || ""); };
+  // FIX (laporan user - "AR HoA, mengapa tidak bisa melakukan pengisian
+  // nama"): dulu nama HoA (g.hoaName, sumbernya mf_dse_database.hoa_name)
+  // CUMA ditampilkan sbg <span> polos, ga ada UI edit sama sekali (beda
+  // dgn DSO/DSP yg punya tombol pensil + tabel dso_dsp_identity sendiri) -
+  // komentar lama bilang "HoA ga butuh ini krn hoa_name udah ada per
+  // baris mf_dse_database", padahal kenyataannya kolom itu emang ga
+  // pernah diisi dari mana pun di aplikasi ini (dicek: cuma di-ORDER BY,
+  // ga pernah di-UPDATE). hoaNameOverride dipakai nyimpen hasil edit
+  // lokal (optimistic) biar langsung kelihatan tanpa reload - hoa_name
+  // di-update utk SEMUA baris mf_dse_database yg Area/branch-nya sama
+  // (1 Area = 1 nama HoA, dipakai bareng semua DSE di bawahnya).
+  const [hoaNameOverride, setHoaNameOverride] = useState({});
+  const startEditName = (code) => {
+    setEditingCode(code);
+    setEditingVal(isDso ? (identityMap[code]?.dso_name || "") : (hoaNameOverride[code] ?? (groups.find((g) => g.code === code)?.hoaName || "")));
+  };
   const cancelEditName = () => { setEditingCode(null); setEditingVal(""); };
   const saveEditName = async (code) => {
     setSavingName(true);
     try {
-      const patch = { mc: code, dso_name: editingVal.trim() || null, updated_by: profile?.id || null, updated_by_name: profile?.full_name || null, updated_at: new Date().toISOString() };
-      const { data, error } = await supabase.from("dso_dsp_identity").upsert(patch, { onConflict: "mc" }).select("*").single();
-      if (error) throw error;
-      setIdentityMap((prev) => ({ ...prev, [code]: data }));
+      if (isDso) {
+        const patch = { mc: code, dso_name: editingVal.trim() || null, updated_by: profile?.id || null, updated_by_name: profile?.full_name || null, updated_at: new Date().toISOString() };
+        const { data, error } = await supabase.from("dso_dsp_identity").upsert(patch, { onConflict: "mc" }).select("*").single();
+        if (error) throw error;
+        setIdentityMap((prev) => ({ ...prev, [code]: data }));
+      } else {
+        const val = editingVal.trim() || null;
+        const { error } = await supabase.from("mf_dse_database").update({ hoa_name: val }).eq("branch", code);
+        if (error) throw error;
+        setHoaNameOverride((prev) => ({ ...prev, [code]: val }));
+      }
       setEditingCode(null);
     } catch {
-      // diam2 gagal - field nama DSO/DSP bukan data kritikal piutang, ga perlu blokir UI
+      // diam2 gagal (sama pola dgn nama DSO/DSP) - nama HoA bukan data
+      // kritikal piutang, ga perlu blokir UI; `showToast` parent komponen
+      // ga ada di scope ArDsoHoaPanel ini.
     } finally {
       setSavingName(false);
     }
@@ -5375,11 +5579,25 @@ function ArDsoHoaPanel({ t, d, profile, entryDate, arMonth, dseMeta, kind }) {
                           <Pencil size={11} color={t.lo} />
                         </button>
                       )
+                    ) : editingCode === g.code ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <input autoFocus value={editingVal} onChange={(ev) => setEditingVal(ev.target.value)} onKeyDown={(ev) => { if (ev.key === "Enter") saveEditName(g.code); if (ev.key === "Escape") cancelEditName(); }}
+                          placeholder="Nama HoA" style={{ height: 30, borderRadius: 7, border: `1px solid ${t.teal}`, background: t.inputBg, color: t.hi, fontSize: 12, padding: "0 8px", width: 150, fontFamily: FONT }} />
+                        <button type="button" onClick={() => saveEditName(g.code)} disabled={savingName} title="Simpan" style={{ width: 26, height: 26, borderRadius: 6, border: "none", background: t.teal, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: savingName ? "default" : "pointer", flexShrink: 0 }}>
+                          {savingName ? <Loader2 size={12} className="spin" /> : <Save size={12} />}
+                        </button>
+                        <button type="button" onClick={cancelEditName} title="Batal" style={{ width: 26, height: 26, borderRadius: 6, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                          <X size={12} />
+                        </button>
+                      </div>
                     ) : (
-                      <span style={{ fontSize: 12.5, fontWeight: 600, color: g.hoaName ? t.hi : t.lo, fontStyle: g.hoaName ? "normal" : "italic" }}>{g.hoaName || "Belum diisi"}</span>
+                      <button type="button" onClick={() => startEditName(g.code)} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: FONT, color: (hoaNameOverride[g.code] ?? g.hoaName) ? t.hi : t.lo, fontStyle: (hoaNameOverride[g.code] ?? g.hoaName) ? "normal" : "italic", fontSize: 12.5, fontWeight: 600 }}>
+                        {(hoaNameOverride[g.code] ?? g.hoaName) || "Belum diisi"}
+                        <Pencil size={11} color={t.lo} />
+                      </button>
                     )}
                   </td>
-                  <ArPiutangInput t={t} readOnly={false} dseCode={g.code} dseCode3id={null} dseName={isDso ? (identityMap[g.code]?.dso_name || "") : g.hoaName} mc={isDso ? g.code : (g.mc || "")} branch={isDso ? (g.branch || "") : g.code}
+                  <ArPiutangInput t={t} readOnly={false} dseCode={g.code} dseCode3id={null} dseName={isDso ? (identityMap[g.code]?.dso_name || "") : (hoaNameOverride[g.code] ?? g.hoaName)} mc={isDso ? g.code : (g.mc || "")} branch={isDso ? (g.branch || "") : g.code}
                     entryDate={entryDate} arMonth={arMonth} profile={profile} outstanding={0}
                     onApplyLedger={() => {}} onConfirmSave={() => {}} saving={false}
                     itemsTable={itemsTable} paymentsTable={paymentsTable} codeField={codeField} idPrefix={idPrefix} entityNoun={entityNoun} />
@@ -5851,7 +6069,28 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   const [loadingDse, setLoadingDse] = useState(false);
   const [entries, setEntries] = useState({});     // { [dse_code]: {...} } — satu entry per DSE (tidak lagi per brand)
   const [identity, setIdentity] = useState({});   // { [dse_code]: { ds_name, mc } }
+  // UPDATE (permintaan user - "khusus bulan oktober perbaiki total dia
+  // bisa diedit di full month" + "jika november sudah diisi datanya,
+  // maka ketika yang periode oktober diisi dia ga akan mengubah data
+  // informasi dse bulan november"): Informasi DSE (Nama/Status/Join
+  // Date) sebelumnya cuma 1 baris "current" per DSE di mf_dse_database
+  // - ga ada konsep "per bulan". Sekarang ditambah snapshot per-bulan
+  // (tabel baru mf_dse_info_periods, key dse_code+period "YYYY-MM").
+  // infoPeriodsByDse = index-nya di client: { [dse_code]: [{period,
+  // ds_name, dse_status, join_date}, ...] } terurut ASC by period,
+  // dipakai resolveInfoAsOf() di bawah utk cari nilai suatu bulan
+  // (exact match -> fallback ke period TERDEKAT SEBELUMNYA yg py data ->
+  // fallback terakhir ke baris live mf_dse_database, utk data lama
+  // sblm fitur ini ada).
+  const [infoPeriodsByDse, setInfoPeriodsByDse] = useState({});
   const [dirty, setDirty] = useState({});         // { [dse_code]: true }
+  // UPDATE (permintaan user - "animasi berhasilnya apakah bisa sperti
+  // animasi berhasil di promotor tracking system"): overlay sukses ala
+  // Promotor ("Berhasil Diajukan") dipakai di sini juga, dipicu SEKALI per
+  // simpan satu-DSE (lihat handleSaveDse) - { label, sub, at }. Dibikin
+  // null lagi otomatis lewat useEffect auto-dismiss di bawah (2.6 detik,
+  // sama persis durasi di app/promotor/page.jsx).
+  const [dseSaveSuccess, setDseSaveSuccess] = useState(null);
   // FIX (laporan user - "kadang datanya tidak tersimpan"): loadDseAndEntries
   // (efek di bawah) nge-reload ulang `entries`/`dirty` dari DB tiap kali
   // filter (Region/Branch/Partner/District) atau tanggal entri berubah -
@@ -6336,6 +6575,29 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
 
       const codes = (dses || []).map((r) => r.dse_code);
       if (codes.length) {
+        // UPDATE (info-per-periode, lihat komentar di deklarasi
+        // infoPeriodsByDse): muat snapshot Informasi DSE per-bulan utk
+        // SEMUA dse_code yg lagi ditampilkan, dipaginasi sama spt query
+        // dseList di atas (jaga2 kalau datanya udah banyak ke depannya).
+        const periodRows = [];
+        for (let from = 0; ; from += PAGE) {
+          const { data: pageData, error: eInfoP } = await supabase
+            .from("mf_dse_info_periods").select("dse_code, period, ds_name, dse_status, join_date")
+            .in("dse_code", codes).order("period", { ascending: true })
+            .range(from, from + PAGE - 1);
+          if (eInfoP) { console.error("gagal muat mf_dse_info_periods:", eInfoP); break; }
+          periodRows.push(...(pageData || []));
+          if (!pageData || pageData.length < PAGE) break;
+        }
+        const periodsByDse = {};
+        periodRows.forEach((r) => {
+          (periodsByDse[r.dse_code] ||= []).push(r);
+        });
+        setInfoPeriodsByDse(periodsByDse);
+      } else {
+        setInfoPeriodsByDse({});
+      }
+      if (codes.length) {
         if (isRangeMode) {
           // Mode Periode: AKUMULASI tanggal-tanggal yg DICENTANG (bisa bolong,
           // tidak harus berurutan — spt filter tanggal di Excel). Qty/Nilai
@@ -6528,48 +6790,125 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // Makanya handleSaveDse skrg terima `overridePatch` opsional - di-merge
   // LANGSUNG ke idEdit di sini (bukan lewat state), jadi payload PASTI
   // ikut nilai terbaru walau onIdentityChange() blm sempat ke-apply.
-  const handleSaveDse = async (code, overridePatch) => {
+  // UPDATE (permintaan user - Informasi DSE bisa diedit di Full Month
+  // Oktober dst.): `opts.identityOnly` dipakai tombol Simpan KHUSUS tab
+  // Informasi DSE di Full Month pre-November (lihat infoBody) - SENGAJA
+  // skip blok upsert mf_dse_prod_ar di bawah. Di Full Month, `entryDate`
+  // cuma representasi "tanggal 1" placeholder (BUKAN hari sungguhan yg
+  // boleh ditulis sbg 1 baris entri harian) - kalau blok upsert itu ttp
+  // jalan pas nyimpen identitas doang dari Full Month, bisa kebikin baris
+  // mf_dse_prod_ar palsu di tanggal 1 tiap bulan terisi nilai agregat yg
+  // salah. Simpan Daily (Nov dst, entryDate = hari sungguhan) TETAP lewat
+  // jalur biasa (opts kosong), ga kena skip ini.
+  useEffect(() => {
+    if (!dseSaveSuccess) return;
+    const id = setTimeout(() => setDseSaveSuccess(null), 2600);
+    return () => clearTimeout(id);
+  }, [dseSaveSuccess]);
+
+  const handleSaveDse = async (code, overridePatch, opts = {}) => {
     setSavingCode(code);
     try {
       const dse = dseList.find((x) => x.dse_code === code);
       const idEdit = overridePatch ? { ...identity[code], ...overridePatch } : identity[code];
       if (idEdit && (idEdit.ds_name !== undefined || idEdit.mc !== undefined || idEdit.dse_status !== undefined || idEdit.join_date !== undefined)) {
-        const payload = {};
-        if (idEdit.ds_name !== undefined && idEdit.ds_name !== dse?.ds_name) payload.ds_name = idEdit.ds_name;
-        if (idEdit.mc !== undefined && idEdit.mc !== dse?.mc) payload.mc = idEdit.mc;
-        if (idEdit.dse_status !== undefined && idEdit.dse_status !== dse?.dse_status) payload.dse_status = idEdit.dse_status || null;
-        if (idEdit.join_date !== undefined && idEdit.join_date !== dse?.join_date) payload.join_date = idEdit.join_date || null;
-        if (Object.keys(payload).length) {
-          const { error } = await supabase.from("mf_dse_database").update(payload).eq("dse_code", code);
-          if (error) throw error;
-          // UPDATE (status per tanggal): kalau status DSE ini ikut diubah,
-          // refresh index riwayat status (statusEvents) biar counting
-          // Active/Vacant di Ringkasan langsung akurat tanpa perlu reload
-          // halaman - trigger DB sudah nyatet baris history-nya duluan
-          // (synchronous, dalam transaksi UPDATE yg sama).
-          if (payload.dse_status !== undefined) loadStatusEvents();
+        // UPDATE (permintaan user - "khusus bulan oktober perbaiki total
+        // dia bisa diedit di full month" + "jika november sudah diisi
+        // datanya, periode oktober diisi ga akan mengubah data informasi
+        // dse bulan november"): Nama/Status/Join Date sekarang DISIMPAN
+        // SEBAGAI SNAPSHOT PER BULAN (mf_dse_info_periods, key dse_code+
+        // period "YYYY-MM" = bulan yg LAGI DIBUKA, dari entryDate) -
+        // bukan langsung timpa 1 baris "current" doang spt dulu. MC
+        // (penempatan kerja) TETAP langsung ke mf_dse_database apa
+        // adanya - itu bukan konsep historis per-bulan.
+        if (idEdit.mc !== undefined && idEdit.mc !== dse?.mc) {
+          const { error: eMc } = await supabase.from("mf_dse_database").update({ mc: idEdit.mc }).eq("dse_code", code);
+          if (eMc) throw eMc;
+        }
+        const hasInfoChange = idEdit.ds_name !== undefined || idEdit.dse_status !== undefined || idEdit.join_date !== undefined;
+        if (hasInfoChange) {
+          const period = entryDate.slice(0, 7);
+          const resolved = resolveInfoAsOf(code, period, infoPeriodsByDse, dse);
+          const periodPayload = {
+            dse_code: code, period,
+            mc: (idEdit.mc !== undefined ? idEdit.mc : dse?.mc) || null,
+            branch: dse?.branch || null,
+            ds_name: (idEdit.ds_name !== undefined ? idEdit.ds_name : resolved.ds_name) || null,
+            dse_status: (idEdit.dse_status !== undefined ? idEdit.dse_status : resolved.dse_status) || null,
+            join_date: (idEdit.join_date !== undefined ? idEdit.join_date : resolved.join_date) || null,
+            updated_by: profile?.id || null,
+            updated_by_name: profile?.full_name || null,
+            updated_at: new Date().toISOString(),
+          };
+          const { error: ePeriod } = await supabase.from("mf_dse_info_periods").upsert([periodPayload], { onConflict: "dse_code,period" });
+          if (ePeriod) throw ePeriod;
+          // Period PALING BARU yg SUDAH py snapshot SEBELUM save ini -
+          // cuma kalau period yg baru disimpan >= itu (termasuk kalau
+          // belum py snapshot sama sekali), baris LIVE mf_dse_database
+          // ikut disinkronkan, biar bagian lain app yg masih pakai nilai
+          // "current" (di luar Full Month) tetap akurat. Kalau ini
+          // backdated-fill (period < yg paling baru, mis. isi Oktober
+          // padahal November udah py data) -> mf_dse_database JANGAN
+          // disentuh sama sekali, persis spt yg diminta user.
+          const priorRows = infoPeriodsByDse[code] || [];
+          const priorLatest = priorRows.reduce((max, r) => (!max || r.period > max ? r.period : max), null);
+          const isLatestOrOnly = !priorLatest || period >= priorLatest;
+          if (isLatestOrOnly) {
+            const livePayload = {};
+            if (periodPayload.ds_name !== (dse?.ds_name || null)) livePayload.ds_name = periodPayload.ds_name;
+            if (periodPayload.dse_status !== (dse?.dse_status || null)) livePayload.dse_status = periodPayload.dse_status;
+            if (periodPayload.join_date !== (dse?.join_date || null)) livePayload.join_date = periodPayload.join_date;
+            if (Object.keys(livePayload).length) {
+              const { error: eLive } = await supabase.from("mf_dse_database").update(livePayload).eq("dse_code", code);
+              if (eLive) throw eLive;
+              // UPDATE (status per tanggal): kalau status DSE ini ikut
+              // diubah, refresh index riwayat status (statusEvents) biar
+              // counting Active/Vacant di Ringkasan langsung akurat tanpa
+              // perlu reload halaman - trigger DB sudah nyatet baris
+              // history-nya duluan (synchronous, dalam transaksi UPDATE
+              // yg sama).
+              if (livePayload.dse_status !== undefined) loadStatusEvents();
+            }
+          }
+          setInfoPeriodsByDse((prev) => {
+            const rows = (prev[code] || []).filter((r) => r.period !== period);
+            rows.push({ period, ds_name: periodPayload.ds_name, dse_status: periodPayload.dse_status, join_date: periodPayload.join_date });
+            rows.sort((a, b) => (a.period < b.period ? -1 : a.period > b.period ? 1 : 0));
+            return { ...prev, [code]: rows };
+          });
         }
       }
 
-      const e = entries[code];
-      if (e) {
-        const row = {
-          tanggal: entryDate, dse_code: code,
-          mc: (idEdit?.mc ?? dse?.mc) || null,
-          qty_sp: fRaw(e.qty_sp), nilai_sp: fRaw(e.nilai_sp), nilai_fwa: fRaw(e.nilai_fwa),
-          qty_saldo: fRaw(e.qty_saldo), nilai_saldo: fRaw(e.nilai_saldo),
-          qty_voucher: fRaw(e.qty_voucher), nilai_voucher: fRaw(e.nilai_voucher),
-          ar_piutang: fRaw(e.ar_piutang), ar_bayar: fRaw(e.ar_bayar), catatan: e.catatan || null,
-          uploaded_by: profile?.id || null,
-        };
-        const { error } = await supabase.from("mf_dse_prod_ar").upsert([row], { onConflict: "tanggal,dse_code" });
-        if (error) throw error;
+      if (!opts.identityOnly) {
+        const e = entries[code];
+        if (e) {
+          const row = {
+            tanggal: entryDate, dse_code: code,
+            mc: (idEdit?.mc ?? dse?.mc) || null,
+            qty_sp: fRaw(e.qty_sp), nilai_sp: fRaw(e.nilai_sp), nilai_fwa: fRaw(e.nilai_fwa),
+            qty_saldo: fRaw(e.qty_saldo), nilai_saldo: fRaw(e.nilai_saldo),
+            qty_voucher: fRaw(e.qty_voucher), nilai_voucher: fRaw(e.nilai_voucher),
+            ar_piutang: fRaw(e.ar_piutang), ar_bayar: fRaw(e.ar_bayar), catatan: e.catatan || null,
+            uploaded_by: profile?.id || null,
+          };
+          const { error } = await supabase.from("mf_dse_prod_ar").upsert([row], { onConflict: "tanggal,dse_code" });
+          if (error) throw error;
+        }
       }
       setDirty((prev) => ({ ...prev, [code]: false }));
       const dseIdLabel = dse?.dse_code_3id
         ? `${code} / ${dse.dse_code_3id}`
         : code;
       showToast(`Data DSE ${dseIdLabel} tersimpan.`, "ok");
+      // UPDATE (animasi sukses ala Promotor Tracking System): cuma dipicu
+      // utk simpan SATU DSE langsung (bukan lewat handleSaveAllDirty yg
+      // bisa nyimpen banyak DSE sekaligus saat guard dialog "Simpan &
+      // Lanjutkan" - itu tetap pakai toast biasa, ga perlu overlay full-
+      // screen berulang-ulang per DSE dalam 1 aksi).
+      if (!opts.silentSuccessAnim) {
+        setDseSaveSuccess({ code, label: dseIdLabel, mc: dse?.mc || null, at: new Date().toISOString() });
+        playDseSuccessTone();
+      }
       return true;
     } catch (e) {
       showToast(e.message || "Gagal menyimpan.", "error");
@@ -6582,7 +6921,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   const handleSaveAllDirty = async () => {
     const codes = Object.keys(dirty).filter((c) => dirty[c]);
     const results = [];
-    for (const c of codes) results.push(await handleSaveDse(c)); // eslint-disable-line no-await-in-loop
+    for (const c of codes) results.push(await handleSaveDse(c, undefined, { silentSuccessAnim: true })); // eslint-disable-line no-await-in-loop
     const failCount = results.filter((r) => r === false).length;
     if (failCount === 0 && codes.length > 0) {
       showToast(`Semua perubahan tersimpan dengan aman (${codes.length} DSE).`, "ok");
@@ -7304,8 +7643,22 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       {periodOpen && periodMode === "tanggal" && periodPopPos && typeof document !== "undefined" && createPortal(
         <div ref={periodMenuRef} className="periodFade" style={{ position: "fixed", top: periodPopPos.top, left: periodPopPos.left - 264, zIndex: 300, width: 264, maxWidth: "calc(100vw - 32px)", borderRadius: 16, border: `1px solid ${t.line}`, background: t.card, boxShadow: "0 16px 40px rgba(0,0,0,0.22)", padding: 14 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-            <button onClick={() => setCalViewMonth(shiftMonth(calViewMonth, -1))} disabled={calViewMonth <= DAILY_START_DATE.slice(0, 7)} title={calViewMonth <= DAILY_START_DATE.slice(0, 7) ? "Pencatatan Daily baru dimulai November 2026" : undefined}
-              style={{ width: 28, height: 28, borderRadius: 7, border: "none", background: t.sub, color: calViewMonth <= DAILY_START_DATE.slice(0, 7) ? t.line : t.mid, cursor: calViewMonth <= DAILY_START_DATE.slice(0, 7) ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {/* UPDATE (permintaan user - sama alasan dgn panah kiri utama
+                di periodnav, lihat UPDATE di prevNavBtnRef di atas): panah
+                kiri di kalender Daily ini jg dulu ke-disable total pas
+                sampai November 2026 - sekarang tetap bisa diklik, tapi
+                klik-nya pindah ke mode Full Month + bulan sebelumnya
+                (Oktober), sekalian nutup popup kalender ini (krn Full
+                Month ga pakai kalender hari, pakai label bulan polos). */}
+            <button onClick={() => {
+                if (calViewMonth <= DAILY_START_DATE.slice(0, 7)) {
+                  runGuarded(() => { setPeriodMode("bulan"); jumpToMonth(shiftMonth(calViewMonth, -1)); setPeriodOpen(false); });
+                  return;
+                }
+                setCalViewMonth(shiftMonth(calViewMonth, -1));
+              }}
+              title={calViewMonth <= DAILY_START_DATE.slice(0, 7) ? "Bulan sebelumnya (Oktober & seterusnya hanya Full Month)" : "Bulan sebelumnya"}
+              style={{ width: 28, height: 28, borderRadius: 7, border: "none", background: t.sub, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <ChevronDown size={13} style={{ transform: "rotate(90deg)" }} />
             </button>
             <div style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>
@@ -7518,6 +7871,45 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* UPDATE (permintaan user - "animasi berhasilnya apakah bisa sperti
+          animasi berhasil di promotor tracking system"): overlay sukses
+          full-screen (kartu putih melayang, Lottie checkmark + sound, lalu
+          auto-hilang ~2.6 detik) - PERSIS pola visual "Berhasil Diajukan"
+          di app/promotor/page.jsx, cuma teks/datanya disesuaikan (DSE yg
+          baru disimpan, bukan nomor HP). zIndex 9950 - di atas popup edit
+          DSE (9500) & bahkan di atas dialog guard "Ada Perubahan Belum
+          Disimpan" (9900), krn sekarang popup TIDAK auto-close pas Simpan
+          (lihat perubahan renderSaveButton) jadi overlay ini harus tetap
+          kelihatan nimpa popup yg masih kebuka. */}
+      {dseSaveSuccess && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9950, background: "rgba(17,18,22,0.38)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 26 }}>
+          <div style={{
+            width: "100%", maxWidth: 280, background: "#FFFFFF", borderRadius: 26, padding: "20px 24px 26px",
+            display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center",
+            boxShadow: "0 30px 80px rgba(23,24,28,0.28), 0 4px 14px rgba(23,24,28,0.1)",
+            animation: "dseSuccessPop .52s cubic-bezier(.19,1.28,.32,1.02) both",
+          }}>
+            <div style={{ position: "relative", width: 120, height: 120, marginBottom: 2, flexShrink: 0 }}>
+              <div style={{ position: "absolute", inset: 8, borderRadius: "50%", background: "radial-gradient(circle, rgba(26,158,90,0.22), transparent 72%)", animation: "dseSuccessGlow 1s ease-out .05s both" }} />
+              <div style={{ position: "relative" }}><DseSuccessLottieIcon /></div>
+            </div>
+            <div style={{ fontSize: 17.5, fontWeight: 800, letterSpacing: "-0.02em", color: "#17181C", animation: "dseSuccessUp .32s .5s both" }}>Data Tersimpan</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, animation: "dseSuccessUp .32s .56s both" }}>
+              <span style={{ fontSize: 14.5, fontFamily: "monospace", fontWeight: 800, color: "#17181C", background: "#F2F3F5", borderRadius: 10, padding: "6px 12px" }}>{dseSaveSuccess.label}</span>
+              {dseSaveSuccess.mc && (
+                <span style={{ fontSize: 10.5, fontWeight: 800, color: "#92400E", background: "rgba(217,119,6,0.14)", border: "1px solid rgba(217,119,6,0.3)", borderRadius: 999, padding: "3px 9px" }}>{dseSaveSuccess.mc}</span>
+              )}
+            </div>
+            <div style={{ fontSize: 11.5, color: "#80838B", marginTop: 9, animation: "dseSuccessUp .32s .62s both" }}>{fmtDayMonthFull(dseSaveSuccess.at.slice(0, 10))}, {new Date(dseSaveSuccess.at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}</div>
+          </div>
+          <style>{`
+            @keyframes dseSuccessPop{0%{opacity:0;transform:scale(.8) translateY(8px)}100%{opacity:1;transform:scale(1) translateY(0)}}
+            @keyframes dseSuccessGlow{0%{opacity:0;transform:scale(.55)}55%{opacity:1}100%{opacity:0;transform:scale(1.4)}}
+            @keyframes dseSuccessUp{0%{opacity:0;transform:translateY(6px)}100%{opacity:1;transform:translateY(0)}}
+          `}</style>
         </div>
       )}
       {historyFor && <DseHistoryModal t={t} dseCode={historyFor} dse={historyDse} initialTab={historyInitialTab} initialMonth={historyInitialMonth}
@@ -8149,12 +8541,34 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
               </div>
             ) : (
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <div style={{ flex: "1 1 170px", minWidth: 160, borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: "16px 17px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 11 }}>
+                {/* UPDATE (bugfix lanjutan - screenshot "saya ingin
+                    informasinya jangan ada yang diringkas"): akar
+                    masalahnya BUKAN kurang ellipsis, tapi kartu ini
+                    (isinya 3 angka+label skaligus: Active/Vacant/OJT,
+                    jauh lebih "padat" drpd StatTile biasa yg cuma 1
+                    angka) dipaksa IKUTAN muat 2-kolom sejajar sama
+                    kartu lain krn basis lebarnya SAMA (flex:"1 1 170px",
+                    minWidth:160) - di layar HP (~380-420px), 2x170+gap
+                    masih muat, jadi kartu ini keremes jadi ~170px &
+                    kontennya kepotong ("1....", "ACTI...", dst). Dikasih
+                    minWidth jauh lebih besar (280) biar di lebar HP
+                    manapun dia SELALU ambil 1 baris penuh sendiri (ga
+                    pernah berbagi baris), konten di dalamnya ga perlu
+                    diringkas sama sekali lagi. */}
+                <div style={{ flex: "1 1 220px", minWidth: 220, borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: "16px 17px", overflow: "hidden" }}>
+                  {/* UPDATE (bugfix - screenshot "DSE ACTIVE / VACANT" label
+                      kepotong jadi 2 baris & bikin kartu ini lebih tinggi
+                      drpd kartu2 lain yg sejajar): span label ini dulu ga
+                      dikasih whiteSpace:nowrap/ellipsis (beda dari label
+                      kartu sejenis di atas, "Total Penjualan"/"Sisa
+                      Piutang", yg udah dikasih) - dibikin konsisten +
+                      minWidth:0 di container flex-nya biar truncation-nya
+                      beneran jalan (bukan cuma overflow diem2 ke luar). */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 11, minWidth: 0 }}>
                     <div style={{ width: 27, height: 27, borderRadius: 8, background: t.sub, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                       <Users size={13} />
                     </div>
-                    <span style={{ color: t.mid, fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>DSE Active / Vacant</span>
+                    <span style={{ color: t.mid, fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, minWidth: 0, lineHeight: 1.3 }}>DSE Active / Vacant</span>
                   </div>
                   {/* UPDATE (permintaan user - "untuk ojt jangan buat
                       dibawah agar tetap rapi"): angka OJT dulu dirender
@@ -8167,20 +8581,33 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                       SELALU dirender (walau nilainya 0) biar tinggi kartu
                       ini KONSISTEN apapun kondisinya - rapi dibanding
                       kartu2 lain. */}
-                  <div style={{ display: "flex", alignItems: "flex-end", gap: 14 }}>
-                    <div>
-                      <div style={{ fontSize: 20, fontWeight: 800, color: t.teal, lineHeight: 1.15, letterSpacing: -0.3, fontVariantNumeric: "tabular-nums" }}>{isSummaryLoading ? <NumSkeleton t={t} width={36} height={20} /> : fmtID(mcSummary.totalActive)}</div>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: t.teal, textTransform: "uppercase", letterSpacing: 0.3, marginTop: 3 }}>Active</div>
+                  {/* UPDATE (bugfix - screenshot "menjadi lewat kotak": angka
+                      + label Active/Vacant/OJT dulu `gap:14` TANPA
+                      minWidth:0/flexShrink di tiap kolomnya - begitu
+                      kartu ini sempit (layar kecil/banyak kartu sejajar),
+                      total lebar 3 kolom + 2 divider lebih lebar drpd
+                      kartu-nya sendiri & NGELUBER ke luar border-radius
+                      kartu (kartu di atas juga udah dikasih
+                      overflow:hidden sbg jaring pengaman kedua). Sekarang
+                      tiap kolom `flex:1, minWidth:0` (ikut menyusut
+                      bareng), teks dikasih ellipsis/nowrap biar kalau
+                      KEPEPET banget dipotong rapi (bukan dorong keluar
+                      kotak), & gap dikecilin dikit (14->10) biar lebih
+                      longgar duluan sblm sempat mepet. */}
+                  <div style={{ display: "flex", alignItems: "flex-end", gap: 10, minWidth: 0 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 20, fontWeight: 800, color: t.teal, lineHeight: 1.15, letterSpacing: -0.3, fontVariantNumeric: "tabular-nums", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{isSummaryLoading ? <NumSkeleton t={t} width={36} height={20} /> : fmtID(mcSummary.totalActive)}</div>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: t.teal, textTransform: "uppercase", letterSpacing: 0.3, marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Active</div>
                     </div>
                     <div style={{ width: 1, alignSelf: "stretch", background: t.line, flexShrink: 0 }} />
-                    <div>
-                      <div style={{ fontSize: 20, fontWeight: 800, color: mcSummary.totalVacant > 0 ? t.red : t.hi, lineHeight: 1.15, letterSpacing: -0.3, fontVariantNumeric: "tabular-nums" }}>{isSummaryLoading ? <NumSkeleton t={t} width={36} height={20} /> : fmtID(mcSummary.totalVacant)}</div>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: t.red, textTransform: "uppercase", letterSpacing: 0.3, marginTop: 3 }}>Vacant</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 20, fontWeight: 800, color: mcSummary.totalVacant > 0 ? t.red : t.hi, lineHeight: 1.15, letterSpacing: -0.3, fontVariantNumeric: "tabular-nums", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{isSummaryLoading ? <NumSkeleton t={t} width={36} height={20} /> : fmtID(mcSummary.totalVacant)}</div>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: t.red, textTransform: "uppercase", letterSpacing: 0.3, marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Vacant</div>
                     </div>
                     <div style={{ width: 1, alignSelf: "stretch", background: t.line, flexShrink: 0 }} />
-                    <div>
-                      <div style={{ fontSize: 20, fontWeight: 800, color: mcSummary.totalInterview > 0 ? t.amber : t.hi, lineHeight: 1.15, letterSpacing: -0.3, fontVariantNumeric: "tabular-nums" }}>{isSummaryLoading ? <NumSkeleton t={t} width={28} height={20} /> : fmtID(mcSummary.totalInterview)}</div>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: t.amber, textTransform: "uppercase", letterSpacing: 0.3, marginTop: 3 }}>OJT</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 20, fontWeight: 800, color: mcSummary.totalInterview > 0 ? t.amber : t.hi, lineHeight: 1.15, letterSpacing: -0.3, fontVariantNumeric: "tabular-nums", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{isSummaryLoading ? <NumSkeleton t={t} width={28} height={20} /> : fmtID(mcSummary.totalInterview)}</div>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: t.amber, textTransform: "uppercase", letterSpacing: 0.3, marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>OJT</div>
                     </div>
                   </div>
                 </div>
@@ -8495,9 +8922,8 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                       regionSummary (udah dihitung bareng, tinggal
                       ditampilin). */}
                   <div style={{ display: "grid", gridTemplateColumns: tab === "ar" ? "44px 1.5fr 1fr 1fr 1fr 1fr" : "44px 1.5fr 1fr 1fr 1fr 1fr 1fr 1fr", gap: 0, padding: "11px 18px", background: t.sub, fontSize: 10.5, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 4, height: "100%" }}>
+                    <div style={{ display: "flex", alignItems: "center", height: "100%" }}>
                       <span>#</span>
-                      {tab !== "ar" && <RankMetricMenu t={t} value={rankMetric} onChange={setRankMetric} />}
                     </div>
                     <div style={{ display: "flex", alignItems: "center", height: "100%" }}>{summaryGroupLabel}</div>
                     {tab === "ar" ? (
@@ -8510,11 +8936,31 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                     ) : (
                       <>
                         <div style={{ textAlign: "right", display: "flex", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>DSE Active / Vacant</div>
-                        <div style={{ textAlign: "right" }}>Penjualan SP<div style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1 }}>{periodColumnSubtitle}</div></div>
-                        <div style={{ textAlign: "right" }}>Penjualan FWA<div style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1 }}>{periodColumnSubtitle}</div></div>
-                        <div style={{ textAlign: "right" }}>Penjualan Voucher<div style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1 }}>{periodColumnSubtitle}</div></div>
-                        <div style={{ textAlign: "right" }}>Penjualan Saldo<div style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1 }}>{periodColumnSubtitle}</div></div>
-                        <div style={{ textAlign: "right" }}>Total Penjualan<div style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1 }}>{periodColumnSubtitle}</div></div>
+                        {/* UPDATE (permintaan user - "filter di header table,
+                            ga cuma di partner yang masih ga ada, pastikan
+                            di semua level ada"): dulu satu2nya cara milih
+                            metric urutan Rank itu dropdown kecil nempel di
+                            kolom "#" (RankMetricMenu) - ga jelas kelihatan
+                            "filter"-nya krn ga nempel di kolom yg relevan.
+                            Sekarang tiap header kolom Penjualan (SP/FWA/
+                            Voucher/Saldo/Total) LANGSUNG jadi tombol filter/
+                            urutkan sendiri² (klik = jadiin metric itu dasar
+                            Rank, ikon ArrowUpDown nyala teal pas lagi
+                            aktif) - blok header ini DIPAKAI BARENG oleh
+                            ke-5 level (Partner/Region/Area/District/DSE,
+                            lihat komentar "tabel ini DIPAKAI BARENG" di
+                            atas), jadi 1x perubahan di sini otomatis
+                            berlaku di SEMUA level, ga cuma Partner. */}
+                        {["sp", "fwa", "voucher", "saldo", "total"].map((v) => RANK_METRIC_OPTIONS.find((o) => o.v === v)).map((opt) => (
+                          <button key={opt.v} type="button" onClick={() => setRankMetric(opt.v)} title={`Urutkan Rank berdasarkan ${opt.label}`}
+                            style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: FONT, color: rankMetric === opt.v ? t.teal : t.mid }}>
+                            <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                              <ArrowUpDown size={10} />
+                              {opt.label}
+                            </span>
+                            <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{periodColumnSubtitle}</span>
+                          </button>
+                        ))}
                       </>
                     )}
                   </div>
@@ -8598,6 +9044,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                   periodSubtitle={periodColumnSubtitle}
                   onPickDate={(iso) => runGuarded(() => { if (tab === "ar") setTab("input"); setPeriodMode("tanggal"); jumpToDay(iso); })}
                   onSwitchPeriodMode={(m) => runGuarded(() => switchPeriodMode(m))}
+                  onDailyFloorPrev={() => runGuarded(() => { setPeriodMode("bulan"); jumpToMonth(shiftMonth(calViewMonth, -1)); })}
                   dailyDisabled={calViewMonth < DAILY_START_DATE.slice(0, 7)}
                   loadingDse={loadingDse}
                   autoOpenCode={autoOpenCode}
@@ -8612,6 +9059,8 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                   prevOutstanding={prevAr[dse.dse_code]}
                   onShowHistory={(dseObj, tab, onBack) => { setHistoryFor(dseObj.dse_code); setHistoryDse(dseObj); setHistoryInitialTab(tab || "info"); setHistoryInitialMonth(entryDate ? entryDate.slice(0, 7) : ""); setHistoryOnBack(() => onBack); }}
                   readOnly={isRangeMode || isAdminArea}
+                  isAdminAreaRole={isAdminArea}
+                  infoPeriodsByDse={infoPeriodsByDse}
                   runGuarded={runGuarded}
                   statusEvents={statusEvents}
                   audit={(() => { const be = entries[dse.dse_code]; return be?.updated_at || be?.uploaded_by ? { updated_at: be.updated_at, uploaded_at: be.uploaded_at, by: profilesMap[be.uploaded_by] } : null; })()} />
@@ -8811,6 +9260,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                         periodSubtitle={periodColumnSubtitle}
                         onPickDate={(iso) => runGuarded(() => { if (tab === "ar") setTab("input"); setPeriodMode("tanggal"); jumpToDay(iso); })}
                         onSwitchPeriodMode={(m) => runGuarded(() => switchPeriodMode(m))}
+                  onDailyFloorPrev={() => runGuarded(() => { setPeriodMode("bulan"); jumpToMonth(shiftMonth(calViewMonth, -1)); })}
                   dailyDisabled={calViewMonth < DAILY_START_DATE.slice(0, 7)}
                         loadingDse={loadingDse}
                         autoOpenCode={autoOpenCode}
@@ -8825,6 +9275,8 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                         prevOutstanding={prevAr[dse.dse_code]}
                         onShowHistory={(dseObj, tab, onBack) => { setHistoryFor(dseObj.dse_code); setHistoryDse(dseObj); setHistoryInitialTab(tab || "info"); setHistoryInitialMonth(entryDate ? entryDate.slice(0, 7) : ""); setHistoryOnBack(() => onBack); }}
                         readOnly={isRangeMode || isAdminArea}
+                        isAdminAreaRole={isAdminArea}
+                        infoPeriodsByDse={infoPeriodsByDse}
                         runGuarded={runGuarded}
                         statusEvents={statusEvents}
                         hiddenCols={hiddenCols}
