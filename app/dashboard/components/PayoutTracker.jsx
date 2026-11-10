@@ -1332,7 +1332,7 @@ function AdminScreen({ t, pubMeta, upload, setUpload, handleFile, publish, viewD
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",gap:14,marginBottom:10}}>
         {sides.map(x=>(
-          <div key={x.k} style={{background:x.u?t.goodBg:t.surf,border:`1px solid ${x.u?t.goodBd:t.line}`,borderLeft:`3px solid ${x.ac}`,borderRadius:14,padding:"12px 16px",minWidth:0}}>
+          <div key={x.k} style={{background:x.u?t.goodBg:t.surf,borderTop:`1px solid ${x.u?t.goodBd:t.line}`,borderRight:`1px solid ${x.u?t.goodBd:t.line}`,borderBottom:`1px solid ${x.u?t.goodBd:t.line}`,borderLeft:`3px solid ${x.ac}`,borderRadius:14,padding:"12px 16px",minWidth:0}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap"}}>
               <span style={{fontWeight:700,fontSize:13.5,color:t.ink}}>{x.label}</span>
               <span style={{fontFamily:MONO,fontSize:10,fontWeight:600,color:x.u?t.goodDark:t.muted}}>{x.u?"✓ Found":"Not found"}</span>
@@ -1462,7 +1462,7 @@ function FunnelRowItem({s,prevKey,drop,isExp,filtRaw,grand,onToggle,t}) {
         </div>
       </div>
       {isExp&&pending.length>0&&(
-        <div style={{marginTop:6,borderRadius:10,background:t.badBg,border:`1px solid ${t.badBd}`,borderLeft:`3px solid ${t.bad}`,padding:"8px 10px"}}>
+        <div style={{marginTop:6,borderRadius:10,background:t.badBg,borderTop:`1px solid ${t.badBd}`,borderRight:`1px solid ${t.badBd}`,borderBottom:`1px solid ${t.badBd}`,borderLeft:`3px solid ${t.bad}`,padding:"8px 10px"}}>
           <div style={{fontFamily:MONO,fontSize:9.5,color:t.bad,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontWeight:600}}>Pending · {pending.length} records</div>
           <div style={{display:"flex",flexDirection:"column",gap:4,maxHeight:200,overflowY:"auto"}}>
             {pending.slice(0,30).map((r,j)=>(
@@ -1865,7 +1865,7 @@ function KpiCards({ ins, partnerCount, monthsCount, isAg, w, t }) {
     <div style={{marginBottom:14}}>
       <div style={{display:"grid",gridTemplateColumns:w>=900?"repeat(4,1fr)":"repeat(2,1fr)",gap:12}}>
         {cards.map(c=>(
-          <div key={c.l} style={{background:t.surf,border:`1px solid ${t.line}`,borderTop:`3px solid ${c.ac}`,borderRadius:16,padding:w<480?"12px 13px":"14px 16px",boxShadow:t.shadow1,minWidth:0}}>
+          <div key={c.l} style={{background:t.surf,borderLeft:`1px solid ${t.line}`,borderRight:`1px solid ${t.line}`,borderBottom:`1px solid ${t.line}`,borderTop:`3px solid ${c.ac}`,borderRadius:16,padding:w<480?"12px 13px":"14px 16px",boxShadow:t.shadow1,minWidth:0}}>
             <div style={{fontFamily:MONO,fontSize:9.5,letterSpacing:"0.1em",textTransform:"uppercase",color:t.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.l}</div>
             <div style={{fontWeight:800,fontSize:w<480?19:24,letterSpacing:"-0.03em",color:t.ink,lineHeight:1.15,marginTop:6}} title={fmtRpFull(c.v)}>{fmtRp(c.v)}</div>
             <div style={{fontSize:12,color:t.muted,marginTop:3}}><strong style={{color:t.ink2}}>{c.n.toLocaleString()}</strong> {c.s}</div>
