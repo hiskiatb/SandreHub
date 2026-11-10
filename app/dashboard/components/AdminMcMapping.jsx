@@ -82,6 +82,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import supabase from "../../../lib/supabase";
 import * as XLSX from "xlsx";
+import { ensureRoleAccess, ensureRoleAccessBulk } from "./roleAccessSync";
 import {
   UserRoundCog, X, Check, AlertTriangle, Loader2, Search,
   RefreshCw, Trash2, ToggleLeft, ToggleRight, Upload,
@@ -449,6 +450,11 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel, roleValue, 
         return next;
       });
       setNewEmail(""); setNewLabel("");
+      // Jamin akun email ini (kalau sudah pernah daftar) langsung dapat
+      // akses admin_mc - lihat komentar di roleAccessSync.js. Aman
+      // dipanggil berulang & tidak menimpa role utama kalau akun itu
+      // sudah admin_area dsb (ditambahkan sbg extra role, bukan overwrite).
+      ensureRoleAccess(email, "admin_mc").catch((e) => console.error("[AdminMcMapping] ensureRoleAccess gagal:", e));
       showToast(`Email ditambahkan ke ${mc}.`, "ok");
     } catch (e) {
       showToast(e.message || "Gagal menambahkan email.", "error");
@@ -480,14 +486,16 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel, roleValue, 
   const toggleEmailActive = async (mc, emailRow) => {
     setEmailBusy(true);
     try {
-      const { error } = await supabase.from("mf_dse_admin_mc_emails").update({ active: !emailRow.active }).eq("id", emailRow.id);
+      const willBeActive = !emailRow.active;
+      const { error } = await supabase.from("mf_dse_admin_mc_emails").update({ active: willBeActive }).eq("id", emailRow.id);
       if (error) throw error;
       setEmailsByMc((prev) => {
         const next = new Map(prev);
         const key = mc.toLowerCase();
-        next.set(key, (next.get(key) || []).map((e) => (e.id === emailRow.id ? { ...e, active: !e.active } : e)));
+        next.set(key, (next.get(key) || []).map((e) => (e.id === emailRow.id ? { ...e, active: willBeActive } : e)));
         return next;
       });
+      if (willBeActive) ensureRoleAccess(emailRow.email, "admin_mc").catch((e) => console.error("[AdminMcMapping] ensureRoleAccess gagal:", e));
     } catch (e) {
       showToast(e.message || "Gagal mengubah status email.", "error");
     } finally {
@@ -533,6 +541,7 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel, roleValue, 
         next.set(key, (next.get(key) || []).map((x) => (x.id === data.id ? data : x)));
         return next;
       });
+      ensureRoleAccess(email, "admin_mc").catch((e) => console.error("[AdminMcMapping] ensureRoleAccess gagal:", e));
       showToast("Admin diperbarui.", "ok");
       setEditingEmailRow(null);
     } catch (e) {
@@ -795,6 +804,7 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel, roleValue, 
       const knownMcByKey = new Map();
       displayRows.forEach((r) => { if (r.mc) knownMcByKey.set(r.mc.toLowerCase(), r.mc); });
       let addedCount = 0, skippedCount = 0, mcNotFoundCount = 0, mcTouched = 0;
+      const touchedEmails = [];
       const notFoundSample = [];
       // BUG FIX (audit user - email di slot ke-2/3/4 "ngilang" dari upload):
       // kolom MC/District hasil Download di sini di-merge vertikal 4 baris
@@ -831,9 +841,13 @@ export default function AdminMcMapping({ theme, asOfDate, asOfLabel, roleValue, 
             .select();
           if (error && String(error.code) !== "23505") { skippedCount++; continue; }
           addedCount++;
+          touchedEmails.push(piece.email);
         }
       }
       await fetchRows();
+      if (touchedEmails.length) {
+        ensureRoleAccessBulk(touchedEmails, "admin_mc").catch((e) => console.error("[AdminMcMapping] ensureRoleAccessBulk gagal:", e));
+      }
       const parts = [`${addedCount} email diproses pada ${mcTouched} MC`];
       if (skippedCount) parts.push(`${skippedCount} baris dilewati`);
       if (mcNotFoundCount) parts.push(`${mcNotFoundCount} baris gagal (MC "${notFoundSample.join(", ")}"${mcNotFoundCount > notFoundSample.length ? ", ..." : ""} tidak ditemukan)`);

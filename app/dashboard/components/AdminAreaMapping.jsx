@@ -21,6 +21,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import supabase from "../../../lib/supabase";
 import * as XLSX from "xlsx";
+import { ensureRoleAccess, ensureRoleAccessBulk } from "./roleAccessSync";
 import {
   UserRoundCog, X, Check, AlertTriangle, Loader2, Search,
   RefreshCw, Trash2, ToggleLeft, ToggleRight, Upload,
@@ -315,6 +316,12 @@ export default function AdminAreaMapping({ theme, asOfDate, asOfLabel, roleValue
         return next;
       });
       setNewEmail(""); setNewLabel("");
+      // Jamin akun email ini (kalau sudah pernah daftar) langsung dapat
+      // akses admin_area - lihat komentar di roleAccessSync.js kenapa ini
+      // perlu (root cause kejadian "sudah didaftarkan tapi HoA AR belum
+      // muncul"). Aman dipanggil berulang (idempotent) & tidak menimpa
+      // role utama kalau akun itu sudah admin_mc dsb.
+      ensureRoleAccess(email, "admin_area").catch((e) => console.error("[AdminAreaMapping] ensureRoleAccess gagal:", e));
       showToast(`Email ditambahkan ke ${branch}.`, "ok");
     } catch (e) {
       showToast(e.message || "Gagal menambahkan email.", "error");
@@ -346,14 +353,17 @@ export default function AdminAreaMapping({ theme, asOfDate, asOfLabel, roleValue
   const toggleEmailActive = async (branch, emailRow) => {
     setEmailBusy(true);
     try {
-      const { error } = await supabase.from("mf_dse_admin_area_emails").update({ active: !emailRow.active }).eq("id", emailRow.id);
+      const willBeActive = !emailRow.active;
+      const { error } = await supabase.from("mf_dse_admin_area_emails").update({ active: willBeActive }).eq("id", emailRow.id);
       if (error) throw error;
       setEmailsByBranch((prev) => {
         const next = new Map(prev);
         const key = branch.toLowerCase();
-        next.set(key, (next.get(key) || []).map((e) => (e.id === emailRow.id ? { ...e, active: !e.active } : e)));
+        next.set(key, (next.get(key) || []).map((e) => (e.id === emailRow.id ? { ...e, active: willBeActive } : e)));
         return next;
       });
+      // Baru diaktifkan kembali -> pastikan akses admin_area tersinkron juga.
+      if (willBeActive) ensureRoleAccess(emailRow.email, "admin_area").catch((e) => console.error("[AdminAreaMapping] ensureRoleAccess gagal:", e));
     } catch (e) {
       showToast(e.message || "Gagal mengubah status email.", "error");
     } finally {
@@ -391,6 +401,9 @@ export default function AdminAreaMapping({ theme, asOfDate, asOfLabel, roleValue
         next.set(key, (next.get(key) || []).map((x) => (x.id === data.id ? data : x)));
         return next;
       });
+      // Email admin bisa diganti saat edit - pastikan email BARU ini juga
+      // tersinkron akses admin_area-nya (sama alasannya dgn addEmail di atas).
+      ensureRoleAccess(email, "admin_area").catch((e) => console.error("[AdminAreaMapping] ensureRoleAccess gagal:", e));
       showToast("Admin diperbarui.", "ok");
       setEditingEmailRow(null);
     } catch (e) {
@@ -576,6 +589,7 @@ export default function AdminAreaMapping({ theme, asOfDate, asOfLabel, roleValue
       const knownBranchByKey = new Map();
       displayRows.forEach((r) => { if (r.branch) knownBranchByKey.set(r.branch.toLowerCase(), r.branch); });
       let addedCount = 0, skippedCount = 0, branchNotFoundCount = 0, branchTouched = 0;
+      const touchedEmails = [];
       const notFoundSample = [];
       // BUG FIX (audit user - email di slot ke-2/3/4 "ngilang" dari upload):
       // kolom Branch hasil Download di sini di-merge vertikal 4 baris per
@@ -611,9 +625,17 @@ export default function AdminAreaMapping({ theme, asOfDate, asOfLabel, roleValue
             .select();
           if (error && String(error.code) !== "23505") { skippedCount++; continue; }
           addedCount++;
+          touchedEmails.push(piece.email);
         }
       }
       await fetchRows();
+      // Sinkronkan akses admin_area utk SEMUA email yg baru di-upload,
+      // sekali jalan di akhir (bukan per-baris) - sama alasannya dgn
+      // addEmail/saveEditEmail di atas, supaya upload bulk juga tidak lagi
+      // meninggalkan akun "terdaftar tapi HoA AR belum muncul".
+      if (touchedEmails.length) {
+        ensureRoleAccessBulk(touchedEmails, "admin_area").catch((e) => console.error("[AdminAreaMapping] ensureRoleAccessBulk gagal:", e));
+      }
       const parts = [`${addedCount} email diproses pada ${branchTouched} Area`];
       if (skippedCount) parts.push(`${skippedCount} baris dilewati`);
       if (branchNotFoundCount) parts.push(`${branchNotFoundCount} baris gagal (Area "${notFoundSample.join(", ")}"${branchNotFoundCount > notFoundSample.length ? ", ..." : ""} tidak ditemukan)`);

@@ -7290,13 +7290,22 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
     return m;
   }, [colFilters.statusAge]);
 
-  const filteredDseList = useMemo(() => {
-    let out = enrichedDse.filter((x) => {
+  // UPDATE (bugfix - audit user: "mengapa summary card nya tidak
+  // mengikuti filter yang aktif" - screenshot filter kolom District
+  // "MC-INDRALAYA" aktif (badge merah "1"), tapi StatTiles di atas masih
+  // nampilin total KESELURUHAN district, bukan cuma yg difilter):
+  // dipisah jadi 2 tahap - `columnFilteredDse` (SEMUA colFilters, TANPA
+  // dseSearch) dipakai bareng oleh `filteredDseList` (tabel - nambahin
+  // dseSearch+sort di atasnya) MAUPUN `mcSummary` (StatTiles) di bawah,
+  // supaya filter kolom (District/Status/dst, lewat ikon corong di
+  // header tabel) konsisten mempersempit KEDUANYA. dseSearch (kotak
+  // "Cari DSE") SENGAJA tetap tidak ikut mempengaruhi summary - itu kotak
+  // pencarian cepat sambil mengetik, bukan filter yg "dikunci" spt
+  // colFilters, jadi summary tetap utuh (ga flicker) saat lagi ngetik -
+  // lihat juga komentar lama di dekat deklarasi mcSummary.
+  const columnFilteredDse = useMemo(() => {
+    return enrichedDse.filter((x) => {
       const { r } = x;
-      if (dseSearch) {
-        const s = dseSearch.toLowerCase();
-        if (!(r.dse_code?.toLowerCase().includes(s) || r.dse_code_3id?.toLowerCase().includes(s) || r.ds_name?.toLowerCase().includes(s))) return false;
-      }
       if (colFilters.id.length && !colFilters.id.includes(r.dse_code)) return false;
       if (colFilters.partner.length && !colFilters.partner.includes(x.partnerVal)) return false;
       if (colFilters.region.length && !colFilters.region.includes(x.regionVal)) return false;
@@ -7319,6 +7328,17 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       if (colFilters.arStatus.length && !colFilters.arStatus.includes(x.arStatusVal)) return false;
       if (colFilters.jatuhTempo.length && !colFilters.jatuhTempo.includes(x.jatuhTempoVal)) return false;
       if (colFilters.arKeterangan.length && !colFilters.arKeterangan.includes(x.arKeteranganVal)) return false;
+      return true;
+    });
+  }, [enrichedDse, colFilters, statusAgeByStatus]);
+
+  const filteredDseList = useMemo(() => {
+    let out = columnFilteredDse.filter((x) => {
+      const { r } = x;
+      if (dseSearch) {
+        const s = dseSearch.toLowerCase();
+        if (!(r.dse_code?.toLowerCase().includes(s) || r.dse_code_3id?.toLowerCase().includes(s) || r.ds_name?.toLowerCase().includes(s))) return false;
+      }
       return true;
     });
 
@@ -7367,7 +7387,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
     }
 
     return out.map((x) => x.r);
-  }, [enrichedDse, dseSearch, colFilters, statusAgeByStatus, sortConfig, tab, rankMetric]);
+  }, [columnFilteredDse, dseSearch, sortConfig, tab, rankMetric]);
 
   // UPDATE (permintaan user - search suggestion dropdown): daftar saran
   // independen dari filteredDseList (yg bisa kepengaruh colFilters lain) -
@@ -7416,19 +7436,25 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       setAutoOpenCode(dse.dse_code);
     });
   };
-  // ── Ringkasan (summary cards) — di-scope ke District yang sedang dipilih (lihat
-  // `dseList`, bukan filteredDseList, supaya tetap utuh walau sedang mengetik
-  // di kotak "Cari DSE") + brand & tanggal yang aktif saat ini. Status DSE
-  // dan angka yg BARU DIEDIT (belum disimpan ke server) ikut dihitung di sini
-  // juga - pakai `identity`/`entries` override yg sama dgn yg dipakai baris
-  // tabel, supaya kartu ini langsung update real-time saat admin mengetik,
-  // bukan baru berubah setelah tombol Simpan ditekan.
+  // ── Ringkasan (summary cards) — di-scope ke District yang sedang dipilih
+  // + brand & tanggal yang aktif saat ini, DAN (bugfix - audit user:
+  // "mengapa summary card nya tidak mengikuti filter yang aktif") ikut
+  // `columnFilteredDse` (semua filter kolom lewat ikon corong - Status,
+  // District, dst) - TAPI sengaja TETAP TIDAK ikut kotak "Cari DSE"
+  // (dseSearch), supaya kartu ini ga flicker/kosong mendadak pas admin
+  // lagi ngetik pencarian (beda sifatnya dgn filter kolom yg "dikunci").
+  // Status DSE dan angka yg BARU DIEDIT (belum disimpan ke server) ikut
+  // dihitung di sini juga - pakai `identity`/`entries` override yg sama
+  // dgn yg dipakai baris tabel, supaya kartu ini langsung update
+  // real-time saat admin mengetik, bukan baru berubah setelah tombol
+  // Simpan ditekan.
   // UPDATE (permintaan user): akumulasi per Area & per Partner MENYUSUL -
   // utk sekarang summary-nya cuma per District yg sedang dipilih di filter atas.
   const mcSummary = useMemo(() => {
     let totalActive = 0, totalVacant = 0, totalInterview = 0;
     let qtySp = 0, nilaiSp = 0, nilaiFwa = 0, qtyVoucher = 0, nilaiVoucher = 0, nilaiSaldo = 0, tunggakan = 0, totalDibayar = 0;
-    for (const dse of dseList) {
+    for (const x of columnFilteredDse) {
+      const dse = x.r;
       const liveStatus = identity[dse.dse_code]?.dse_status ?? dse.dse_status ?? "";
       // UPDATE (status per tanggal): mode Daily (tanggal spesifik, bukan
       // hari ini) -> rekonstruksi status dari riwayat (resolveStatusAsOf).
@@ -7458,8 +7484,8 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
     // page-level) - totalPiutang = sisa + dibayar (identitas akuntansi
     // harian: piutang hari ini = sisa yg belum dibayar + yg sudah dibayar).
     const totalPiutang = tunggakan + totalDibayar;
-    return { totalAlokasi: dseList.length, totalActive, totalVacant, totalInterview, qtySp, nilaiSp, nilaiFwa, qtyVoucher, nilaiVoucher, nilaiSaldo, tunggakan, totalDibayar, totalPiutang, totalPenjualan: nilaiSp + nilaiFwa + nilaiVoucher + nilaiSaldo };
-  }, [dseList, identity, entries, periodMode, entryDate, statusEvents]);
+    return { totalAlokasi: columnFilteredDse.length, totalActive, totalVacant, totalInterview, qtySp, nilaiSp, nilaiFwa, qtyVoucher, nilaiVoucher, nilaiSaldo, tunggakan, totalDibayar, totalPiutang, totalPenjualan: nilaiSp + nilaiFwa + nilaiVoucher + nilaiSaldo };
+  }, [columnFilteredDse, identity, entries, periodMode, entryDate, statusEvents]);
 
   // UPDATE (permintaan user - "harusnya angkanya saja yang loading namun
   // summary card placeholdernya selalu ada"): shell kartu Ringkasan (ikon,
