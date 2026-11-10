@@ -1411,8 +1411,7 @@ function DashScreen(props) {
     setRawPage, showToast, exportSummary, profile, flowSel } = props;
   const isAg = src === "agency";
   // Accrual (Agency) tampil di level atas untuk role yang boleh melihat Agency, apa pun pilihan Partner/Agency
-  // Accrual: Agency (role yang boleh melihat Agency) dan/atau Partner
-  const showAccrual = ((isSPM||isIOHAny) && (viewAgencyRaw||[]).length>0) || (viewPartnerRaw||[]).length>0;
+  const showAccrual = (isSPM||isIOHAny) && (viewAgencyRaw||[]).length>0;
   const isAcc = activeTab==="acc" && showAccrual;
   // Tab YTD & Accrual punya pilihan tahun sendiri: switch PO/MDI, Partner/Agency & filter disembunyikan
   const isYtd = activeTab==="ytd" || isAcc;
@@ -1618,7 +1617,10 @@ function DashScreen(props) {
       )}
 
       {isAcc ? (
-        <AccrualView agencyRows={viewAgencyRaw||[]} partnerRows={viewPartnerRaw||[]} canAgency={isSPM||isIOHAny} w={w} t={t} showToast={showToast}/>
+        <Card t={t} pad={false} style={{marginBottom:14}}>
+          <CardHead title="Accrual · Agency Prepaid" accent={C.yellow} sub="Submission checklist, missing list & accrual estimate · always uses Agency data" t={t}/>
+          <AccrualTab rows={viewAgencyRaw||[]} w={w} t={t} showToast={showToast}/>
+        </Card>
       ) : isYtd ? (
         <YtdTab partnerRows={viewPartnerRaw||[]} agencyRows={(isSPM||isIOHAny)?(viewAgencyRaw||[]):[]} showTeam={isSPM||isIOHAny} w={w} t={t} showToast={showToast}/>
       ) : filtersEmpty ? (
@@ -2420,157 +2422,6 @@ function computeChecklist(rows, year) {
     });
   });
   return { months, list, missing, last };
-}
-
-/* ── Accrual Partner: biaya program yang sudah terjadi tapi belum ditagih/dibayar ── */
-// Partner berbasis kampanye (tidak ada jadwal bulanan tetap), jadi accrual diambil dari data:
-// "Invoice Not Submitted" = accrued, belum ditagih; "Payment Process" = sudah ditagih, belum dibayar.
-function computePartnerAccrual(rows, year) {
-  const today = dayStart(new Date());
-  const items = []; const grid = {}; const months = new Set();
-  rows.forEach(r=>{
-    const mk = rowMonthKey(r); if (!mk || Math.floor(mk/100)!==year) return;
-    const m = mk%100; months.add(m);
-    const name = ownerName(r) || "—", st = rowStatus(r), amt = gnum(r,["amount"]);
-    const g = (grid[name] = grid[name] || { name, ns:0, pp:0, cells:{} });
-    const c = (g.cells[m] = g.cells[m] || { ns:0, pp:0, paid:0, n:0 });
-    c.n++;
-    const isNs = isNotSubStatus(st), isPp = isProcessStatus(st);
-    if (isNs) { c.ns += amt; g.ns += amt; } else if (isPp) { c.pp += amt; g.pp += amt; } else if (isPaidStatus(st)) c.paid += amt;
-    if (!isNs && !isPp) return;
-    const monthEnd = new Date(Math.floor(mk/100), mk%100, 0); // hari terakhir bulan program
-    items.push({ name, title:gstr(r,["project title"])||"—", m, period:`${MONTHS_SHORT[m]} ${year}`,
-      entity:entLabel(gstr(r,["entity"]),FLOW_DI) || "—", flow:rowFlow(r), amt, status:isNs?"Invoice Not Submitted":"Payment Process",
-      days:Math.max(0, Math.round((today - monthEnd)/DAY)) });
-  });
-  const list = Object.values(grid).sort((a,b)=>(b.ns+b.pp)-(a.ns+a.pp) || a.name.localeCompare(b.name));
-  const sum = (k) => items.filter(x=>x.status===k).reduce((a,x)=>a+x.amt,0);
-  const cnt = (k) => items.filter(x=>x.status===k).length;
-  return { months:[...months].sort((a,b)=>a-b), list, items,
-    ns:{ amt:sum("Invoice Not Submitted"), n:cnt("Invoice Not Submitted") }, pp:{ amt:sum("Payment Process"), n:cnt("Payment Process") } };
-}
-
-function PartnerAccrualTab({ rows, w, t, showToast }) {
-  const years = useMemo(()=>yearsOf(rows),[rows]);
-  const [year, setYear] = useYear(years);
-  const pa = useMemo(()=>computePartnerAccrual(rows, year),[rows,year]);
-  const [openOnly, setOpenOnly] = useState(true);
-  const [sort, setSort] = useState({ col:"days", dir:"desc" });
-  const phone = w<640;
-  const matrix = openOnly ? pa.list.filter(g=>g.ns||g.pp) : pa.list;
-  const items = useMemo(()=>{
-    const { col, dir } = sort, m = dir==="asc" ? 1 : -1;
-    return [...pa.items].sort((a,b)=>{
-      const va=a[col==="period"?"m":col], vb=b[col==="period"?"m":col];
-      return typeof va==="number" ? m*(va-vb) : m*String(va).localeCompare(String(vb));
-    });
-  },[pa.items,sort]);
-  const exportList = async () => {
-    const XLSX = await getXLSX();
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(items.map(x=>({ Partner:x.name, "Project Title":x.title, Period:x.period, Entity:x.entity, Flow:x.flow, Amount:x.amt, Status:x.status, "Days since program month end":x.days }))), "Partner accrual");
-    XLSX.writeFile(wb, `partner_accrual_${year}.xlsx`);
-    showToast("Partner accrual downloaded — Excel","success");
-  };
-  const cell = (c) => {
-    if (!c) return { s:"–", bg:"transparent", fg:t.muted2, tip:"No program this month" };
-    if (c.ns) return { s:fmtMiliar(c.ns), bg:t.badBg, fg:t.badDark, tip:`Not submitted ${fmtRpFull(c.ns)}${c.pp?` · in process ${fmtRpFull(c.pp)}`:""}` };
-    if (c.pp) return { s:fmtMiliar(c.pp), bg:t.warnBg, fg:t.warnDark, tip:`In process ${fmtRpFull(c.pp)}` };
-    return { s:"✓", bg:t.goodBg, fg:t.goodDark, tip:`All paid · ${fmtRpFull(c.paid)}` };
-  };
-  return (
-    <div style={{padding:18}}>
-      <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:8}}>
-        <span style={{fontWeight:700,fontSize:14,color:t.ink}}>Partner accrual</span>
-        <YearSelect years={years} value={year} onChange={setYear} t={t}/>
-      </div>
-      <div style={{fontSize:13,color:t.ink2,lineHeight:1.55,marginBottom:12}}>
-        <strong style={{color:t.badDark}}>{fmtRpWord(pa.ns.amt)}</strong> accrued but not invoiced yet ({plural(pa.ns.n,"row")}, Invoice Not Submitted) · <strong style={{color:t.warnDark}}>{fmtRpWord(pa.pp.amt)}</strong> invoiced, waiting for payment ({plural(pa.pp.n,"row")}, Payment Process).
-        <span style={{color:t.muted}}> Partner programs are campaign-based, so this is taken from the data, not a fixed schedule. All Partner rows (PO + MDI); dashboard filters don&rsquo;t apply.</span>
-      </div>
-      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
-        <Chip t={t} active={openOnly} onClick={()=>setOpenOnly(true)}>Open items only · {pa.list.filter(g=>g.ns||g.pp).length}</Chip>
-        <Chip t={t} active={!openOnly} onClick={()=>setOpenOnly(false)}>All partners · {pa.list.length}</Chip>
-        <span style={{marginLeft:"auto",display:"inline-flex",gap:12,fontSize:12,color:t.muted,flexWrap:"wrap"}}>
-          <span style={{display:"inline-flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,borderRadius:3,background:t.bad}}/>Not submitted</span>
-          <span style={{display:"inline-flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,borderRadius:3,background:t.warn}}/>In process</span>
-          <span style={{display:"inline-flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,borderRadius:3,background:t.good}}/>All paid</span>
-        </span>
-      </div>
-      {!matrix.length||!pa.months.length ? <EmptyNote t={t}>{pa.months.length?"No open partner items — everything is paid":`No partner data for ${year}`}</EmptyNote> : (
-        <div style={{maxHeight:420,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10,marginBottom:18}}>
-          <table style={{width:"100%",borderCollapse:"collapse",minWidth:Math.max(phone?480:600,230+pa.months.length*80)}}>
-            <thead><tr><th style={thS(t,true)}>Partner</th>{pa.months.map(m=><th key={m} style={{...thS(t),textAlign:"center"}}>{MONTHS_SHORT[m]}</th>)}<th style={thS(t)}>Open</th></tr></thead>
-            <tbody>{matrix.map((g,i)=>(
-              <tr key={g.name} style={{background:i%2===1?t.rowStripe:"transparent"}}>
-                <td style={{...tdS(t,true),fontWeight:600,color:t.ink,maxWidth:260}} title={g.name}>{g.name}</td>
-                {pa.months.map(m=>{ const k=cell(g.cells[m]); return <td key={m} title={k.tip} style={{...tdS(t),textAlign:"center",background:k.bg,color:k.fg,fontWeight:600,padding:"6px 6px"}}>{k.s}</td>; })}
-                <td style={{...tdS(t),fontWeight:700,color:(g.ns||g.pp)?t.ink:t.muted}} title={`Not submitted ${fmtRpFull(g.ns)} · in process ${fmtRpFull(g.pp)}`}>{(g.ns||g.pp)?fmtMiliar(g.ns+g.pp):"—"}</td>
-              </tr>
-            ))}</tbody>
-          </table>
-        </div>
-      )}
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
-        <span style={{fontWeight:700,fontSize:14,color:t.ink}}>Open items <span style={{fontWeight:400,fontSize:12.5,color:t.muted}}>· {plural(items.length,"row")} · days = since the end of the program month</span></span>
-        <Btn t={t} variant="outline" sm onClick={exportList} disabled={!items.length}>Export Excel</Btn>
-      </div>
-      {!items.length ? <EmptyNote t={t}>No open partner items</EmptyNote> : (
-        <div style={{maxHeight:380,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10}}>
-          <table style={{width:"100%",borderCollapse:"collapse"}}>
-            <thead><tr>
-              <SortTh col="name" left sort={sort} setSort={setSort} t={t}>Partner</SortTh>
-              {!phone&&<SortTh col="title" left sort={sort} setSort={setSort} t={t}>Project Title</SortTh>}
-              <SortTh col="period" left sort={sort} setSort={setSort} t={t}>Period</SortTh>
-              {!phone&&<SortTh col="entity" left sort={sort} setSort={setSort} t={t}>Entity</SortTh>}
-              {!phone&&<SortTh col="flow" left sort={sort} setSort={setSort} t={t}>Flow</SortTh>}
-              <SortTh col="amt" sort={sort} setSort={setSort} t={t}>Amount</SortTh>
-              {!phone&&<SortTh col="status" left sort={sort} setSort={setSort} t={t}>Status</SortTh>}
-              <SortTh col="days" sort={sort} setSort={setSort} t={t}>Days</SortTh>
-            </tr></thead>
-            <tbody>{items.slice(0,300).map((x,i)=>(
-              <tr key={i} style={{background:i%2===1?t.rowStripe:"transparent"}}>
-                <td style={{...tdS(t,true),fontWeight:600,color:t.ink,maxWidth:phone?130:170}} title={x.name}>{x.name}</td>
-                {!phone&&<td style={{...tdS(t,true),maxWidth:w<1150?150:220}} title={x.title}>{x.title}</td>}
-                <td style={tdS(t,true)}>{x.period}</td>
-                {!phone&&<td style={tdS(t,true)}>{x.entity}</td>}
-                {!phone&&<td style={tdS(t,true)}><FlowBadge flow={x.flow} t={t}/></td>}
-                <td style={{...tdS(t),color:t.ink}} title={fmtRpFull(x.amt)}>{fmtRpWord(x.amt)}</td>
-                {!phone&&<td style={tdS(t,true)}><StatusBadge val={x.status} t={t}/></td>}
-                <td style={{...tdS(t),fontWeight:700,color:x.days>60?t.bad:x.days>30?t.warnDark:t.ink2}}>{x.days}</td>
-              </tr>
-            ))}</tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Tab Accrual: switch Agency | Partner (Agency hanya untuk role yang boleh melihat Agency)
-function AccrualView({ agencyRows, partnerRows, canAgency, w, t, showToast }) {
-  const hasAg = canAgency && agencyRows.length>0;
-  const [seg, setSeg] = useState(hasAg ? "agency" : "partner");
-  const cur = hasAg ? seg : "partner";
-  return (
-    <Card t={t} pad={false} style={{marginBottom:14}}>
-      <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",padding:"12px 18px",borderBottom:`1px solid ${t.line}`,background:t.surf2}}>
-        <span style={{display:"inline-flex",alignItems:"center",gap:10}}>
-          <span style={{width:4,height:18,borderRadius:2,background:C.teal}}/>
-          <span style={{fontWeight:700,fontSize:14,color:t.ink}}>Accrual</span>
-        </span>
-        {hasAg&&(
-          <div role="group" aria-label="Accrual source" style={{display:"inline-flex",gap:4,background:t.surf,border:`1px solid ${t.line}`,borderRadius:12,padding:3}}>
-            {[["agency","Agency Prepaid"],["partner","Partner Prepaid"]].map(([k,l])=>{ const on=cur===k; return (
-              <button key={k} type="button" aria-pressed={on} onClick={()=>setSeg(k)} style={{fontFamily:"inherit",fontWeight:600,fontSize:12.5,padding:"6px 14px",borderRadius:9,border:0,cursor:"pointer",background:on?C.teal:"transparent",color:on?"#fff":t.muted}}>{l}</button>
-            ); })}
-          </div>
-        )}
-        <span style={{fontSize:12.5,color:t.muted}}>{cur==="agency"?"Submission checklist, missing list & accrual estimate":"Cost incurred but not invoiced or paid yet"}</span>
-      </div>
-      {cur==="agency" ? <AccrualTab rows={agencyRows} w={w} t={t} showToast={showToast}/> : <PartnerAccrualTab rows={partnerRows} w={w} t={t} showToast={showToast}/>}
-    </Card>
-  );
 }
 
 function AccrualTab({ rows, w, t, showToast }) {
