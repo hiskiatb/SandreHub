@@ -2858,15 +2858,19 @@ async function checkSenderStatus(){
       <div class="sc-title">${title}</div>${sub ? `<div class="sc-sub">${sub}</div>` : ''}
     </div>`;
   };
-  // Kalau pengirim tidak bisa diambil dari server, field terkunci diberi
-  // keterangan jelas, bukan dibiarkan selamanya di "Memuat dari server…".
+  // Kalau pengirim tidak bisa diambil dari server, field terkunci diisi
+  // pengirim bawaan (sama dengan default di app/api/report-merge/*), bukan
+  // dibiarkan selamanya di "Memuat dari server…" — field ini cuma untuk
+  // tampilan preview, dan kalau kosong langkah Pratinjau tidak bisa dibuka.
+  // Alasan gagalnya tetap tampil di kartu status Resend (langkah 3).
   const markSenderUnavailable = (reason)=>{
     const nameEl = document.getElementById('senderName');
     const emailEl = document.getElementById('senderEmail');
     if(nameEl.value || emailEl.value) return;
-    nameEl.placeholder = '⚠️ Pengirim tidak bisa dimuat dari server';
-    emailEl.placeholder = reason || 'Coba muat ulang halaman.';
-    emailEl.title = reason || '';
+    nameEl.value = 'Sales & Distribution Sumatera';
+    emailEl.value = 'snd@spmsumatera.site';
+    nameEl.title = emailEl.title = `Pengirim bawaan — gagal memuat dari server: ${reason || 'tanpa keterangan'}`;
+    refreshAllFilledStates();
   };
   try{
     const res = await fetch('/api/status', { signal: AbortSignal.timeout(20000) });
