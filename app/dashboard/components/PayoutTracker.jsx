@@ -20,6 +20,7 @@ async function getXLSX() {
   return _xlsx;
 }
 
+const FUNNEL_RAMP = ["#1d8078","#27a093","#32BCAD","#6FD0C5","#A6E3DC"];
 const C = {
   red:"#ED1C24", teal:"#32BCAD", tealD:"#27a093", tealDp:"#1d8078",
   yellow:"#FFCB05", yellowD:"#c49b00", magenta:"#C6168D", pink:"#EC008C", grey:"#4D4D4F",
@@ -95,6 +96,7 @@ function monthKey(m) {
 function fmtMoney(n, short=true) {
   if (n == null || n === "") return "—";
   n = Number(n); if (isNaN(n)) return "—";
+  return short ? fmtRpWord(n) : fmtRpFull(n);
   if (!short) return "IDR " + n.toLocaleString("id-ID");
   const f1 = v => v.toFixed(1).replace(".", ",");
   if (Math.abs(n)>=1e12) return "IDR "+f1(n/1e12)+" Tn";
@@ -644,7 +646,7 @@ function Card({ children, style={}, t, pad=true }) {
 }
 
 function CardHead({ title, sub, accent, right, t }) {
-  const ac = accent || C.teal;
+  const ac = C.teal; // satu warna aksen untuk semua judul kartu
   return (
     <div style={{padding:"14px 20px",borderBottom:`1px solid ${t.line}`,display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12,flexWrap:"wrap",background:t.surf2}}>
       <div>
@@ -652,7 +654,7 @@ function CardHead({ title, sub, accent, right, t }) {
           <span style={{width:4,height:18,borderRadius:2,background:ac,display:"block",flexShrink:0}}/>
           <span style={{fontWeight:700,fontSize:14,letterSpacing:"-0.02em",color:t.ink}}>{title}</span>
         </div>
-        {sub&&<div style={{marginTop:4,marginLeft:14,fontFamily:MONO,fontSize:10.5,color:t.muted}}>{sub}</div>}
+        {sub&&<div style={{marginTop:4,marginLeft:14,fontSize:12.5,lineHeight:1.45,color:t.muted}}>{sub}</div>}
       </div>
       {right&&<div style={{flexShrink:0}}>{right}</div>}
     </div>
@@ -665,7 +667,7 @@ function MsOption({o,label,checked,onToggle,t}) {
     <label {...hE} style={{display:"flex",alignItems:"center",gap:9,padding:"7px 12px",cursor:"pointer",background:hov?t.surf3:checked?`${C.teal}10`:"transparent",borderTop:`1px solid ${t.line}`,transition:"background .1s"}}>
       <input type="checkbox" checked={checked} onChange={onToggle} style={{width:14,height:14,accentColor:C.teal,cursor:"pointer",flexShrink:0,margin:0}}/>
       <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontSize:12.5,fontWeight:checked?600:400,color:t.ink}}>{label??o}</span>
-      {checked&&<span style={{color:C.teal,fontSize:11,fontWeight:700,flexShrink:0}}>✓</span>}
+      {checked&&<span style={{color:C.teal,fontSize:12,fontWeight:700,flexShrink:0}}>✓</span>}
     </label>
   );
 }
@@ -690,14 +692,14 @@ function MultiSel({ values, options, onChange, placeholder, t, labelOf=(v)=>v })
       <button type="button" onClick={()=>setOpen(o=>!o)} {...hE}
         style={{width:"100%",display:"flex",alignItems:"center",gap:7,padding:"7px 11px",fontSize:12.5,borderRadius:10,border:`1px solid ${active?C.teal:(hov||open)?C.tealD:t.line2}`,background:t.surf2,color:active?t.ink:t.muted,fontFamily:"inherit",cursor:"pointer",outline:"none",boxShadow:active||open?`0 0 0 3px ${C.teal}26`:"none",transition:"border-color .15s, box-shadow .15s",textAlign:"left",boxSizing:"border-box"}}>
         <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label}</span>
-        {active&&<span style={{fontFamily:MONO,fontSize:10,fontWeight:700,padding:"1px 7px",borderRadius:99,background:C.teal,color:"#fff",flexShrink:0}}>{values.length}</span>}
+        {active&&<span style={{fontFamily:MONO,fontSize:12,fontWeight:700,padding:"1px 7px",borderRadius:99,background:C.teal,color:"#fff",flexShrink:0}}>{values.length}</span>}
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{flexShrink:0,transform:open?"rotate(180deg)":"none",transition:"transform .15s",opacity:.7}}><path d="m6 9 6 6 6-6"/></svg>
       </button>
       {open&&(
         <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,minWidth:"100%",width:"max-content",maxWidth:"min(280px, calc(100vw - 32px))",zIndex:400,background:t.surf,border:`1px solid ${t.line2}`,borderRadius:12,boxShadow:t.shadow3,overflow:"hidden"}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"7px 12px",background:t.surf2,fontFamily:MONO,fontSize:9.5,letterSpacing:"0.1em",textTransform:"uppercase",color:active?C.tealD:t.muted}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"7px 12px",background:t.surf2,fontSize:12,letterSpacing:"0.01em",color:active?C.tealD:t.muted}}>
             <span>Selected: {values.length} item{values.length!==1?"s":""}</span>
-            {active&&<button type="button" onClick={()=>onChange([])} style={{border:"none",background:"transparent",color:t.bad,cursor:"pointer",fontFamily:"inherit",fontSize:9.5,letterSpacing:"0.1em",textTransform:"uppercase",padding:0}}>Clear</button>}
+            {active&&<button type="button" onClick={()=>onChange([])} style={{border:"none",background:"transparent",color:t.bad,cursor:"pointer",fontFamily:"inherit",fontSize:12,letterSpacing:"0.01em",padding:0}}>Clear</button>}
           </div>
           <div style={{maxHeight:220,overflowY:"auto"}}>
             {options.length===0
@@ -715,7 +717,7 @@ function PctBadge({ val, t }) {
   const bg=ok?t.goodBg:mid?t.warnBg:t.badBg, bd=ok?t.goodBd:mid?t.warnBd:t.badBd;
   const clr=ok?t.goodDark:mid?t.warnDark:t.badDark, dot=ok?t.good:mid?t.warn:t.bad;
   return (
-    <span style={{display:"inline-flex",alignItems:"center",gap:5,padding:"3px 9px",borderRadius:99,fontFamily:MONO,fontSize:11,fontWeight:700,background:bg,color:clr,border:`1px solid ${bd}`}}>
+    <span style={{display:"inline-flex",alignItems:"center",gap:5,padding:"3px 9px",borderRadius:99,fontFamily:MONO,fontSize:12,fontWeight:700,background:bg,color:clr,border:`1px solid ${bd}`}}>
       <span style={{width:7,height:7,borderRadius:"50%",background:dot,flexShrink:0}}/>{val}%
     </span>
   );
@@ -725,44 +727,9 @@ function StatusBadge({ val, t }) {
   const s = String(val||"").toLowerCase();
   let bg=t.surf3, c=t.muted, bd=t.line;
   if (s.includes("paid")&&!s.includes("not")&&!s.includes("un")) { bg=t.goodBg; c=t.goodDark; bd=t.goodBd; }
-  else if (s.includes("process")) { bg=t.infoBg; c=t.info; bd=t.infoBd; }
-  else if (s.includes("not")||s.includes("pending")||s.includes("awaiting")||s.includes("unpaid")) { bg=t.warnBg; c=t.warnDark; bd=t.warnBd; }
-  return <span style={{display:"inline-flex",padding:"2px 8px",borderRadius:6,fontFamily:MONO,fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em",background:bg,color:c,border:`1px solid ${bd}`}}>{val}</span>;
-}
-
-function BarChart({ series, t }) {
-  if (!series.length) return null;
-  const W=480,H=200,pL=36,pR=8,pT=12,pB=40;
-  const cW=W-pL-pR, cH=H-pT-pB;
-  const gW=cW/series.length, bW=Math.max(6,Math.min(gW*0.35,22)), gap=2;
-  const yF=v=>pT+cH-(Math.min(100,Math.max(0,v))/100)*cH;
-  const xC=i=>pL+i*gW+gW/2, bot=yF(0);
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",height:"auto",display:"block"}} preserveAspectRatio="xMidYMid meet">
-      <rect x={pL} y={pT} width={cW} height={cH} fill={t.surf2} rx={6}/>
-      {[0,25,50,75,100].map(v=>{
-        const y=yF(v);
-        return <g key={v}><line x1={pL} y1={y} x2={W-pR} y2={y} stroke={t.line} strokeWidth={v?1:1.5} strokeDasharray={v?"4 3":"0"}/><text x={pL-4} y={y+3.5} textAnchor="end" fontSize={9} fill={t.muted} fontFamily={MONO}>{v}%</text></g>;
-      })}
-      {series.map((s,i)=>{
-        const xc=xC(i), xI=xc-bW-gap/2, xCl=xc+gap/2;
-        const yI=yF(s.inv), hI=Math.max(2,bot-yI);
-        const yCl=yF(s.clr), hCl=Math.max(2,bot-yCl);
-        let lbl=String(s.month||"");
-        lbl=lbl.replace(/([A-Za-z]{3})[a-z]*[\s\-](\d{2,4})/,(_,m,y)=>m+"'"+(y.length===4?y.slice(-2):y));
-        lbl=lbl.replace(/^(\d{4})[\/\-](\d{1,2})$/,(_,y,mo)=>{ const ms=["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]; return (ms[+mo]||mo)+"'"+y.slice(-2); });
-        return (
-          <g key={i}>
-            <rect x={xI} y={yI} width={bW} height={hI} fill={t.yellow} rx="3"><title>{s.month} Invoice: {s.inv.toFixed(1)}%</title></rect>
-            {s.inv>=8&&hI>16&&<text x={xI+bW/2} y={yI-3} textAnchor="middle" fontSize={8} fontWeight="700" fill={t.yellowD} fontFamily={MONO}>{Math.round(s.inv)}%</text>}
-            <rect x={xCl} y={yCl} width={bW} height={hCl} fill={C.teal} rx="3"><title>{s.month} Clearing: {s.clr.toFixed(1)}%</title></rect>
-            {s.clr>=8&&hCl>16&&<text x={xCl+bW/2} y={yCl-3} textAnchor="middle" fontSize={8} fontWeight="700" fill={C.tealD} fontFamily={MONO}>{Math.round(s.clr)}%</text>}
-            <text x={xc} y={H-pB+14} textAnchor="middle" fontSize={8.5} fill={t.muted} fontFamily={MONO}>{lbl}</text>
-          </g>
-        );
-      })}
-    </svg>
-  );
+  else if (s.includes("process")) { bg=t.warnBg; c=t.warnDark; bd=t.warnBd; }
+  else if (s.includes("not")||s.includes("pending")||s.includes("awaiting")||s.includes("unpaid")) { bg=t.badBg; c=t.badDark; bd=t.badBd; }
+  return <span style={{display:"inline-flex",padding:"2px 8px",borderRadius:6,fontSize:12,fontWeight:600,letterSpacing:"0.01em",background:bg,color:c,border:`1px solid ${bd}`}}>{val}</span>;
 }
 
 export default function PayoutTracker({
@@ -1004,7 +971,7 @@ export default function PayoutTracker({
     return unique(filtRaw.map(r=>gstr(r,["partner name","agency name"]))).length;
   },[filtRaw]);
 
-  const funnelStages = useMemo(()=>{
+  const funnelStagesRaw = useMemo(()=>{
     const g = grand;
     const inv = {key:"inv",label:"Invoice Submitted",val:g.inv,color:C.teal};
     const clr = {key:"clr",label:"Bank Cleared",val:g.clr,color:C.yellowD};
@@ -1016,6 +983,8 @@ export default function PayoutTracker({
     if (isAg) return [po,inv,clv,clr];
     return [po,{key:"surat",label:"Surat Pemberitahuan",val:g.surat,color:C.tealD},inv,clv,clr];
   },[grand,isAg,flowSel]);
+  // Satu ramp teal (gelap → terang) mengikuti urutan tahap
+  const funnelStages = useMemo(()=>funnelStagesRaw.map((st,i)=>({...st,color:FUNNEL_RAMP[i],darkText:i>=3})),[funnelStagesRaw]);
 
   const trendSeries = useMemo(()=>{
     return unique(filtAgg.map(r=>r.month)).sort((a,b)=>monthKey(a)-monthKey(b)).map(m=>{
@@ -1189,13 +1158,13 @@ export default function PayoutTracker({
   const isLeftCol     = k => { const kk=k.toLowerCase().replace(/\s+/g,""); return kk.includes("name")||kk.includes("title")||kk.includes("entity")||kk.includes("type")||kk.includes("project")||kk==="remarks"; };
 
   const fmtCellT = (val,key,t) => {
-    if (val==null||val==="") return <span style={{fontFamily:MONO,fontStyle:"italic",fontSize:10.5,color:t.muted2}}>—</span>;
+    if (val==null||val==="") return <span style={{fontFamily:MONO,fontStyle:"italic",fontSize:12,color:t.muted2}}>—</span>;
     if (isMonthKey(key)) return fmtMonthYear(val);
     if (isDateKey(key)) { const d=toDate(val); if(d) return fmtDate(d); }
     const kl=key.toLowerCase().replace(/\s+/g,"");
     if (kl==="entity") return String(entLabel(val,flowSel));
     if (kl==="status"||kl==="paymentstatus") return <StatusBadge val={String(val)} t={t}/>;
-    if (kl==="amount"||kl.includes("amount")) { const n=typeof val==="number"?val:parseFloat(String(val).replace(/[^\d.-]/g,"")); if(!isNaN(n)&&n!==0)return <span style={{fontFamily:MONO,fontSize:11.5,textAlign:"right",display:"block",color:t.ink}}>{fmtMoney(n,false)}</span>; }
+    if (kl==="amount"||kl.includes("amount")) { const n=typeof val==="number"?val:parseFloat(String(val).replace(/[^\d.-]/g,"")); if(!isNaN(n)&&n!==0)return <span style={{fontFamily:MONO,fontSize:12,textAlign:"right",display:"block",color:t.ink}}>{fmtMoney(n,false)}</span>; }
     return String(val);
   };
 
@@ -1269,27 +1238,27 @@ function AdminScreen({ t, pubMeta, upload, setUpload, handleFile, publish, viewD
   const [confirmDel, setConfirmDel] = useState(false);
   const [confirmPub, setConfirmPub] = useState(false);
   const [drag, setDrag] = useState(false);
-  const sides = useMemo(()=>[["partner","Partner Prepaid",C.teal],["agency","Agency Prepaid",C.magenta]].map(([k,label,ac])=>{
+  const sides = useMemo(()=>[["partner","Partner Prepaid",C.teal],["agency","Agency Prepaid",C.teal]].map(([k,label,ac])=>{
     const u = upload[k];
     const di = u ? u.rows.filter(r=>rowFlow(enrichRow(r))===FLOW_DI).length : 0;
     return { k, label, ac, u, n:u?u.rows.length:0, di, amt:u?u.rows.reduce((a,r)=>a+gnum(r,["amount","nilai"]),0):0 };
   }),[upload]);
   const ready = sides.filter(x=>x.u), missing = sides.filter(x=>!x.u);
-  const confirmText = `This will replace ${ready.map(x=>`${x.label} (${x.n.toLocaleString()} rows)`).join(" and ")} for everyone.${missing.length&&ready.length?` ${missing[0].label} stays as it is.`:""}`;
+  const confirmText = `This will replace ${ready.map(x=>`${x.label} (${plural(x.n,"row")})`).join(" and ")} for everyone.${missing.length&&ready.length?` ${missing[0].label} stays as it is.`:""}`;
   const pick = (file) => { setConfirmPub(false); handleFile(file); };
   return (
     <div style={{maxWidth:1200,margin:"0 auto",padding:w<480?"18px 14px 44px":w<768?"20px 16px 48px":"24px 20px 56px"}}>
       <div style={{marginBottom:28}}>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
-          <span style={{fontFamily:MONO,fontSize:10,letterSpacing:"0.18em",textTransform:"uppercase",color:t.muted}}>Admin · Payout Tracker</span>
+          <span style={{fontSize:12,letterSpacing:"0.01em",color:t.muted}}>Admin · Payout Tracker</span>
           <span style={{width:5,height:5,borderRadius:"50%",background:C.teal,display:"inline-block"}}/>
-          <span style={{fontFamily:MONO,fontSize:10,color:C.teal,letterSpacing:"0.1em"}}>Realtime</span>
+          <span style={{fontSize:12,color:t.goodDark,fontWeight:600}}>Realtime</span>
         </div>
         <h1 style={{fontWeight:800,fontSize:"clamp(1.8rem,4vw,2.8rem)",letterSpacing:"-0.03em",color:t.ink,margin:"0 0 8px",lineHeight:1.05}}>Upload &amp; Publish Data</h1>
         <p style={{color:t.muted,fontSize:14,maxWidth:"60ch",lineHeight:1.65,margin:0}}>Upload one workbook. The &ldquo;Partner Prepaid&rdquo; and &ldquo;Agency Prepaid&rdquo; sheets are read together; other sheets are ignored. All viewers update automatically after you publish.</p>
         <div style={{display:"flex",gap:8,marginTop:14,flexWrap:"wrap"}}>
-          {[{l:"Partner SLA 2/1/2/2/3 WD (Working Days)",c:C.teal},{l:"Agency SLA 2/2/2/3 WD (Working Days)",c:C.magenta},{l:"Direct Invoice SLA 4/5 WD (Working Days)",c:C.yellowD}].map((b,i)=>(
-            <span key={i} style={{display:"inline-flex",alignItems:"center",padding:"5px 12px",borderRadius:99,background:`${b.c}18`,color:b.c,border:`1px solid ${b.c}40`,fontFamily:MONO,fontSize:10.5,fontWeight:600}}>{b.l}</span>
+          {[{l:"Partner SLA 2/1/2/2/3 working days"},{l:"Agency SLA 2/2/2/3 working days"},{l:"Direct Invoice SLA 4/5 working days"}].map((b,i)=>(
+            <span key={i} style={{display:"inline-flex",alignItems:"center",padding:"4px 11px",borderRadius:99,background:t.surf2,color:t.ink2,border:`1px solid ${t.line}`,fontSize:12,fontWeight:600}}>{b.l}</span>
           ))}
         </div>
       </div>
@@ -1300,8 +1269,8 @@ function AdminScreen({ t, pubMeta, upload, setUpload, handleFile, publish, viewD
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
             </div>
             <div style={{minWidth:0}}>
-              <div style={{fontWeight:700,fontSize:13.5,color:t.goodDark}}>Data published successfully — all viewers auto-updated</div>
-              <div style={{fontFamily:MONO,fontSize:10.5,color:t.muted,marginTop:2,wordBreak:"break-word"}}>{pubMeta.fileName} · {(pubMeta.rowCount||0).toLocaleString()} rows · {pubMeta.publishedAt}</div>
+              <div style={{fontWeight:700,fontSize:13.5,color:t.goodDark}}>Live data · visible to all viewers</div>
+              <div style={{fontSize:12.5,color:t.muted,marginTop:2,wordBreak:"break-word"}}>{pubMeta.fileName} · {plural(pubMeta.rowCount||0,"row")} · published {pubMeta.publishedAt}</div>
             </div>
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
@@ -1310,7 +1279,7 @@ function AdminScreen({ t, pubMeta, upload, setUpload, handleFile, publish, viewD
               ? <Btn t={t} variant="danger" sm onClick={()=>setConfirmDel(true)}>Delete Data</Btn>
               : (
                 <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",padding:"6px 10px",background:t.badBg,border:`1px solid ${t.badBd}`,borderRadius:12}}>
-                  <span style={{fontSize:11.5,color:t.badDark,fontWeight:600}}>All viewers will immediately lose access. Are you sure?</span>
+                  <span style={{fontSize:12,color:t.badDark,fontWeight:600}}>All viewers will immediately lose access. Are you sure?</span>
                   <Btn t={t} variant="danger" sm onClick={()=>{setConfirmDel(false);clearData();}}>Yes, Delete Permanently</Btn>
                   <Btn t={t} variant="ghost" sm onClick={()=>setConfirmDel(false)}>Cancel</Btn>
                 </div>
@@ -1329,7 +1298,7 @@ function AdminScreen({ t, pubMeta, upload, setUpload, handleFile, publish, viewD
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
         </div>
         <div style={{fontWeight:700,fontSize:15,color:t.ink,marginBottom:5}}>Drop the payout workbook here</div>
-        <div style={{fontFamily:MONO,fontSize:10.5,color:t.muted}}>or click to browse · .xlsx · .xls · .csv</div>
+        <div style={{fontFamily:MONO,fontSize:12,color:t.muted}}>or click to browse · .xlsx · .xls · .csv</div>
         <input id="pt-f-upload" type="file" accept=".xlsx,.xls,.csv" onClick={e=>e.stopPropagation()} onChange={e=>{pick(e.target.files[0]);e.target.value="";}} style={{display:"none"}}/>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",gap:14,marginBottom:10}}>
@@ -1337,12 +1306,12 @@ function AdminScreen({ t, pubMeta, upload, setUpload, handleFile, publish, viewD
           <div key={x.k} style={{background:x.u?t.goodBg:t.surf,borderTop:`1px solid ${x.u?t.goodBd:t.line}`,borderRight:`1px solid ${x.u?t.goodBd:t.line}`,borderBottom:`1px solid ${x.u?t.goodBd:t.line}`,borderLeft:`3px solid ${x.ac}`,borderRadius:14,padding:"12px 16px",minWidth:0}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap"}}>
               <span style={{fontWeight:700,fontSize:13.5,color:t.ink}}>{x.label}</span>
-              <span style={{fontFamily:MONO,fontSize:10,fontWeight:600,color:x.u?t.goodDark:t.muted}}>{x.u?"✓ Found":"Not found"}</span>
+              <span style={{fontFamily:MONO,fontSize:12,fontWeight:600,color:x.u?t.goodDark:t.muted}}>{x.u?"✓ Found":"Not found"}</span>
             </div>
             {x.u
               ? <>
-                  <div style={{fontWeight:800,fontSize:18,color:t.ink,marginTop:4}}>{x.n.toLocaleString()} rows · {fmtRp(x.amt)}</div>
-                  <div style={{fontFamily:MONO,fontSize:10.5,color:t.muted,marginTop:2,wordBreak:"break-word"}}>{fmtRpFull(x.amt)} · sheet &ldquo;{x.u.sheet}&rdquo; · {x.u.file}</div>
+                  <div style={{fontWeight:800,fontSize:18,color:t.ink,marginTop:4}}>{plural(x.n,"row")} · {fmtRpWord(x.amt)}</div>
+                  <div style={{fontFamily:MONO,fontSize:12,color:t.muted,marginTop:2,wordBreak:"break-word"}}>{fmtRpFull(x.amt)} · sheet &ldquo;{x.u.sheet}&rdquo; · {x.u.file}</div>
                   <div style={{fontSize:12,color:t.ink2,marginTop:4}}>PO (lama) {(x.n-x.di).toLocaleString()} · MDI (Direct Invoice) {x.di.toLocaleString()}</div>
                   {x.u.dup>0&&<div style={{fontSize:12,color:t.badDark,fontWeight:600,marginTop:4}}>⚠ {x.u.dup} MDI row{x.u.dup!==1?"s":""} also appear in the old sheet (same invoice number) — check for double counting.</div>}
                 </>
@@ -1371,20 +1340,18 @@ function AdminScreen({ t, pubMeta, upload, setUpload, handleFile, publish, viewD
 
 function SegBtn({s,active,disabled,count,label,onClick,t}) {
   const [hov,hE]=useHover();
-  const ac=s==="partner"?C.teal:C.magenta;
-  return <button {...hE} onClick={onClick} disabled={disabled} style={{fontWeight:600,fontSize:12.5,padding:"8px 18px",borderRadius:10,border:0,background:active?ac:hov?t.surf3:"transparent",color:active?"#fff":hov?t.ink:t.muted,cursor:disabled?"default":"pointer",display:"inline-flex",alignItems:"center",gap:8,transition:"all .15s",whiteSpace:"nowrap",opacity:disabled?.38:1,pointerEvents:disabled?"none":"auto"}}>{label}<span style={{fontFamily:MONO,fontSize:10,padding:"2px 7px",borderRadius:99,background:active?"rgba(255,255,255,.22)":t.surf4,color:active?"#fff":t.ink2}}>{count}</span></button>;
+  const ac=C.teal;
+  return <button {...hE} onClick={onClick} disabled={disabled} style={{fontWeight:600,fontSize:12.5,padding:"8px 18px",borderRadius:10,border:0,background:active?ac:hov?t.surf3:"transparent",color:active?"#fff":hov?t.ink:t.muted,cursor:disabled?"default":"pointer",display:"inline-flex",alignItems:"center",gap:8,transition:"all .15s",whiteSpace:"nowrap",opacity:disabled?.38:1,pointerEvents:disabled?"none":"auto"}}>{label}<span style={{fontFamily:MONO,fontSize:12,padding:"2px 7px",borderRadius:99,background:active?"rgba(255,255,255,.22)":t.surf4,color:active?"#fff":t.ink2}}>{count}</span></button>;
 }
 
 // Switch utama sebelum/sesudah Coupa: PO (lama) vs MDI (Direct Invoice). "All" = gabungan.
 function FlowSwitch({value,onChange,t}) {
-  const items=[{v:"all",l:"All",sub:"PO + MDI"},{v:"PO",l:"PO (lama)",sub:"Req → PO → Invoice"},{v:"DI",l:"MDI",sub:"Direct Invoice"}];
+  const items=[{v:"all",l:"All",sub:"PO + MDI"},{v:"PO",l:"PO (lama)",sub:"Req → PO → Invoice"},{v:"DI",l:"MDI",sub:"Direct Invoice (since Coupa, 11 Oct 2026)"}];
   return (
-    <div role="group" aria-label="Payment flow" style={{display:"inline-flex",gap:4,background:t.surf,border:`1px solid ${value!=="all"?C.yellowD:t.line}`,borderRadius:14,padding:4,boxShadow:t.shadow1,maxWidth:"100%",overflowX:"auto"}}>
+    <div role="group" aria-label="Payment flow" style={{display:"inline-flex",gap:4,background:t.surf,border:`1px solid ${t.line}`,borderRadius:14,padding:4,boxShadow:t.shadow1,maxWidth:"100%",overflowX:"auto"}}>
       {items.map(it=>{ const on=value===it.v; return (
         <button key={it.v} type="button" aria-pressed={on} onClick={()=>onChange(it.v)} title={it.sub}
-          style={{fontFamily:"inherit",fontWeight:600,fontSize:12.5,padding:"8px 14px",borderRadius:10,border:0,cursor:"pointer",whiteSpace:"nowrap",transition:"all .15s",background:on?C.yellow:"transparent",color:on?"#1a1a1a":t.muted,display:"inline-flex",flexDirection:"column",alignItems:"flex-start",lineHeight:1.2}}>
-          <span>{it.l}</span><span style={{fontFamily:MONO,fontSize:9.5,fontWeight:500,opacity:.8}}>{it.sub}</span>
-        </button>
+          style={{fontFamily:"inherit",fontWeight:600,fontSize:12.5,padding:"8px 18px",borderRadius:10,border:0,cursor:"pointer",whiteSpace:"nowrap",transition:"all .15s",background:on?C.teal:"transparent",color:on?"#fff":t.muted}}>{it.l}</button>
       ); })}
     </div>
   );
@@ -1395,36 +1362,36 @@ function TabBtn({label,count,active,onClick,t}) {
   return (
     <button {...hE} onClick={onClick} style={{background:"transparent",border:0,fontWeight:600,fontSize:13,padding:"10px 0 14px",color:active?t.ink:hov?t.ink2:t.muted,cursor:"pointer",position:"relative",display:"inline-flex",alignItems:"center",gap:8,whiteSpace:"nowrap",flexShrink:0,transition:"color .15s"}}>
       {label}
-      {count!==undefined&&<span style={{fontFamily:MONO,fontSize:10,padding:"2px 7px",borderRadius:99,background:active?`${C.magenta}18`:t.surf3,color:active?C.magenta:t.muted,border:`1px solid ${active?`${C.magenta}30`:t.line}`}}>{count.toLocaleString()}</span>}
-      {active&&<span style={{position:"absolute",left:0,right:0,bottom:-1,height:"2.5px",background:C.magenta,borderRadius:"2px 2px 0 0"}}/>}
+      {count!==undefined&&<span style={{fontSize:12,fontVariantNumeric:"tabular-nums",padding:"1px 8px",borderRadius:99,background:active?`${C.teal}1A`:t.surf3,color:active?t.goodDark:t.muted,border:`1px solid ${active?`${C.teal}40`:t.line}`}}>{count.toLocaleString()}</span>}
+      {active&&<span style={{position:"absolute",left:0,right:0,bottom:-1,height:"2.5px",background:C.teal,borderRadius:"2px 2px 0 0"}}/>}
     </button>
   );
 }
 
 function SugItem({s,active,iconLabel,accentColor,onPick,t}) {
   const [hov,hE]=useHover();
-  return <div {...hE} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 14px",cursor:"pointer",background:active||hov?t.surf3:"transparent",borderTop:`1px solid ${t.line}`,transition:"background .1s"}} onMouseDown={onPick}><span style={{width:22,height:22,borderRadius:7,background:accentColor,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontFamily:MONO,fontSize:8,fontWeight:700,color:"#fff"}}>{iconLabel}</span><span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontSize:12.5,fontWeight:500,color:t.ink}}>{s.label}</span><span style={{fontFamily:MONO,fontSize:10,flexShrink:0,color:t.muted}}>{s.count}</span></div>;
+  return <div {...hE} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 14px",cursor:"pointer",background:active||hov?t.surf3:"transparent",borderTop:`1px solid ${t.line}`,transition:"background .1s"}} onMouseDown={onPick}><span style={{width:22,height:22,borderRadius:7,background:accentColor,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontFamily:MONO,fontSize:12,fontWeight:700,color:"#fff"}}>{iconLabel}</span><span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontSize:12.5,fontWeight:500,color:t.ink}}>{s.label}</span><span style={{fontFamily:MONO,fontSize:12,flexShrink:0,color:t.muted}}>{s.count}</span></div>;
 }
 
 function HeatBtn({m,active,onClick,t}) {
   const [hov,hE]=useHover();
-  return <button {...hE} onClick={onClick} style={{fontFamily:MONO,fontSize:10,letterSpacing:"0.06em",textTransform:"uppercase",padding:"5px 10px",borderRadius:8,border:`1px solid ${active?m.ac:hov?C.tealD:t.line}`,background:active?m.ac:hov?t.surf3:t.surf2,color:active?(m.dark?"#1a1a1a":"#fff"):hov?t.ink:t.muted,cursor:"pointer",transition:"all .15s"}}>{m.l}</button>;
+  return <button {...hE} onClick={onClick} style={{fontSize:12,letterSpacing:"0.01em",padding:"5px 10px",borderRadius:8,border:`1px solid ${active?m.ac:hov?C.tealD:t.line}`,background:active?m.ac:hov?t.surf3:t.surf2,color:active?(m.dark?"#1a1a1a":"#fff"):hov?t.ink:t.muted,cursor:"pointer",transition:"all .15s"}}>{m.l}</button>;
 }
 
 function HeatCell({bg,light,pp,v,n}) {
   const [hov,hE]=useHover();
-  return <div {...hE} style={{borderRadius:8,padding:"9px 5px",textAlign:"center",background:bg,color:light?"#1a1a1a":"#fff",cursor:"default",transition:"transform .12s",transform:hov?"scale(1.05)":"scale(1)",position:"relative",zIndex:hov?2:0}}><div style={{fontWeight:700,fontSize:12,fontFamily:MONO,lineHeight:1}}>{pp}%</div><div style={{fontSize:9,opacity:.9,marginTop:2,fontFamily:MONO}}>{v}/{n}</div></div>;
+  return <div {...hE} style={{borderRadius:8,padding:"9px 5px",textAlign:"center",background:bg,color:light?"#1a1a1a":"#fff",cursor:"default",transition:"transform .12s",transform:hov?"scale(1.05)":"scale(1)",position:"relative",zIndex:hov?2:0}}><div style={{fontWeight:700,fontSize:12,fontFamily:MONO,lineHeight:1}}>{pp}%</div><div style={{fontSize:12,opacity:.9,marginTop:2,fontFamily:MONO}}>{v}/{n}</div></div>;
 }
 
 function BnDetailRow({d,t}) {
   const [hov,hE]=useHover();
-  return <div {...hE} style={{display:"grid",gridTemplateColumns:"44px auto 1fr auto",gap:8,padding:"7px 12px",borderBottom:`1px solid ${t.line}`,fontSize:11,alignItems:"center",background:hov?t.surf2:"transparent",transition:"background .1s"}}><span style={{fontFamily:MONO,fontSize:11,fontWeight:700,color:t.bad,textAlign:"center",background:t.badBg,padding:"3px 5px",borderRadius:6}}>{d.days}d</span><span style={{fontFamily:MONO,fontSize:10,fontWeight:600,background:t.surf3,padding:"2px 7px",borderRadius:5,border:`1px solid ${t.line}`,whiteSpace:"nowrap",color:t.ink}}>{d.po||"No PO"}</span><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{d.title}</span><span style={{fontFamily:MONO,fontSize:10,color:t.muted,textAlign:"right",whiteSpace:"nowrap"}}>{d.month}{d.amt&&<><br/>{fmtMoney(d.amt)}</>}</span></div>;
+  return <div {...hE} style={{display:"grid",gridTemplateColumns:"44px auto 1fr auto",gap:8,padding:"7px 12px",borderBottom:`1px solid ${t.line}`,fontSize:12,alignItems:"center",background:hov?t.surf2:"transparent",transition:"background .1s"}}><span style={{fontFamily:MONO,fontSize:12,fontWeight:700,color:t.bad,textAlign:"center",background:t.badBg,padding:"3px 5px",borderRadius:6}}>{d.days}d</span><span style={{fontFamily:MONO,fontSize:12,fontWeight:600,background:t.surf3,padding:"2px 7px",borderRadius:5,border:`1px solid ${t.line}`,whiteSpace:"nowrap",color:t.ink}}>{d.po||"No PO"}</span><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{d.title}</span><span style={{fontFamily:MONO,fontSize:12,color:t.muted,textAlign:"right",whiteSpace:"nowrap"}}>{d.month}{d.amt&&<><br/>{fmtMoney(d.amt)}</>}</span></div>;
 }
 
 function RawThCell({k,rawSort,setRawSort,setRawPage,isLeftCol,label,t}) {
   const [hov,hE]=useHover();
   const active=rawSort.col===k;
-  return <th {...hE} onClick={()=>{setRawSort(s=>({col:k,dir:s.col===k&&s.dir==="asc"?"desc":"asc"}));setRawPage(1);}} style={{position:"sticky",top:0,zIndex:2,fontFamily:MONO,fontSize:10,letterSpacing:"0.08em",textTransform:"uppercase",color:active?C.teal:hov?t.ink:t.muted,fontWeight:active?700:500,background:hov?t.surf3:t.surf2,padding:"9px",textAlign:isLeftCol(k)?"left":"center",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap",cursor:"pointer",transition:"all .15s"}}>{label||k}{active?(rawSort.dir==="asc"?" ▲":" ▼"):""}</th>;
+  return <th {...hE} onClick={()=>{setRawSort(s=>({col:k,dir:s.col===k&&s.dir==="asc"?"desc":"asc"}));setRawPage(1);}} style={{position:"sticky",top:0,zIndex:2,fontSize:12,letterSpacing:"0.01em",color:active?C.teal:hov?t.ink:t.muted,fontWeight:active?700:500,background:hov?t.surf3:t.surf2,padding:"9px",textAlign:isLeftCol(k)?"left":"center",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap",cursor:"pointer",transition:"all .15s"}}>{label||k}{active?(rawSort.dir==="asc"?" ▲":" ▼"):""}</th>;
 }
 
 function RawDataRow({r,i,rawKeys,isLeftCol,fmtCellT,t,docs,segment}) {
@@ -1452,7 +1419,7 @@ function FunnelRowItem({s,prevKey,drop,isExp,filtRaw,grand,onToggle,t}) {
             <div style={{fontWeight:600,fontSize:12.5,color:t.ink}}>{s.label}</div>
             {drop>0&&(
               <button onClick={e=>{e.stopPropagation();onToggle();}} aria-expanded={isExp}
-                style={{display:"inline-flex",alignItems:"center",gap:5,marginTop:4,fontFamily:MONO,fontSize:10,fontWeight:700,color:t.bad,background:t.badBg,border:`1px solid ${t.badBd}`,borderRadius:99,padding:"2px 9px",cursor:"pointer",lineHeight:1.4}}>
+                style={{display:"inline-flex",alignItems:"center",gap:5,marginTop:4,fontFamily:MONO,fontSize:12,fontWeight:700,color:t.bad,background:t.badBg,border:`1px solid ${t.badBd}`,borderRadius:99,padding:"2px 9px",cursor:"pointer",lineHeight:1.4}}>
                 {drop} pending {isExp?"▲":"▼"}
               </button>
             )}
@@ -1460,25 +1427,25 @@ function FunnelRowItem({s,prevKey,drop,isExp,filtRaw,grand,onToggle,t}) {
         </div>
         <div style={{textAlign:"right",flexShrink:0}}>
           <div style={{fontWeight:700,fontSize:14,fontFamily:MONO,color:t.ink}}>{s.val.toLocaleString()}</div>
-          <div style={{fontSize:10,color:t.muted}}>{pct(s.val,grand.n)}%</div>
+          <div style={{fontSize:12,color:t.muted}}>{pct(s.val,grand.n)}%</div>
         </div>
       </div>
       {isExp&&pending.length>0&&(
         <div style={{marginTop:6,borderRadius:10,background:t.badBg,borderTop:`1px solid ${t.badBd}`,borderRight:`1px solid ${t.badBd}`,borderBottom:`1px solid ${t.badBd}`,borderLeft:`3px solid ${t.bad}`,padding:"8px 10px"}}>
-          <div style={{fontFamily:MONO,fontSize:9.5,color:t.bad,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontWeight:600}}>Pending · {pending.length} records</div>
+          <div style={{fontSize:12,color:t.bad,letterSpacing:"0.01em",marginBottom:5,fontWeight:600}}>Pending · {pending.length} records</div>
           <div style={{display:"flex",flexDirection:"column",gap:4,maxHeight:200,overflowY:"auto"}}>
             {pending.slice(0,30).map((r,j)=>(
-              <div key={j} style={{display:"grid",gridTemplateColumns:"auto 1fr auto",gap:7,padding:"4px 6px",borderBottom:`1px solid ${t.badBd}`,fontSize:11,alignItems:"start"}}>
-                <span style={{fontFamily:MONO,fontSize:10,fontWeight:700,color:t.bad}}>{r.po||"No PO"}</span>
+              <div key={j} style={{display:"grid",gridTemplateColumns:"auto 1fr auto",gap:7,padding:"4px 6px",borderBottom:`1px solid ${t.badBd}`,fontSize:12,alignItems:"start"}}>
+                <span style={{fontFamily:MONO,fontSize:12,fontWeight:700,color:t.bad}}>{r.po||"No PO"}</span>
                 <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{r.name}</span>
-                <span style={{fontFamily:MONO,fontSize:10,color:t.muted,textAlign:"right",whiteSpace:"nowrap"}}>{r.month}{r.amt&&<><br/>{fmtMoney(r.amt)}</>}</span>
+                <span style={{fontFamily:MONO,fontSize:12,color:t.muted,textAlign:"right",whiteSpace:"nowrap"}}>{r.month}{r.amt&&<><br/>{fmtMoney(r.amt)}</>}</span>
               </div>
             ))}
           </div>
         </div>
       )}
       {isExp&&pending.length===0&&(
-        <div style={{marginTop:6,padding:"8px 10px",borderRadius:10,background:t.surf2,border:`1px solid ${t.line}`,fontSize:11.5,fontStyle:"italic",color:t.muted}}>No pending records match the current filters.</div>
+        <div style={{marginTop:6,padding:"8px 10px",borderRadius:10,background:t.surf2,border:`1px solid ${t.line}`,fontSize:12,fontStyle:"italic",color:t.muted}}>No pending records match the current filters.</div>
       )}
     </div>
   );
@@ -1548,16 +1515,15 @@ function DashScreen(props) {
 
   const filtersEmpty = curAgg.length>0 && filtAgg.length===0;
 
-  // Format published timestamp to "LAST UPDATED MMM DD, YYYY"
   const pubLabel = pubMeta?.publishedAt
-    ? `LAST UPDATED ${pubMeta.publishedAt.toUpperCase()}`
-    : "LIVE PREVIEW";
+    ? `Last updated ${pubMeta.publishedAt}`
+    : "Live preview";
 
   return (
     <div style={{maxWidth:1400,margin:"0 auto",padding:w<480?"16px 12px 44px":w<768?"18px 16px 48px":"20px 20px 56px"}}>
       <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:20,marginBottom:20,flexWrap:"wrap"}}>
         <div>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,fontFamily:MONO,fontSize:10,letterSpacing:"0.2em",textTransform:"uppercase",color:t.muted,flexWrap:"wrap"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,fontSize:12,letterSpacing:"0.01em",color:t.muted,flexWrap:"wrap"}}>
             <span style={{width:16,height:1,background:C.magenta,display:"inline-block"}}/>
             {pubLabel}
           </div>
@@ -1586,7 +1552,7 @@ function DashScreen(props) {
 
       {canPickRegion&&(
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16,flexWrap:"wrap"}}>
-          <span style={{display:"inline-flex",alignItems:"center",gap:6,fontFamily:MONO,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:t.muted}}>
+          <span style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12,letterSpacing:"0.01em",color:t.muted}}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
             Region View
           </span>
@@ -1603,7 +1569,7 @@ function DashScreen(props) {
           </select>
           {regionView&&(
             <button onClick={()=>setRegionView("")}
-              style={{fontFamily:"inherit",fontSize:11.5,fontWeight:600,color:t.muted,background:"transparent",border:`1px solid ${t.line}`,borderRadius:8,padding:"6px 10px",cursor:"pointer"}}>
+              style={{fontFamily:"inherit",fontSize:12,fontWeight:600,color:t.muted,background:"transparent",border:`1px solid ${t.line}`,borderRadius:8,padding:"6px 10px",cursor:"pointer"}}>
               Reset
             </button>
           )}
@@ -1640,17 +1606,13 @@ function DashScreen(props) {
       {curAgg.length>0&&!isYtd&&(
         <div style={{background:t.surf,border:`1px solid ${t.line}`,borderRadius:14,padding:"10px 16px",marginBottom:chips.length>0?8:18,boxShadow:t.shadow1,position:"relative",zIndex:10}}>
           <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-            <span style={{fontFamily:MONO,fontSize:10,letterSpacing:"0.16em",textTransform:"uppercase",color:t.muted,paddingRight:12,borderRight:`1px solid ${t.line}`,flexShrink:0}}>Filters</span>
+            <span style={{fontSize:12,letterSpacing:"0.01em",color:t.muted,paddingRight:12,borderRight:`1px solid ${t.line}`,flexShrink:0}}>Filters</span>
             {isMobile&&(
               <button onClick={()=>setShowFilters(v=>!v)} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:10,border:`1px solid ${activeFilterCount?C.teal:t.line2}`,background:t.surf2,color:t.ink,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>
                 {showFilters?"Hide filters":"Show filters"}
-                {activeFilterCount>0&&<span style={{fontFamily:MONO,fontSize:10,fontWeight:700,padding:"1px 7px",borderRadius:99,background:C.teal,color:"#fff"}}>{activeFilterCount}</span>}
+                {activeFilterCount>0&&<span style={{fontFamily:MONO,fontSize:12,fontWeight:700,padding:"1px 7px",borderRadius:99,background:C.teal,color:"#fff"}}>{activeFilterCount}</span>}
               </button>
             )}
-            <div style={{display:"flex",gap:8,flexShrink:0,marginLeft:"auto"}}>
-              <Btn t={t} variant="outline" sm onClick={()=>exportSummary("csv")} title="Export filtered summary (CSV)">CSV</Btn>
-              <Btn t={t} variant="primary" sm onClick={()=>exportSummary("xlsx")} title="Export filtered summary (Excel)">Excel</Btn>
-            </div>
           </div>
           {(!isMobile||showFilters)&&(
             <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginTop:10}}>
@@ -1672,16 +1634,16 @@ function DashScreen(props) {
                     else if(e.key==="Escape"){setSearchFocus(false);setSearchIdx(-1);}
                   }}
                   style={{width:"100%",padding:"7px 28px 7px 32px",fontSize:12.5,borderRadius:10,border:`1px solid ${searchFocus?C.teal:t.line2}`,background:t.surf2,color:t.ink,fontFamily:"inherit",outline:"none",boxSizing:"border-box",boxShadow:searchFocus?`0 0 0 3px ${C.teal}22`:"none",transition:"all .15s"}}/>
-                {searchInput&&<button onClick={()=>{setSearchInput("");setFilters(f=>({...f,q:""}));}} aria-label="Clear search" style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",width:18,height:18,borderRadius:"50%",border:"none",background:t.surf4,color:t.muted,cursor:"pointer",fontSize:10,padding:0}}>✕</button>}
+                {searchInput&&<button onClick={()=>{setSearchInput("");setFilters(f=>({...f,q:""}));}} aria-label="Clear search" style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",width:18,height:18,borderRadius:"50%",border:"none",background:t.surf4,color:t.muted,cursor:"pointer",fontSize:12,padding:0}}>✕</button>}
                 {searchFocus&&allSuggestions.length>0&&(
                   <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,right:0,zIndex:300,background:t.surf,border:`1px solid ${t.line2}`,borderRadius:14,boxShadow:t.shadow3,overflow:"hidden"}}>
                     {[{g:searchSuggestions.partners,l:isAg?"Agency":"Partner",ic:C.teal,lbl:"P",off:0},{g:searchSuggestions.pos,l:"PO / Invoice Number",ic:C.magenta,lbl:"PO",off:searchSuggestions.partners.length},{g:searchSuggestions.projects,l:"Project",ic:C.pink,lbl:"Pr",off:searchSuggestions.partners.length+searchSuggestions.pos.length}].filter(x=>x.g.length>0).map(({g,l,ic,lbl,off})=>(
                       <div key={l}>
-                        <div style={{padding:"5px 14px 4px",fontFamily:MONO,fontSize:9,textTransform:"uppercase",letterSpacing:"0.14em",color:t.muted,background:t.surf2,display:"flex",justifyContent:"space-between"}}><span>{l}</span><span style={{color:C.teal}}>{g.length}</span></div>
+                        <div style={{padding:"5px 14px 4px",fontSize:12,letterSpacing:"0.01em",color:t.muted,background:t.surf2,display:"flex",justifyContent:"space-between"}}><span>{l}</span><span style={{color:C.teal}}>{g.length}</span></div>
                         {g.map((s,i)=><SugItem key={i} s={s} active={searchIdx===off+i} iconLabel={lbl} accentColor={ic} t={t} onPick={()=>{setSearchInput(s.label);setFilters(f=>({...f,q:s.label}));setSearchFocus(false);setSearchIdx(-1);}}/>)}
                       </div>
                     ))}
-                    <div style={{display:"flex",justifyContent:"space-between",padding:"5px 14px",fontFamily:MONO,fontSize:9.5,color:t.muted,background:t.surf2,borderTop:`1px solid ${t.line}`}}><span>↑↓ navigate</span><span>↵ select</span><span>Esc close</span></div>
+                    <div style={{display:"flex",justifyContent:"space-between",padding:"5px 14px",fontFamily:MONO,fontSize:12,color:t.muted,background:t.surf2,borderTop:`1px solid ${t.line}`}}><span>↑↓ navigate</span><span>↵ select</span><span>Esc close</span></div>
                   </div>
                 )}
               </div>
@@ -1693,15 +1655,15 @@ function DashScreen(props) {
 
       {chips.length>0&&!isYtd&&(
         <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:18}}>
-          <span style={{fontFamily:MONO,fontSize:9.5,letterSpacing:"0.1em",textTransform:"uppercase",color:t.muted}}>Active:</span>
+          <span style={{fontSize:12,letterSpacing:"0.01em",color:t.muted}}>Active:</span>
           {chips.map((c,i)=>(
-            <span key={i} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"3px 6px 3px 10px",borderRadius:99,background:`${C.teal}14`,border:`1px solid ${C.teal}40`,fontSize:11.5,color:t.ink}}>
-              <span style={{color:t.muted,fontSize:10.5}}>{c.lbl}:</span>
+            <span key={i} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"3px 6px 3px 10px",borderRadius:99,background:`${C.teal}14`,border:`1px solid ${C.teal}40`,fontSize:12,color:t.ink}}>
+              <span style={{color:t.muted,fontSize:12}}>{c.lbl}:</span>
               <span style={{fontWeight:600,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.k==="entity"?entLabel(c.v,flowSel):c.v}</span>
-              <button onClick={()=>removeChip(c)} aria-label={`Remove filter ${c.lbl} ${c.v}`} style={{width:16,height:16,borderRadius:"50%",border:"none",background:`${C.teal}30`,color:t.ink,cursor:"pointer",fontSize:9,padding:0,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+              <button onClick={()=>removeChip(c)} aria-label={`Remove filter ${c.lbl} ${c.v}`} style={{width:16,height:16,borderRadius:"50%",border:"none",background:`${C.teal}30`,color:t.ink,cursor:"pointer",fontSize:12,padding:0,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>✕</button>
             </span>
           ))}
-          <button onClick={resetFilters} style={{border:"none",background:"transparent",color:t.bad,cursor:"pointer",fontFamily:"inherit",fontSize:11.5,fontWeight:600,padding:"3px 6px"}}>Clear all</button>
+          <button onClick={resetFilters} style={{border:"none",background:"transparent",color:t.bad,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,padding:"3px 6px"}}>Clear all</button>
         </div>
       )}
 
@@ -1730,7 +1692,7 @@ function DashScreen(props) {
         </>
       )}
 
-      <div style={{marginTop:28,paddingTop:18,borderTop:`1px solid ${t.line}`,textAlign:"center",fontFamily:MONO,fontSize:10,letterSpacing:"0.12em",textTransform:"uppercase",color:t.muted,lineHeight:1.6}}>
+      <div style={{marginTop:28,paddingTop:18,borderTop:`1px solid ${t.line}`,textAlign:"center",fontSize:12,letterSpacing:"0.01em",color:t.muted,lineHeight:1.6}}>
         Partner &amp; Agency Payout Tracker · Sumatera · SAP &amp; Web Coupa · PO SLA {isAg?"2/2/2/3":"2/1/2/2/3"} WD · Direct Invoice SLA 4/5 WD (Working Days)
         {regionFilter&&<span style={{marginLeft:12,color:t.yellow}}>· {regionFilter}</span>}
       </div>
@@ -1794,23 +1756,15 @@ function computeAccrual(rows) {
 function FlowBadge({ flow, t }) {
   if (!flow) return null;
   const di = flow===FLOW_DI;
-  return <span style={{display:"inline-flex",padding:"2px 7px",borderRadius:6,fontFamily:MONO,fontSize:9.5,fontWeight:600,letterSpacing:"0.04em",whiteSpace:"nowrap",background:di?`${C.yellow}22`:`${C.teal}18`,color:di?t.warnDark:t.goodDark,border:`1px solid ${di?`${C.yellow}55`:`${C.teal}40`}`}}>{di?"Direct Inv":"PO"}</span>;
+  return <span style={{display:"inline-flex",padding:"2px 7px",borderRadius:6,fontFamily:MONO,fontSize:12,fontWeight:600,letterSpacing:"0.04em",whiteSpace:"nowrap",background:di?`${C.yellow}22`:`${C.teal}18`,color:di?t.warnDark:t.goodDark,border:`1px solid ${di?`${C.yellow}55`:`${C.teal}40`}`}}>{di?"Direct Inv":"PO"}</span>;
 }
 
 // Header sticky: background harus solid (bukan rgba) dan di atas sel body, supaya baris yang di-scroll tidak tembus
-const thS = (t, left) => ({position:"sticky",top:0,zIndex:3,fontFamily:MONO,fontSize:10,letterSpacing:"0.08em",textTransform:"uppercase",color:t.muted,fontWeight:500,background:t.surf2,padding:"8px 9px",textAlign:left?"left":"right",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap"});
-const tdS = (t, left) => ({padding:"7px 9px",textAlign:left?"left":"right",borderBottom:`1px solid ${t.line}`,fontSize:11.5,color:t.ink2,whiteSpace:"nowrap",maxWidth:left?240:undefined,overflow:"hidden",textOverflow:"ellipsis"});
+const thS = (t, left) => ({position:"sticky",top:0,zIndex:3,fontSize:12,letterSpacing:"0.01em",color:t.muted,fontWeight:600,background:t.surf2,padding:"8px 9px",textAlign:left?"left":"right",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap"});
+const tdS = (t, left) => ({padding:"8px 10px",textAlign:left?"left":"right",borderBottom:`1px solid ${t.line}`,fontSize:12.5,fontVariantNumeric:"tabular-nums",color:t.ink2,whiteSpace:"nowrap",maxWidth:left?240:undefined,overflow:"hidden",textOverflow:"ellipsis"});
 const EmptyNote = ({ t, children }) => <div style={{textAlign:"center",color:t.muted,padding:"1.5rem",fontFamily:MONO,fontSize:12}}>{children}</div>;
 
 // Rupiah: ringkas (juta/miliar) untuk kartu, penuh untuk tabel
-function fmtRp(n) {
-  n = Number(n) || 0;
-  const a = Math.abs(n), f = (v,d=1) => v.toFixed(d).replace(".", ",");
-  if (a>=1e12) return "Rp "+f(n/1e12)+" T";
-  if (a>=1e9)  return "Rp "+f(n/1e9)+" M";
-  if (a>=1e6)  return "Rp "+f(n/1e6,0)+" jt";
-  return "Rp "+Math.round(n).toLocaleString("id-ID");
-}
 const fmtRpFull = (n) => "Rp "+Math.round(Number(n)||0).toLocaleString("id-ID");
 const pctClr = (p, t) => p>=80 ? { c:t.goodDark, bg:t.goodBg, bd:t.goodBd, dot:t.good } : p>=50 ? { c:t.warnDark, bg:t.warnBg, bd:t.warnBd, dot:t.warn } : { c:t.badDark, bg:t.badBg, bd:t.badBd, dot:t.bad };
 
@@ -1858,26 +1812,22 @@ function computeInsights(rows) {
 /* ── KPI: 4 kartu (nominal besar + jumlah kecil) ── */
 function KpiCards({ ins, partnerCount, monthsCount, isAg, w, t }) {
   const { k } = ins;
+  const dot = (c) => <span style={{width:10,height:10,borderRadius:3,background:c,flexShrink:0}}/>;
+  const lbl = (c, txt) => <span style={{display:"inline-flex",alignItems:"center",gap:6}}>{c&&dot(c)}{txt}</span>;
   const cards = [
-    { l:"Total Payout",          v:k.total,     n:k.n,      ac:C.yellow,  s:"records" },
-    { l:"Paid",                  v:k.paid,      n:k.paidN,  ac:C.teal,    s:`paid · ${pct(k.paid,k.total)}% of amount` },
-    { l:"Outstanding",           v:k.out,       n:k.outN,   ac:C.magenta, s:"in Payment Process" },
-    { l:"Invoice Not Submitted", v:k.notSubAmt, n:k.notSub, ac:C.red,     s:"waiting for invoice" },
+    { l:lbl(null,"Total payout"),               v:k.total,     sub:plural(k.n,"record") },
+    { l:lbl(t.good,"Paid"),                     v:k.paid,      sub:`${plural(k.paidN,"record")} · ${pct(k.paid,k.total)}% of amount` },
+    { l:lbl(t.warn,"Outstanding"),              v:k.out,       sub:`${plural(k.outN,"record")} in Payment Process` },
+    { l:lbl(t.bad,"Invoice not submitted"),     v:k.notSubAmt, sub:`${plural(k.notSub,"record")} waiting for an invoice` },
   ];
   return (
     <div style={{marginBottom:14}}>
       <div style={{display:"grid",gridTemplateColumns:w>=900?"repeat(4,1fr)":"repeat(2,1fr)",gap:12}}>
-        {cards.map(c=>(
-          <div key={c.l} style={{background:t.surf,borderLeft:`1px solid ${t.line}`,borderRight:`1px solid ${t.line}`,borderBottom:`1px solid ${t.line}`,borderTop:`3px solid ${c.ac}`,borderRadius:16,padding:w<480?"12px 13px":"14px 16px",boxShadow:t.shadow1,minWidth:0}}>
-            <div style={{fontFamily:MONO,fontSize:9.5,letterSpacing:"0.1em",textTransform:"uppercase",color:t.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.l}</div>
-            <div style={{fontWeight:800,fontSize:w<480?19:24,letterSpacing:"-0.03em",color:t.ink,lineHeight:1.15,marginTop:6}} title={fmtRpFull(c.v)}>{fmtRp(c.v)}</div>
-            <div style={{fontSize:12,color:t.muted,marginTop:3}}><strong style={{color:t.ink2}}>{c.n.toLocaleString()}</strong> {c.s}</div>
-          </div>
-        ))}
+        {cards.map((c,i)=><YtdKpi key={i} t={t} label={c.l} value={<span title={fmtRpFull(c.v)}>{fmtRpWord(c.v)}</span>} sub={c.sub}/>)}
       </div>
-      <div style={{fontFamily:MONO,fontSize:10.5,color:t.muted,marginTop:8,display:"flex",gap:12,flexWrap:"wrap"}}>
-        <span>Avg days to clear: <strong style={{color:t.ink}}>{k.cycN?`${(k.cycSum/k.cycN).toFixed(1)} WD`:"—"}</strong> (Invoice → Bank Cleared)</span>
-        <span>{partnerCount.toLocaleString()} {isAg?"agencies":"partners"} · {monthsCount} month{monthsCount!==1?"s":""}</span>
+      <div style={{fontSize:12.5,color:t.muted,marginTop:8,display:"flex",gap:14,flexWrap:"wrap"}}>
+        <span>Average time to clear: <strong style={{color:t.ink}}>{k.cycN?`${(k.cycSum/k.cycN).toFixed(1)} working days`:"—"}</strong> (Invoice → Bank Cleared)</span>
+        <span>{plural(partnerCount,isAg?"agency":"partner",isAg?"agencies":"partners")} · {plural(monthsCount,"month")}</span>
       </div>
     </div>
   );
@@ -1897,16 +1847,16 @@ function SlaStrip({ steps, showFlow, bnExp, setBnExp, t }) {
                 <span style={{fontWeight:600,fontSize:12.5,color:t.ink}}>{r.label}</span>
                 {showFlow&&<FlowBadge flow={r.flow} t={t}/>}
               </div>
-              <span style={{fontFamily:MONO,fontSize:11.5,color:t.ink2,whiteSpace:"nowrap"}} title="Average working days vs SLA target">
+              <span style={{fontFamily:MONO,fontSize:12,color:t.ink2,whiteSpace:"nowrap"}} title="Average working days vs SLA target">
                 {r.n?<><strong style={{color:r.avg<=r.sla?t.goodDark:t.badDark}}>{r.avg.toFixed(1)}</strong> / {r.sla} WD</>:"—"}
               </span>
-              <span style={{display:"inline-flex",alignItems:"center",gap:5,minWidth:78,justifyContent:"center",padding:"3px 8px",borderRadius:99,fontFamily:MONO,fontSize:10.5,fontWeight:700,background:r.n?pc.bg:t.surf3,color:r.n?pc.c:t.muted,border:`1px solid ${r.n?pc.bd:t.line}`,whiteSpace:"nowrap"}} title={`${r.ok} of ${r.n} on time`}>
+              <span style={{display:"inline-flex",alignItems:"center",gap:5,minWidth:78,justifyContent:"center",padding:"3px 8px",borderRadius:99,fontFamily:MONO,fontSize:12,fontWeight:700,background:r.n?pc.bg:t.surf3,color:r.n?pc.c:t.muted,border:`1px solid ${r.n?pc.bd:t.line}`,whiteSpace:"nowrap"}} title={`${r.ok} of ${r.n} on time`}>
                 {r.n?<><span style={{width:6,height:6,borderRadius:"50%",background:pc.dot}}/>{p}% on time</>:"no data"}
               </span>
             </div>
             {open&&r.details.length>0&&(
               <div style={{borderTop:`1px solid ${t.line}`,maxHeight:220,overflowY:"auto",background:t.surf}}>
-                <div style={{padding:"6px 12px",fontFamily:MONO,fontSize:9.5,color:t.bad,textTransform:"uppercase",letterSpacing:"0.08em"}}>Longest {Math.min(r.details.length,20)} of {r.n}</div>
+                <div style={{padding:"6px 12px",fontSize:12,color:t.bad,letterSpacing:"0.01em"}}>Longest {Math.min(r.details.length,20)} of {r.n}</div>
                 {r.details.slice(0,20).map((d,j)=><BnDetailRow key={j} d={d} t={t}/>)}
               </div>
             )}
@@ -1933,7 +1883,7 @@ function DashTab(props) {
             {w>=480&&<div style={{flexShrink:0}}>
               {(()=>{
                 const W=150,H=Math.max(110,funnelStages.length*40),pad=4,sH=(H-pad*2)/funnelStages.length,maxV=grand.n||1;
-                return <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{display:"block"}} role="img" aria-label="Payment funnel">{funnelStages.map((s,i)=>{ const w1=(s.val/maxV)*(W-10); const nv=funnelStages[i+1]?funnelStages[i+1].val:s.val; const w2=(nv/maxV)*(W-10); const x1a=(W-w1)/2,x1b=x1a+w1,x2a=(W-w2)/2,x2b=x2a+w2,y1=pad+i*sH,y2=y1+sH-1; const darkTxt=s.color===C.yellow; return <g key={s.key}><path d={`M${x1a},${y1} L${x1b},${y1} L${x2b},${y2} L${x2a},${y2} Z`} fill={s.color} opacity={.95}/><text x={W/2} y={y1+sH/2+4} textAnchor="middle" fill={darkTxt?"#1a1a1a":"#fff"} fontSize={10.5} fontWeight="700" fontFamily="inherit">{pct(s.val,grand.n)}%</text></g>; })}</svg>;
+                return <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{display:"block"}} role="img" aria-label="Payment funnel">{funnelStages.map((s,i)=>{ const w1=(s.val/maxV)*(W-10); const nv=funnelStages[i+1]?funnelStages[i+1].val:s.val; const w2=(nv/maxV)*(W-10); const x1a=(W-w1)/2,x1b=x1a+w1,x2a=(W-w2)/2,x2b=x2a+w2,y1=pad+i*sH,y2=y1+sH-1; const darkTxt=!!s.darkText; return <g key={s.key}><path d={`M${x1a},${y1} L${x1b},${y1} L${x2b},${y2} L${x2a},${y2} Z`} fill={s.color} opacity={.95}/><text x={W/2} y={y1+sH/2+4} textAnchor="middle" fill={darkTxt?"#1a1a1a":"#fff"} fontSize={12} fontWeight="700" fontFamily="inherit">{pct(s.val,grand.n)}%</text></g>; })}</svg>;
               })()}
             </div>}
             <div style={{flex:1,minWidth:200}}>
@@ -1946,7 +1896,7 @@ function DashTab(props) {
           <CardHead title="SLA by Step" accent={C.red} sub="Avg working days vs target · % on time · click a step for the longest cases" t={t}/>
           <div style={{padding:18}}>
             {filtRaw.length===0?<EmptyNote t={t}>No data available</EmptyNote>:<SlaStrip steps={bnResults} showFlow={flowSel==="all"} bnExp={bnExp} setBnExp={setBnExp} t={t}/>}
-            <div style={{display:"flex",gap:12,marginTop:10,flexWrap:"wrap",fontFamily:MONO,fontSize:9.5,color:t.muted}}>
+            <div style={{display:"flex",gap:12,marginTop:10,flexWrap:"wrap",fontFamily:MONO,fontSize:12,color:t.muted}}>
               {[{c:t.good,l:"≥80% on time"},{c:t.warn,l:"50–79%"},{c:t.bad,l:"<50%"}].map(x=><span key={x.l} style={{display:"inline-flex",alignItems:"center",gap:5}}><span style={{width:8,height:8,borderRadius:2,background:x.c}}/>{x.l}</span>)}
             </div>
           </div>
@@ -2014,9 +1964,9 @@ function PartnersTab({ ins, isAg, w, t }) {
         <tbody>{list.map((o,i)=>{ const p=Math.round(o.pPaid); return (
           <tr key={o.name} style={{background:i%2===1?t.rowStripe:"transparent"}}>
             <td style={{...tdS(t,true),fontWeight:600,color:t.ink,maxWidth:phone?140:320}} title={o.name}>{o.name}</td>
-            <td style={{...tdS(t),fontFamily:MONO}}>{fmtRpFull(o.total)}</td>
-            {!phone&&<td style={{...tdS(t),fontFamily:MONO}}>{fmtRpFull(o.paid)}</td>}
-            <td style={{...tdS(t),fontFamily:MONO,color:o.out?t.warnDark:t.muted}}>{fmtRpFull(o.out)}</td>
+            <td style={{...tdS(t),fontFamily:MONO}} title={fmtRpFull(o.total)}>{fmtRpWord(o.total)}</td>
+            {!phone&&<td style={{...tdS(t),fontFamily:MONO}} title={fmtRpFull(o.paid)}>{fmtRpWord(o.paid)}</td>}
+            <td style={{...tdS(t),fontFamily:MONO,color:o.out?t.warnDark:t.muted}} title={fmtRpFull(o.out)}>{o.out?fmtRpWord(o.out):"—"}</td>
             <td style={tdS(t)}><PctBadge val={p} t={t}/></td>
           </tr>
         ); })}</tbody>
@@ -2045,7 +1995,7 @@ function FlowCompareTab({ ins, flowSel, t }) {
           ))}</tbody>
         </table>
       </div>
-      <div style={{fontFamily:MONO,fontSize:10,color:t.muted,marginTop:8}}>Avg days = Invoice Submission → Bank Cleared (working days). On time: PO 2 + 3 WD · Direct Invoice 4 + 5 WD.</div>
+      <div style={{fontFamily:MONO,fontSize:12,color:t.muted,marginTop:8}}>Avg days = Invoice Submission → Bank Cleared (working days). On time: PO 2 + 3 WD · Direct Invoice 4 + 5 WD.</div>
     </div>
   );
 }
@@ -2062,7 +2012,7 @@ function OutstandingTab({ ins, isAg, w, t }) {
   const amt = rows.reduce((a,r)=>a+r.amt,0);
   const phone = w<640;
   const today = dayStart(new Date());
-  const dayClr = (d) => d==null ? t.muted : d>30 ? t.bad : d>14 ? t.warnDark : t.goodDark;
+  const dayClr = (d) => d==null ? t.muted : d>30 ? t.bad : d>14 ? t.warnDark : t.ink2;
   const title = view==="this" ? "Due this week" : view==="next" ? "Due next week" : view==="notsub" ? "Invoice not submitted" : "Total outstanding";
   const sub = view==="this"||view==="next"
     ? `Unpaid, Est. Pay Date ${fmtDate(view==="this"?ins.wk0:ins.wk1)} – ${fmtDate(new Date((view==="this"?ins.wk1:ins.wk2).getTime()-DAY))}`
@@ -2077,15 +2027,15 @@ function OutstandingTab({ ins, isAg, w, t }) {
         <Chip t={t} active={view==="b15"} onClick={()=>setView("b15")} tone={C.yellowD}>15–30 days · {cnt("b15")}</Chip>
         <Chip t={t} active={view==="b30"} onClick={()=>setView("b30")} tone={C.red}>&gt;30 days · {cnt("b30")}</Chip>
         {cnt("nod")>0&&<Chip t={t} active={view==="nod"} onClick={()=>setView("nod")} tone={C.grey}>No invoice date · {cnt("nod")}</Chip>}
-        <Chip t={t} active={view==="notsub"} onClick={()=>setView("notsub")} tone={C.grey}>Not submitted · {ins.notSub.length}</Chip>
+        <Chip t={t} active={view==="notsub"} onClick={()=>setView("notsub")} tone={C.red}>Not submitted · {ins.notSub.length}</Chip>
         <span style={{flex:"1 1 0"}}/>
-        <Chip t={t} active={view==="this"} onClick={()=>setView("this")} tone={C.magenta}>Due this week · {ins.due.this.length}</Chip>
-        <Chip t={t} active={view==="next"} onClick={()=>setView("next")} tone={C.magenta}>Due next week · {ins.due.next.length}</Chip>
+        <Chip t={t} active={view==="this"} onClick={()=>setView("this")} >Due this week · {ins.due.this.length}</Chip>
+        <Chip t={t} active={view==="next"} onClick={()=>setView("next")} >Due next week · {ins.due.next.length}</Chip>
       </div>
       <div style={{display:"flex",alignItems:"baseline",gap:12,flexWrap:"wrap",padding:"10px 14px",background:t.surf2,border:`1px solid ${t.line}`,borderRadius:12,marginBottom:10}}>
         <span style={{fontSize:12.5,fontWeight:600,color:t.muted}}>{title}</span>
-        <span style={{fontWeight:800,fontSize:20,color:t.ink,letterSpacing:"-0.02em"}}>{fmtRpFull(amt)}</span>
-        <span style={{fontSize:12,color:t.muted}}>{rows.length.toLocaleString()} records · {sub}</span>
+        <span style={{fontWeight:800,fontSize:20,color:t.ink,letterSpacing:"-0.02em"}} title={fmtRpFull(amt)}>{fmtRpWord(amt)}</span>
+        <span style={{fontSize:12,color:t.muted}}>{plural(rows.length,"record")} · {sub}</span>
       </div>
       {rows.length===0 ? <EmptyNote t={t}>{view==="this"||view==="next"?"No payments due in this period":view==="notsub"?"No invoices waiting":"No outstanding payments"}</EmptyNote> : (
         <div style={{maxHeight:440,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10}}>
@@ -2107,7 +2057,7 @@ function OutstandingTab({ ins, isAg, w, t }) {
                   {!phone&&<td style={{...tdS(t,true),maxWidth:w<1100?170:260}} title={a.title}>{a.title}</td>}
                   <td style={{...tdS(t,true),fontFamily:MONO,fontWeight:700,background:late?t.badBg:`${C.yellow}14`,color:late?t.bad:t.ink}} title={late?"Estimation date has passed":undefined}>{a.est?fmtDate(a.est):"—"}</td>
                   {!phone&&<td style={{...tdS(t,true),fontFamily:MONO}}>{a.period}</td>}
-                  <td style={{...tdS(t),fontFamily:MONO,color:t.ink}}>{fmtRpFull(a.amt)}</td>
+                  <td style={{...tdS(t),fontFamily:MONO,color:t.ink}} title={fmtRpFull(a.amt)}>{fmtRpWord(a.amt)}</td>
                   {!phone&&<td style={{...tdS(t,true),maxWidth:170}} title={a.status}>{a.stage}</td>}
                   {!phone&&<td style={{...tdS(t),fontFamily:MONO,fontWeight:700,color:dayClr(a.days)}} title="Days since Invoice Submission">{a.days==null?"—":a.days}</td>}
                 </tr>
@@ -2116,8 +2066,8 @@ function OutstandingTab({ ins, isAg, w, t }) {
           </table>
         </div>
       )}
-      {rows.length>300&&<div style={{fontFamily:MONO,fontSize:10,color:t.muted,marginTop:6}}>Showing 300 of {rows.length.toLocaleString()} — narrow the filters or use Raw Data for the rest.</div>}
-      <div style={{fontFamily:MONO,fontSize:10,color:t.muted,marginTop:8}}>Est. Date in red = already past today. Days = since Invoice Submission.</div>
+      {rows.length>300&&<div style={{fontFamily:MONO,fontSize:12,color:t.muted,marginTop:6}}>Showing 300 of {rows.length.toLocaleString()} — narrow the filters or use Raw Data for the rest.</div>}
+      <div style={{fontFamily:MONO,fontSize:12,color:t.muted,marginTop:8}}>Est. Date in red = already past today. Days = since Invoice Submission.</div>
     </div>
   );
 }
@@ -2180,9 +2130,11 @@ function fmtRpWord(n, d=1) {
   const a = Math.abs(n), f = (v) => v.toFixed(d).replace(".", ",");
   if (a>=1e12) return `Rp ${f(n/1e12)} triliun`;
   if (a>=1e9)  return `Rp ${f(n/1e9)} miliar`;
-  if (a>=1e6)  return `Rp ${Math.round(n/1e6).toLocaleString("id-ID")} juta`;
+  if (a>=1e6)  return `Rp ${(a<1e8 ? (n/1e6).toFixed(1).replace(".", ",") : Math.round(n/1e6).toLocaleString("id-ID"))} juta`;
   return "Rp "+Math.round(n).toLocaleString("id-ID");
 }
+// Jumlah + kata benda tunggal/jamak: "1 row", "2 rows"
+const plural = (n, word, many) => `${Number(n||0).toLocaleString()} ${Number(n)===1 ? word : (many || word+"s")}`;
 // Angka tabel ringkas dalam juta (nilai penuh di tooltip)
 const fmtJuta = (n) => n ? `${Math.round(n/1e6).toLocaleString("id-ID")} jt` : "—";
 
@@ -2192,7 +2144,9 @@ function useBoxWidth() {
   const [bw, setBw] = useState(0);
   useEffect(()=>{
     const el = ref.current;
-    if (!el || typeof ResizeObserver==="undefined") return;
+    if (!el) return;
+    setBw(Math.round(el.getBoundingClientRect().width)); // ukur langsung, jangan menunggu callback observer
+    if (typeof ResizeObserver==="undefined") return;
     const ro = new ResizeObserver(es=>setBw(Math.round(es[0].contentRect.width)));
     ro.observe(el);
     return ()=>ro.disconnect();
@@ -2208,11 +2162,58 @@ function niceMax(v, ticks=4) {
   return { max:Math.ceil(v/step)*step, step };
 }
 
+// Grafik % per bulan: dua batang berdampingan (Invoiced / Cleared), tooltip saat hover
+function TrendChart({ series, t }) {
+  const [ref, bw] = useBoxWidth();
+  const [hov, setHov] = useState(null);
+  const H = 220, pL = 40, pR = 6, pT = 10, pB = 28;
+  const W = Math.max(bw, 260), cW = W-pL-pR, cH = H-pT-pB;
+  const y = (v) => pT + cH - (Math.min(100,Math.max(0,v))/100)*cH;
+  const band = cW/Math.max(series.length,1), bw1 = Math.max(4, Math.min(18, band*0.32));
+  const bar = (x, v, c, k) => { const yt=y(v), h=Math.max(0,y(0)-yt), r=Math.min(3,h); return <path key={k} d={`M${x},${yt+h} V${yt+r} Q${x},${yt} ${x+r},${yt} H${x+bw1-r} Q${x+bw1},${yt} ${x+bw1},${yt+r} V${yt+h} Z`} fill={c}/>; };
+  const s = hov!=null ? series[hov] : null;
+  const short = (m) => String(m).replace(/^(\w{3})\w*\s+\d{2}(\d{2})$/,"$1 ’$2");
+  return (
+    <div ref={ref} style={{position:"relative"}}>
+      {bw>0&&(
+        <svg width={W} height={H} role="img" aria-label="Percent invoiced and cleared per month" style={{display:"block"}} onMouseLeave={()=>setHov(null)}>
+          {[0,25,50,75,100].map(v=>(
+            <g key={v}>
+              <line x1={pL} x2={W-pR} y1={y(v)} y2={y(v)} stroke={v?t.line:t.line2} strokeWidth={1}/>
+              <text x={pL-6} y={y(v)+4} textAnchor="end" fontSize={12} fill={t.muted}>{v}%</text>
+            </g>
+          ))}
+          {series.map((d,i)=>{
+            const cx = pL + band*i + band/2;
+            const every = Math.ceil(series.length/Math.max(1,Math.floor(cW/56)));
+            return (
+              <g key={i} opacity={hov==null||hov===i?1:0.45}>
+                {bar(cx-bw1-1, d.inv, t.chartA, "i")}
+                {bar(cx+1, d.clr, t.chartB, "c")}
+                {(i%every===0)&&<text x={cx} y={H-pB+18} textAnchor="middle" fontSize={12} fill={t.muted}>{short(d.month)}</text>}
+                <rect x={pL+band*i} y={pT} width={band} height={cH} fill="transparent" tabIndex={0} onMouseEnter={()=>setHov(i)} onFocus={()=>setHov(i)} onBlur={()=>setHov(null)} aria-label={`${d.month}: invoiced ${Math.round(d.inv)}%, cleared ${Math.round(d.clr)}%`}/>
+              </g>
+            );
+          })}
+        </svg>
+      )}
+      {s&&(()=>{ const cx = pL + band*hov + band/2, right = cx + bw1 + 10, left = right + 190 <= W ? right : Math.max(0, cx - bw1 - 200); return (
+        <div style={{position:"absolute",top:6,left,width:190,background:t.surf,border:`1px solid ${t.line2}`,borderRadius:12,boxShadow:t.shadow3,padding:"9px 12px",fontSize:12.5,pointerEvents:"none",display:"flex",flexDirection:"column",gap:4,zIndex:5}}>
+          <div style={{fontWeight:700,color:t.ink}}>{s.month}</div>
+          {[[t.chartA,"Invoiced",s.inv],[t.chartB,"Cleared",s.clr]].map(([c,l,v])=>(
+            <div key={l} style={{display:"flex",justifyContent:"space-between",gap:8}}><span style={{display:"inline-flex",alignItems:"center",gap:6,color:t.ink2}}><span style={{width:10,height:10,borderRadius:3,background:c}}/>{l}</span><strong style={{color:t.ink,fontVariantNumeric:"tabular-nums"}}>{v.toFixed(0)}%</strong></div>
+          ))}
+        </div>
+      ); })()}
+    </div>
+  );
+}
+
 function YtdKpi({ label, value, sub, children, t }) {
   return (
     <div style={{background:t.surf,border:`1px solid ${t.line}`,borderRadius:16,padding:"14px 16px",boxShadow:t.shadow1,minWidth:0}}>
       <div style={{fontSize:12,fontWeight:600,color:t.muted}}>{label}</div>
-      <div style={{fontWeight:800,fontSize:22,letterSpacing:"-0.02em",color:t.ink,lineHeight:1.2,marginTop:6}}>{value}</div>
+      <div style={{fontWeight:800,fontSize:"clamp(16px, 4.2vw, 22px)",letterSpacing:"-0.02em",color:t.ink,lineHeight:1.2,marginTop:6,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{value}</div>
       {sub&&<div style={{fontSize:12.5,color:t.muted,marginTop:4,lineHeight:1.4}}>{sub}</div>}
       {children}
     </div>
@@ -2564,10 +2565,10 @@ function AccrualTab({ rows, w, t, showToast }) {
             <thead><tr><th style={thS(t,true)}>Agency · Program</th>{ck.months.map(m=><th key={m} style={{...thS(t),textAlign:"center"}}>{MONTHS_SHORT[m]}</th>)}</tr></thead>
             <tbody>{ck.list.map((g,i)=>(
               <tr key={g.agency+"\x00"+g.prog} style={{background:i%2===1?t.rowStripe:"transparent"}}>
-                <td style={{...tdS(t,true),maxWidth:260}} title={`${g.agency} · ${g.prog}`}><strong style={{color:t.ink}}>{g.agency}</strong><span style={{color:t.muted}}> · {g.prog}</span>{!g.scheduled&&<span style={{marginLeft:6,fontFamily:MONO,fontSize:9,color:t.muted}}>(no schedule)</span>}</td>
+                <td style={{...tdS(t,true),maxWidth:260}} title={`${g.agency} · ${g.prog}`}><strong style={{color:t.ink}}>{g.agency}</strong><span style={{color:t.muted}}> · {g.prog}</span>{!g.scheduled&&<span style={{marginLeft:6,fontFamily:MONO,fontSize:12,color:t.muted}}>(no schedule)</span>}</td>
                 {g.cells.map((c,j)=>{ const k=mark[c.s]; return (
                   <td key={j} style={{...tdS(t),textAlign:"center",background:k.bg,color:k.c,fontWeight:700,padding:"5px 4px"}} title={c.s==="ok"?fmtRpFull(c.amt):c.s==="miss"?"Expected but missing":"Not expected"}>
-                    <div>{k.s}</div>{c.s==="ok"&&<div style={{fontFamily:MONO,fontSize:9.5,fontWeight:500,color:t.muted}}>{fmtRp(c.amt).replace("Rp ","")}</div>}
+                    <div>{k.s}</div>{c.s==="ok"&&<div style={{fontFamily:MONO,fontSize:12,fontWeight:500,color:t.muted}}>{fmtRpWord(c.amt).replace("Rp ","")}</div>}
                   </td>
                 ); })}
               </tr>
@@ -2624,7 +2625,7 @@ function AccrualEstimate({ acc, year, w, t }) {
           </tr></thead>
           <tbody>{acc.list.map((g,i)=>(
             <tr key={g.agency+"\x00"+g.prog} style={{background:i%2===1?t.rowStripe:"transparent"}}>
-              <td style={{...tdS(t,true),maxWidth:280}} title={`${g.agency} · ${g.prog}`}><strong style={{color:t.ink}}>{g.agency}</strong><span style={{color:t.muted}}> · {g.prog}</span>{g.noAccrue&&<span style={{marginLeft:6,fontFamily:MONO,fontSize:9,color:t.muted}}>(no accrual)</span>}</td>
+              <td style={{...tdS(t,true),maxWidth:280}} title={`${g.agency} · ${g.prog}`}><strong style={{color:t.ink}}>{g.agency}</strong><span style={{color:t.muted}}> · {g.prog}</span>{g.noAccrue&&<span style={{marginLeft:6,fontFamily:MONO,fontSize:12,color:t.muted}}>(no accrual)</span>}</td>
               {months.map(m=>{ const c=g.cells[m]; return <td key={m} style={{...tdS(t),fontFamily:MONO,fontStyle:c?.est?"italic":"normal",color:c?.est?t.muted:t.ink2}}>{c?fmtRpFull(c.v):"—"}</td>; })}
               <td style={{...tdS(t),fontFamily:MONO,fontWeight:700,color:t.ink}}>{fmtRpFull(rowTotal(g))}</td>
             </tr>
@@ -2653,14 +2654,14 @@ function MonthlyTab(props) {
   const pcell = (v,n) => n?<PctBadge val={pct(v,n)} t={t}/>:"—";
   return (
     <div style={{padding:18}}>
-      <div style={{display:"grid",gridTemplateColumns:w>=1000?"1fr 1fr":"1fr",gap:14,marginBottom:16}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr",gap:20,marginBottom:18}}>
         <div>
           <div style={{fontWeight:700,fontSize:13,color:t.ink,marginBottom:8}}>% Invoiced &amp; % Cleared per month</div>
-          <BarChart series={series} t={t}/>
-          <div style={{display:"flex",gap:14,justifyContent:"center",marginTop:6,fontSize:11.5,color:t.ink}}>
-            <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,background:C.yellow,borderRadius:3}}/>% Invoice</span>
-            <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,background:C.teal,borderRadius:3}}/>% Cleared</span>
+          <div style={{display:"flex",gap:14,marginBottom:6,fontSize:12.5,color:t.ink2}}>
+            <span style={{display:"flex",alignItems:"center",gap:6}}><span style={{width:10,height:10,background:t.chartA,borderRadius:3}}/>% Invoiced</span>
+            <span style={{display:"flex",alignItems:"center",gap:6}}><span style={{width:10,height:10,background:t.chartB,borderRadius:3}}/>% Cleared</span>
           </div>
+          <TrendChart series={series} t={t}/>
         </div>
         <div style={{minWidth:0}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
@@ -2669,8 +2670,8 @@ function MonthlyTab(props) {
           </div>
           <div style={{overflowX:"auto"}}>
             <table style={{borderCollapse:"separate",borderSpacing:3,fontSize:12,width:"100%"}}>
-              <thead><tr><th style={{fontFamily:MONO,fontSize:9.5,color:t.muted,textAlign:"left",padding:"4px 6px",fontWeight:500}}>MONTH</th>{heatData.ptypes.map(p=><th key={p} style={{fontFamily:MONO,fontSize:9.5,color:t.muted,padding:"4px 6px",fontWeight:500,whiteSpace:"nowrap"}}>{p}</th>)}</tr></thead>
-              <tbody>{heatData.months.map(m=><tr key={m}><td style={{fontFamily:MONO,fontSize:11,fontWeight:600,color:t.ink,padding:"3px 6px",whiteSpace:"nowrap"}}>{fmtMonthYear(m)}</td>{heatData.ptypes.map(p=>{ const c=heatData.cells[m+"\x00"+p]; if(!c)return <td key={p}><div style={{borderRadius:8,padding:"9px 5px",textAlign:"center",background:t.surf3,color:t.muted2,fontFamily:MONO,fontSize:11}}>—</div></td>; const v=c[heatMetric]||0,pp=pct(v,c.n),bg=heatClr(pp),light=bg===C.yellow; return <td key={p} title={`${fmtMonthYear(m)} · ${p}: ${v}/${c.n} (${pp}%)`}><HeatCell bg={bg} light={light} pp={pp} v={v} n={c.n}/></td>; })}</tr>)}</tbody>
+              <thead><tr><th style={{fontFamily:MONO,fontSize:12,color:t.muted,textAlign:"left",padding:"4px 6px",fontWeight:500}}>MONTH</th>{heatData.ptypes.map(p=><th key={p} style={{fontFamily:MONO,fontSize:12,color:t.muted,padding:"4px 6px",fontWeight:500,whiteSpace:"nowrap"}}>{p}</th>)}</tr></thead>
+              <tbody>{heatData.months.map(m=><tr key={m}><td style={{fontFamily:MONO,fontSize:12,fontWeight:600,color:t.ink,padding:"3px 6px",whiteSpace:"nowrap"}}>{fmtMonthYear(m)}</td>{heatData.ptypes.map(p=>{ const c=heatData.cells[m+"\x00"+p]; if(!c)return <td key={p}><div style={{borderRadius:8,padding:"9px 5px",textAlign:"center",background:t.surf3,color:t.muted2,fontFamily:MONO,fontSize:12}}>—</div></td>; const v=c[heatMetric]||0,pp=pct(v,c.n),bg=heatClr(pp),light=bg===C.yellow; return <td key={p} title={`${fmtMonthYear(m)} · ${p}: ${v}/${c.n} (${pp}%)`}><HeatCell bg={bg} light={light} pp={pp} v={v} n={c.n}/></td>; })}</tr>)}</tbody>
             </table>
           </div>
         </div>
@@ -2723,7 +2724,7 @@ function MonthlyTab(props) {
           </tbody>
           <tfoot><tr>
             {(()=>{ const ft={...tdS(t),background:"#1E2128",color:"#fff",fontFamily:MONO,fontWeight:800,borderTop:`2px solid ${C.teal}`,position:"sticky",bottom:0,zIndex:3}; const pf=(v)=><span style={{padding:"3px 10px",borderRadius:99,background:C.tealD}}>{pct(v,grand.n)}%</span>; return <>
-              <td style={{...ft,textAlign:"left",fontFamily:"inherit"}}>TOTAL · {fmtRp(grand.amt)}</td>
+              <td style={{...ft,textAlign:"left",fontFamily:"inherit"}}>TOTAL · {fmtRpWord(grand.amt)}</td>
               {!phone&&<td style={ft}/>}
               <td style={ft}>{grand.n.toLocaleString()}</td>
               <td style={ft}>{pf(grand.inv)}</td>
@@ -2747,18 +2748,18 @@ function RawTab(props) {
   return (
     <Card t={t} pad={false} style={{marginBottom:14}}>
       <CardHead title="Raw Data" accent={C.magenta}
-        sub={`${filtRaw.length.toLocaleString()} records · showing ${rawKeys.length} ${showAllCols?"(all)":"primary"} columns`}
+        sub={`${plural(filtRaw.length,"record")} · showing ${rawKeys.length} ${showAllCols?"(all)":"primary"} columns`}
         t={t}
         right={
           <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
             {/* toggle: Primary columns vs All columns */}
             <div style={{display:"inline-flex",background:t.surf3,borderRadius:10,padding:3,gap:2,border:`1px solid ${t.line}`}}>
               <button onClick={()=>setShowAllCols(false)}
-                style={{fontFamily:"inherit",fontSize:11.5,fontWeight:600,padding:"5px 11px",borderRadius:8,border:0,cursor:"pointer",transition:"all .15s",background:!showAllCols?C.teal:"transparent",color:!showAllCols?"#fff":t.muted}}>
+                style={{fontFamily:"inherit",fontSize:12,fontWeight:600,padding:"5px 11px",borderRadius:8,border:0,cursor:"pointer",transition:"all .15s",background:!showAllCols?C.teal:"transparent",color:!showAllCols?"#fff":t.muted}}>
                 Primary columns
               </button>
               <button onClick={()=>setShowAllCols(true)}
-                style={{fontFamily:"inherit",fontSize:11.5,fontWeight:600,padding:"5px 11px",borderRadius:8,border:0,cursor:"pointer",transition:"all .15s",background:showAllCols?C.teal:"transparent",color:showAllCols?"#fff":t.muted}}>
+                style={{fontFamily:"inherit",fontSize:12,fontWeight:600,padding:"5px 11px",borderRadius:8,border:0,cursor:"pointer",transition:"all .15s",background:showAllCols?C.teal:"transparent",color:showAllCols?"#fff":t.muted}}>
                 All columns{hiddenCount>0?` (+${hiddenCount})`:""}
               </button>
             </div>
@@ -2771,20 +2772,20 @@ function RawTab(props) {
 
       {/* Info: export always includes all columns */}
       {!showAllCols&&(
-        <div style={{padding:"7px 16px",fontSize:11,color:t.muted,background:t.infoBg,borderBottom:`1px solid ${t.infoBd}`,display:"flex",alignItems:"center",gap:7,lineHeight:1.4}}>
+        <div style={{padding:"7px 16px",fontSize:12,color:t.muted,background:t.infoBg,borderBottom:`1px solid ${t.infoBd}`,display:"flex",alignItems:"center",gap:7,lineHeight:1.4}}>
           <span style={{color:t.info,fontWeight:700,fontSize:13}}>ℹ</span>
           This view shows only the {rawKeysMain.length} primary columns. The Excel export always includes <strong>all columns</strong> as a complete backup.
         </div>
       )}
       {narrow&&(
-        <div style={{padding:"7px 16px",fontFamily:MONO,fontSize:10,color:t.muted,background:t.surf2,borderBottom:`1px solid ${t.line}`,display:"flex",alignItems:"center",gap:6}}>
+        <div style={{padding:"7px 16px",fontFamily:MONO,fontSize:12,color:t.muted,background:t.surf2,borderBottom:`1px solid ${t.line}`,display:"flex",alignItems:"center",gap:6}}>
           <span style={{fontSize:13}}>↔</span> Scroll horizontally to view all columns
         </div>
       )}
 
       <div style={{overflowX:"auto"}}>
-        <table style={{width:"100%",borderCollapse:"collapse",fontSize:11.5,minWidth:narrow?Math.max(720,rawKeys.length*110):undefined}}>
-          <thead><tr>{rawKeys.map(k=><RawThCell key={k} k={k} rawSort={rawSort} setRawSort={setRawSort} setRawPage={setRawPage} isLeftCol={isLeftCol} t={t}/>)}{SHOW_DOCUMENT_TABS&&<th style={{position:"sticky",top:0,zIndex:2,fontFamily:MONO,fontSize:10,letterSpacing:"0.08em",textTransform:"uppercase",color:t.muted,fontWeight:500,background:t.surf2,padding:"9px",textAlign:"center",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap"}}>Documents</th>}</tr></thead>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:narrow?Math.max(720,rawKeys.length*110):undefined}}>
+          <thead><tr>{rawKeys.map(k=><RawThCell key={k} k={k} rawSort={rawSort} setRawSort={setRawSort} setRawPage={setRawPage} isLeftCol={isLeftCol} t={t}/>)}{SHOW_DOCUMENT_TABS&&<th style={{position:"sticky",top:0,zIndex:2,fontSize:12,letterSpacing:"0.01em",color:t.muted,fontWeight:500,background:t.surf2,padding:"9px",textAlign:"center",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap"}}>Documents</th>}</tr></thead>
           <tbody>
             {pageRaw.length===0
               ? <tr><td colSpan={rawKeys.length+(SHOW_DOCUMENT_TABS?1:0)} style={{padding:"28px",textAlign:"center",color:t.muted,fontFamily:MONO,fontSize:12}}>No records match the current filters</td></tr>
@@ -2795,8 +2796,8 @@ function RawTab(props) {
 
       {totalRawPages>1&&(
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,padding:"12px 16px",borderTop:`1px solid ${t.line}`,background:t.surf2,flexWrap:"wrap"}}>
-          <span style={{fontFamily:MONO,fontSize:11,color:t.muted}}>
-            Page {curRawPage} of {totalRawPages} · {filtRaw.length.toLocaleString()} records
+          <span style={{fontFamily:MONO,fontSize:12,color:t.muted}}>
+            Page {curRawPage} of {totalRawPages} · {plural(filtRaw.length,"record")}
           </span>
           <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
             <RawPageBtn label="‹ Prev" disabled={curRawPage<=1} onClick={()=>setRawPage(p=>Math.max(1,p-1))} t={t}/>
@@ -2820,7 +2821,7 @@ function RawPageBtn({ label, active, disabled, onClick, t }) {
   return (
     <button {...hE} onClick={onClick} disabled={disabled}
       style={{
-        fontFamily:MONO, fontSize:11, fontWeight:active?700:500,
+        fontFamily:MONO, fontSize:12, fontWeight:active?700:500,
         padding:"5px 11px", borderRadius:8,
         border:`1px solid ${active?C.teal:hov&&!disabled?C.tealD:t.line2}`,
         background:active?C.teal:hov&&!disabled?t.surf3:t.surf,
