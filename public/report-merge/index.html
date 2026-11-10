@@ -1057,10 +1057,11 @@ Sales &amp; Distribution — Indosat Circle Sumatera</textarea>
 
       <div class="preview-main">
         <div class="mail-card" id="mailCard"></div>
-        <div class="token-hint" style="margin-top:10px;">"Kirim ke penerima ini" hanya mengirim ke penerima yang sedang ditampilkan di preview. "⚡ Kirim ke semua penerima" mengirim ke seluruh daftar, satu per satu, dan bisa dijeda kapan saja.</div>
+        <div class="token-hint" style="margin-top:10px;">"Kirim ke penerima ini" hanya mengirim ke penerima yang sedang ditampilkan di preview. "⚡ Kirim ke semua penerima" mengirim ke seluruh daftar, satu per satu, dan bisa dijeda kapan saja. Kalau ada yang gagal, muncul tombol "🔁 Kirim ulang yang gagal" untuk mengirim ulang penerima yang gagal saja.</div>
         <div class="actions">
           <button class="btn btn-secondary" id="btnSendOne" onclick="sendCurrent()">Kirim ke penerima ini</button>
           <button class="btn btn-primary" id="btnSendAll" onclick="confirmSendAll()">⚡ Kirim ke semua penerima</button>
+          <button class="btn btn-secondary" id="btnRetryFailed" style="display:none;" onclick="confirmRetryFailed()">🔁 Kirim ulang yang gagal</button>
           <button class="btn btn-hold" id="btnHoldAll" style="display:none;" onclick="toggleHoldSendAll()">⏸ Jeda</button>
           <button class="btn btn-cancel-hold" id="btnCancelHold" style="display:none;" onclick="cancelHeldSendAll()">Batalkan sisa</button>
         </div>
@@ -1977,6 +1978,8 @@ function loadSheet(sheetName){
   if(!json.length){ toast('Sheet "' + sheetName + '" kosong atau tidak terbaca.'); return; }
   state.rows = json;
   state.columns = Object.keys(json[0]);
+  sendFailedKeys.clear(); // data baru = daftar gagal lama tidak berlaku lagi
+  refreshRetryButton();
   onFileParsed(state.fileName, wb.SheetNames.length > 1 ? sheetName : null);
 }
 
@@ -2906,8 +2909,8 @@ function logRow(name, status, message){
   const wrap = document.getElementById('sendLog');
   const row = document.createElement('div');
   row.className = 'log-row';
-  const cls = status === 'ok' ? 'ok' : status === 'err' ? 'err' : status === 'hold' ? 'hold' : 'pending';
-  const label = status === 'ok' ? '✅ Terkirim' : status === 'err' ? '❌ Gagal' : status === 'hold' ? '⏸ Dijeda' : '⏳ Memproses…';
+  const cls = status === 'ok' ? 'ok' : status === 'err' ? 'err' : (status === 'hold' || status === 'retry') ? 'hold' : 'pending';
+  const label = status === 'ok' ? '✅ Terkirim' : status === 'err' ? '❌ Gagal' : status === 'hold' ? '⏸ Dijeda' : status === 'retry' ? '🔁 Kirim ulang' : '⏳ Memproses…';
   row.innerHTML = `<span class="ln">${escapeHtml(name)}${message ? ' — <span style="color:var(--muted)">'+escapeHtml(message)+'</span>' : ''}</span><span class="lstatus ${cls}">${label}</span>`;
   wrap.prepend(row);
   return row;
@@ -2998,6 +3001,8 @@ async function sendCurrent(){
     const data = await sendGroupViaResend(group);
     row.remove();
     logRow(group.name, 'ok', sendResultNote(data));
+    markSendResult(group, true);
+    refreshRetryButton();
     toast(data.mode === 'send' ? 'Email terkirim.' : 'Email uji coba terkirim ke alamat tes.');
     const batch = await logArchiveBatch({
       judul: state.narrative.judul, periode: state.narrative.periode, subjectTemplate: state.narrative.subjectTpl,
@@ -3008,6 +3013,8 @@ async function sendCurrent(){
   }catch(err){
     row.remove();
     logRow(group.name, 'err', err.message);
+    markSendResult(group, false);
+    refreshRetryButton();
     toast('Gagal: ' + err.message);
     const batch = await logArchiveBatch({
       judul: state.narrative.judul, periode: state.narrative.periode, subjectTemplate: state.narrative.subjectTpl,
@@ -3025,12 +3032,43 @@ function confirmSendAll(){
   document.getElementById('confirmModal').style.display = 'flex';
   document.getElementById('confirmModalOk').onclick = ()=>{
     closeConfirmModal();
-    sendAllTotals = { ok:0, err:0 };
-    sendAllSequential(0);
+    startSendRun(state.groups.slice(), false);
   };
 }
 function closeConfirmModal(){
   document.getElementById('confirmModal').style.display = 'none';
+}
+
+// --- Kirim ulang yang gagal ---
+// sendFailedKeys: group.key penerima yang pengiriman TERAKHIRNYA gagal
+// (dari "Kirim ke semua", "Kirim ke penerima ini", atau kirim ulang).
+// Begitu berhasil, key-nya dihapus lagi — jadi kirim ulang tidak pernah
+// mengirim dobel ke penerima yang sudah sukses.
+const sendFailedKeys = new Set();
+function failedGroups(){
+  return state.groups.filter(g=>sendFailedKeys.has(g.key));
+}
+function markSendResult(group, ok){
+  if(ok) sendFailedKeys.delete(group.key); else sendFailedKeys.add(group.key);
+}
+function refreshRetryButton(){
+  const btn = document.getElementById('btnRetryFailed');
+  if(!btn) return;
+  const n = failedGroups().length;
+  const sending = document.getElementById('btnHoldAll').style.display !== 'none';
+  btn.style.display = (n && !sending) ? 'inline-flex' : 'none';
+  btn.textContent = `🔁 Kirim ulang yang gagal (${n})`;
+}
+function confirmRetryFailed(){
+  const groups = failedGroups();
+  if(!groups.length){ refreshRetryButton(); return; }
+  document.getElementById('confirmText').textContent =
+    `Kamu akan mengirim ulang ${groups.length} email yang tadi gagal: ${groups.map(g=>g.name).join(', ')}. Penerima yang sudah berhasil tidak dikirimi lagi. Lanjutkan?`;
+  document.getElementById('confirmModal').style.display = 'flex';
+  document.getElementById('confirmModalOk').onclick = ()=>{
+    closeConfirmModal();
+    startSendRun(groups, true);
+  };
 }
 
 // --- Jeda (hold/pause) untuk proses kirim massal ---
@@ -3038,12 +3076,38 @@ function closeConfirmModal(){
 // tiap iterasi — jadi email yang sedang berjalan tetap selesai dulu,
 // baru berhenti SEBELUM mulai kirim ke penerima berikutnya.
 // sendAllPaused: true selagi benar-benar berhenti menunggu (tombol jadi "Lanjutkan").
-// sendAllResumeIndex: index penerima berikutnya yang belum diproses.
+// sendQueue: daftar penerima yang sedang dikirim (semua, atau yang gagal saja).
+// sendAllResumeIndex: posisi berikutnya di sendQueue yang belum diproses.
 let sendAllPauseRequested = false;
 let sendAllPaused = false;
 let sendAllResumeIndex = 0;
 let sendAllTotals = { ok:0, err:0 };
 let currentArchiveBatchId = null;
+let sendQueue = [];
+
+async function startSendRun(groups, isRetry){
+  sendQueue = groups;
+  sendAllTotals = { ok:0, err:0 };
+  // Kunci tombol SEKARANG (sebelum menunggu arsip dibuat) supaya klik
+  // dobel tidak memulai dua proses kirim sekaligus.
+  document.getElementById('btnSendAll').disabled = true;
+  document.getElementById('btnSendOne').disabled = true;
+  document.getElementById('btnRetryFailed').style.display = 'none';
+  currentArchiveBatchId = null;
+  if(isRetry){
+    logRow(`— Kirim ulang ${groups.length} yang gagal —`, 'retry');
+  } else {
+    document.getElementById('sendLog').innerHTML = '';
+  }
+  const batch = await logArchiveBatch({
+    judul: isRetry ? `${state.narrative.judul || ''} (kirim ulang)`.trim() : state.narrative.judul,
+    periode: state.narrative.periode, subjectTemplate: state.narrative.subjectTpl,
+    totalRecipients: groups.length, successCount: 0, failCount: 0, status: 'in_progress'
+  });
+  if(batch) currentArchiveBatchId = batch.id;
+  if(!isRetry) autoSaveTemplateFromCurrentNarrative();
+  sendAllSequential(0);
+}
 
 function toggleHoldSendAll(){
   if(sendAllPaused){
@@ -3062,37 +3126,29 @@ function toggleHoldSendAll(){
 }
 
 function cancelHeldSendAll(){
-  const remaining = state.groups.length - sendAllResumeIndex;
+  const remaining = sendQueue.length - sendAllResumeIndex;
   sendAllPaused = false;
   sendAllPauseRequested = false;
   document.getElementById('btnHoldAll').style.display = 'none';
   document.getElementById('btnCancelHold').style.display = 'none';
   document.getElementById('btnSendAll').disabled = false;
   document.getElementById('btnSendOne').disabled = false;
+  refreshRetryButton();
   logRow('— Dibatalkan —', 'err', `${remaining} penerima tersisa tidak diproses`);
   toast(`Dibatalkan. Berhasil: ${sendAllTotals.ok}, gagal: ${sendAllTotals.err}, tidak diproses: ${remaining}.`);
   updateArchiveBatch(currentArchiveBatchId, {
     successCount: sendAllTotals.ok, failCount: sendAllTotals.err,
-    totalRecipients: state.groups.length, status: 'cancelled'
+    totalRecipients: sendQueue.length, status: 'cancelled'
   });
 }
 
 async function sendAllSequential(startIndex){
   const start = startIndex || 0;
-  if(start === 0){
-    document.getElementById('sendLog').innerHTML = '';
-    currentArchiveBatchId = null;
-    const batch = await logArchiveBatch({
-      judul: state.narrative.judul, periode: state.narrative.periode, subjectTemplate: state.narrative.subjectTpl,
-      totalRecipients: state.groups.length, successCount: 0, failCount: 0, status: 'in_progress'
-    });
-    if(batch) currentArchiveBatchId = batch.id;
-    autoSaveTemplateFromCurrentNarrative();
-  }
   sendAllPauseRequested = false;
   sendAllPaused = false;
   document.getElementById('btnSendAll').disabled = true;
   document.getElementById('btnSendOne').disabled = true;
+  document.getElementById('btnRetryFailed').style.display = 'none';
   const holdBtn = document.getElementById('btnHoldAll');
   holdBtn.style.display = 'inline-flex';
   holdBtn.disabled = false;
@@ -3101,7 +3157,7 @@ async function sendAllSequential(startIndex){
   document.getElementById('btnCancelHold').style.display = 'none';
   showLoadingBar();
 
-  const total = state.groups.length;
+  const total = sendQueue.length;
   for(let i = start; i < total; i++){
     if(sendAllPauseRequested){
       sendAllPaused = true;
@@ -3118,18 +3174,20 @@ async function sendAllSequential(startIndex){
       });
       return;
     }
-    const group = state.groups[i];
+    const group = sendQueue[i];
     const row = logRow(group.name, 'pending');
     try{
       const data = await sendGroupViaResend(group);
       row.remove();
       logRow(group.name, 'ok', sendResultNote(data));
       sendAllTotals.ok++;
+      markSendResult(group, true);
       logArchiveRecipient(currentArchiveBatchId, buildRecipientArchivePayload(group, 'ok'));
     }catch(err){
       row.remove();
       logRow(group.name, 'err', err.message);
       sendAllTotals.err++;
+      markSendResult(group, false);
       logArchiveRecipient(currentArchiveBatchId, buildRecipientArchivePayload(group, 'err', err.message));
     }
     await new Promise(r=>setTimeout(r, 250)); // jeda kecil antar pengiriman
@@ -3139,7 +3197,10 @@ async function sendAllSequential(startIndex){
   document.getElementById('btnCancelHold').style.display = 'none';
   document.getElementById('btnSendAll').disabled = false;
   document.getElementById('btnSendOne').disabled = false;
-  toast(`Selesai. Berhasil: ${sendAllTotals.ok}, gagal: ${sendAllTotals.err}.`);
+  refreshRetryButton();
+  toast(sendAllTotals.err
+    ? `Selesai. Berhasil: ${sendAllTotals.ok}, gagal: ${sendAllTotals.err}. Klik "🔁 Kirim ulang yang gagal" untuk mencoba lagi.`
+    : `Selesai. Berhasil: ${sendAllTotals.ok}, gagal: 0.`);
   updateArchiveBatch(currentArchiveBatchId, {
     successCount: sendAllTotals.ok, failCount: sendAllTotals.err, status: 'completed'
   });
