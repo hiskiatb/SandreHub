@@ -1795,7 +1795,8 @@ function FlowBadge({ flow, t }) {
   return <span style={{display:"inline-flex",padding:"2px 7px",borderRadius:6,fontFamily:MONO,fontSize:9.5,fontWeight:600,letterSpacing:"0.04em",whiteSpace:"nowrap",background:di?`${C.yellow}22`:`${C.teal}18`,color:di?t.warnDark:t.goodDark,border:`1px solid ${di?`${C.yellow}55`:`${C.teal}40`}`}}>{di?"Direct Inv":"PO"}</span>;
 }
 
-const thS = (t, left) => ({position:"sticky",top:0,zIndex:1,fontFamily:MONO,fontSize:10,letterSpacing:"0.08em",textTransform:"uppercase",color:t.muted,fontWeight:500,background:t.surf2,padding:"8px 9px",textAlign:left?"left":"right",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap"});
+// Header sticky: background harus solid (bukan rgba) dan di atas sel body, supaya baris yang di-scroll tidak tembus
+const thS = (t, left) => ({position:"sticky",top:0,zIndex:3,fontFamily:MONO,fontSize:10,letterSpacing:"0.08em",textTransform:"uppercase",color:t.muted,fontWeight:500,background:t.surf2,padding:"8px 9px",textAlign:left?"left":"right",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap"});
 const tdS = (t, left) => ({padding:"7px 9px",textAlign:left?"left":"right",borderBottom:`1px solid ${t.line}`,fontSize:11.5,color:t.ink2,whiteSpace:"nowrap",maxWidth:left?240:undefined,overflow:"hidden",textOverflow:"ellipsis"});
 const EmptyNote = ({ t, children }) => <div style={{textAlign:"center",color:t.muted,padding:"1.5rem",fontFamily:MONO,fontSize:12}}>{children}</div>;
 
@@ -2064,7 +2065,8 @@ function OutstandingTab({ ins, isAg, w, t }) {
   const sub = view==="this"||view==="next"
     ? `Unpaid, Est. Pay Date ${fmtDate(view==="this"?ins.wk0:ins.wk1)} – ${fmtDate(new Date((view==="this"?ins.wk1:ins.wk2).getTime()-DAY))}`
     : view==="notsub" ? "Status Invoice Not Submitted" : "Status Payment Process · oldest first";
-  const estTh = { ...thS(t,true), background:`${C.yellow}33`, color:t.ink, fontWeight:700 };
+  // Sorotan kuning dilapis di atas warna header solid → tetap opak di tema terang & gelap
+  const estTh = { ...thS(t,true), background:`linear-gradient(${C.yellow}40,${C.yellow}40),${t.surf2}`, color:t.ink, fontWeight:700 };
   return (
     <div style={{padding:18}}>
       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:12}}>
@@ -2392,7 +2394,7 @@ function AccrualEstimate({ acc, year, w, t }) {
             </tr>
           ))}</tbody>
           <tfoot><tr>
-            {(()=>{ const ft={...tdS(t),background:"#1E2128",color:"#fff",fontFamily:MONO,fontWeight:700,borderTop:`2px solid ${C.teal}`,position:"sticky",bottom:0}; return <>
+            {(()=>{ const ft={...tdS(t),background:"#1E2128",color:"#fff",fontFamily:MONO,fontWeight:700,borderTop:`2px solid ${C.teal}`,position:"sticky",bottom:0,zIndex:3}; return <>
               <td style={{...ft,textAlign:"left",fontFamily:"inherit",fontWeight:800}}>TOTAL</td>
               {months.map(m=><td key={m} style={ft} title={`Actual ${fmtRpFull(acc.tot[m].act)} · Estimated ${fmtRpFull(acc.tot[m].est)}`}>{fmtRpFull(acc.tot[m].act+acc.tot[m].est)}</td>)}
               <td style={ft}>{fmtRpFull(months.reduce((a,m)=>a+acc.tot[m].act+acc.tot[m].est,0))}</td>
@@ -2484,7 +2486,7 @@ function MonthlyTab(props) {
             {sortedMonths.length===0&&<tr><td colSpan={6}><EmptyNote t={t}>No data matches the current filters</EmptyNote></td></tr>}
           </tbody>
           <tfoot><tr>
-            {(()=>{ const ft={...tdS(t),background:"#1E2128",color:"#fff",fontFamily:MONO,fontWeight:800,borderTop:`2px solid ${C.teal}`,position:"sticky",bottom:0}; const pf=(v)=><span style={{padding:"3px 10px",borderRadius:99,background:C.tealD}}>{pct(v,grand.n)}%</span>; return <>
+            {(()=>{ const ft={...tdS(t),background:"#1E2128",color:"#fff",fontFamily:MONO,fontWeight:800,borderTop:`2px solid ${C.teal}`,position:"sticky",bottom:0,zIndex:3}; const pf=(v)=><span style={{padding:"3px 10px",borderRadius:99,background:C.tealD}}>{pct(v,grand.n)}%</span>; return <>
               <td style={{...ft,textAlign:"left",fontFamily:"inherit"}}>TOTAL · {fmtRp(grand.amt)}</td>
               {!phone&&<td style={ft}/>}
               <td style={ft}>{grand.n.toLocaleString()}</td>
