@@ -2238,7 +2238,218 @@ function ForecastChart({ buckets, t }) {
   );
 }
 
+/* ── Forecast bulanan: rata-rata bergulir 3 bulan ──
+   Biaya partner per bulan program (semua status). Forecast bulan X = rata-rata 3 bulan sebelumnya yang
+   punya nilai; bulan lampau dengan data tidak lengkap (< 25% dari median jumlah baris per bulan) dilewati,
+   bulan forecast sebelumnya ikut dipakai (rolling). Horizon: bulan ini s.d. maks(+2 bulan, Desember). */
+const mkAdd = (mk, n) => { let y = Math.floor(mk/100), m = mk%100 + n; while (m>12) { m-=12; y++; } while (m<1) { m+=12; y--; } return y*100+m; };
+const fmtMil2 = (n) => (n/1e9).toFixed(2).replace(".", ",");
+
+function computeRolling(rows) {
+  const today = new Date(), cur = today.getFullYear()*100 + today.getMonth() + 1;
+  const act = {}, cnt = {}, byOwner = {};
+  rows.forEach(r=>{
+    const mk = rowMonthKey(r); if (!mk) return;
+    const a = gnum(r,["amount"]), o = ownerName(r) || "—";
+    act[mk] = (act[mk]||0) + a; cnt[mk] = (cnt[mk]||0) + 1;
+    ((byOwner[o] = byOwner[o] || {})[mk] = (byOwner[o][mk]||0) + a);
+  });
+  const dataMks = Object.keys(act).map(Number).sort((a,b)=>a-b);
+  if (!dataMks.length) return null;
+  const minRows = Math.max(5, Math.round(0.25 * (median(dataMks.map(k=>cnt[k])) || 0)));
+  const end = Math.max(mkAdd(cur, 2), Math.floor(cur/100)*100 + 12);
+  const months = [], val = {};
+  for (let mk = dataMks[0]; mk <= end; mk = mkAdd(mk, 1)) {
+    const has = act[mk] != null, complete = has && cnt[mk] >= minRows;
+    const m = { mk, label:ymLabel(mk), short:MONTHS_SHORT[mk%100], actual:has?act[mk]:null, n:cnt[mk]||0, complete, future: mk >= cur };
+    if (!m.future) { if (complete) val[mk] = act[mk]; m.kind = complete ? "actual" : has ? "partial" : "empty"; }
+    else {
+      const refs = []; for (let k = mkAdd(mk,-1); refs.length < 3 && k >= dataMks[0]; k = mkAdd(k,-1)) if (val[k] != null) refs.push(k);
+      refs.reverse();
+      m.refs = refs; m.refVals = refs.map(k=>val[k]); m.refIsFc = refs.map(k=>k>=cur);
+      m.fc = refs.length ? m.refVals.reduce((a,b)=>a+b,0)/refs.length : null;
+      m.kind = "forecast"; val[mk] = m.fc;
+    }
+    months.push(m);
+  }
+  const fcMonths = months.filter(m=>m.kind==="forecast");
+  const shown = months.filter(m=>m.mk >= mkAdd(cur,-6));
+  const next = fcMonths[0];
+  const refText = (m) => {
+    if (!m.refs.length) return "—";
+    const r = m.refs, sameYear = r.every(k=>Math.floor(k/100)===Math.floor(r[0]/100));
+    if (r.length===3 && r[2]===mkAdd(r[0],2)) return `${sameYear?MONTHS_SHORT[r[0]%100]:ymLabel(r[0])}–${ymLabel(r[2])}`;
+    return sameYear ? `${r.map(k=>MONTHS_SHORT[k%100]).join(", ")} ${Math.floor(r[0]/100)}` : r.map(k=>ymLabel(k)).join(", ");
+  };
+  const formula = (m) => m.refs.length ? `= (${m.refVals.map(fmtMil2).join(" + ")}) / ${m.refs.length}` : "—";
+  // per partner: rata-rata 3 bulan referensi forecast bulan pertama
+  const partners = next ? Object.entries(byOwner).map(([name,mm])=>{
+    const v = next.refs.map(k=>mm[k]||0); const avg = v.reduce((a,b)=>a+b,0)/(v.length||1);
+    return { name, v, avg };
+  }).filter(p=>p.v.some(x=>x>0)).sort((a,b)=>b.avg-a.avg) : [];
+  return { months, shown, fcMonths, next, partners, minRows, refText, formula, skipped: months.filter(m=>!m.future && m.kind!=="actual" && m.mk>=mkAdd(cur,-6)) };
+}
+
+function RollingChart({ months, refText, t }) {
+  const [ref, bw] = useBoxWidth();
+  const [hov, setHov] = useState(null);
+  const H = 240, pL = 46, pR = 8, pT = 22, pB = 30;
+  const W = Math.max(bw, 280), cW = W-pL-pR, cH = H-pT-pB;
+  const v = (m) => m.kind==="forecast" ? (m.fc||0) : (m.actual||0);
+  const { max, step } = niceMax(Math.max(...months.map(v), 0));
+  const y = (x) => pT + cH - (x/max)*cH;
+  const band = cW/Math.max(months.length,1), bWid = Math.min(46, band*0.62);
+  const ticks = []; for (let x=0; x<=max+1e-6; x+=step) ticks.push(x);
+  const h = hov!=null ? months[hov] : null;
+  const pid = "fc-hatch";
+  return (
+    <div ref={ref} style={{position:"relative"}}>
+      {bw>0&&(
+        <svg width={W} height={H} role="img" aria-label="Partner cost per month: actual and 3-month rolling forecast" style={{display:"block"}} onMouseLeave={()=>setHov(null)}>
+          <defs>
+            <pattern id={pid} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <rect width="6" height="6" fill={t.chartA} opacity="0.22"/><line x1="0" y1="0" x2="0" y2="6" stroke={t.chartA} strokeWidth="2.5"/>
+            </pattern>
+          </defs>
+          {ticks.map(x=>(
+            <g key={x}>
+              <line x1={pL} x2={W-pR} y1={y(x)} y2={y(x)} stroke={t.line} strokeWidth={1}/>
+              <text x={pL-8} y={y(x)+4} textAnchor="end" fontSize={12} fill={t.muted} style={{fontVariantNumeric:"tabular-nums"}}>{(x/1e9).toLocaleString("id-ID",{maximumFractionDigits:1})}</text>
+            </g>
+          ))}
+          <text x={0} y={11} fontSize={12} fill={t.muted}>Rp miliar</text>
+          {months.map((m,i)=>{
+            const cx = pL + band*i + band/2, x0 = cx-bWid/2, val = v(m), yt = y(val), hgt = Math.max(0, y(0)-yt), rr = Math.min(4,hgt);
+            const d = `M${x0},${yt+hgt} V${yt+rr} Q${x0},${yt} ${x0+rr},${yt} H${x0+bWid-rr} Q${x0+bWid},${yt} ${x0+bWid},${yt+rr} V${yt+hgt} Z`;
+            const fill = m.kind==="forecast" ? `url(#${pid})` : t.chartA;
+            return (
+              <g key={m.mk} opacity={hov==null||hov===i?1:0.45}>
+                {val>0&&<path d={d} fill={fill} opacity={m.kind==="partial"?0.35:1} stroke={m.kind==="forecast"?t.chartA:"none"} strokeWidth={m.kind==="forecast"?1.5:0} strokeDasharray={m.kind==="forecast"?"4 3":undefined}/>}
+                {m.kind==="empty"&&<text x={cx} y={y(0)-6} textAnchor="middle" fontSize={12} fill={t.muted}>no data</text>}
+                <text x={cx} y={H-pB+18} textAnchor="middle" fontSize={12} fill={m.kind==="forecast"?t.ink:t.muted} fontWeight={m.kind==="forecast"?700:400}>{m.short}</text>
+                <rect x={pL+band*i} y={pT} width={band} height={cH} fill="transparent" tabIndex={0} onMouseEnter={()=>setHov(i)} onFocus={()=>setHov(i)} onBlur={()=>setHov(null)} aria-label={`${m.label}: ${m.kind} ${fmtRpWord(val)}`}/>
+              </g>
+            );
+          })}
+          <line x1={pL} x2={W-pR} y1={y(0)} y2={y(0)} stroke={t.line2} strokeWidth={1}/>
+        </svg>
+      )}
+      {h&&(()=>{ const cx = pL + band*hov + band/2, right = cx + bWid/2 + 10, left = right + 250 <= W ? right : Math.max(0, cx - bWid/2 - 260); return (
+        <div style={{position:"absolute",top:8,left,width:250,background:t.surf,border:`1px solid ${t.line2}`,borderRadius:12,boxShadow:t.shadow3,padding:"10px 12px",fontSize:12.5,pointerEvents:"none",display:"flex",flexDirection:"column",gap:4,zIndex:5}}>
+          <div style={{fontWeight:700,color:t.ink}}>{h.label} · {h.kind==="forecast"?"Forecast":h.kind==="partial"?"Incomplete":h.kind==="empty"?"No data":"Actual"}</div>
+          {h.kind==="forecast"
+            ? <><strong style={{color:t.ink,fontVariantNumeric:"tabular-nums"}}>{fmtRpWord(h.fc)}</strong><span style={{color:t.muted}}>Reference: {refText(h)}</span><span style={{color:t.ink2,fontVariantNumeric:"tabular-nums"}}>{h.refs.length?`= (${h.refVals.map(fmtMil2).join(" + ")}) / ${h.refs.length} miliar`:""}</span></>
+            : <><strong style={{color:t.ink,fontVariantNumeric:"tabular-nums"}}>{h.actual!=null?fmtRpWord(h.actual):"—"}</strong><span style={{color:t.muted}}>{plural(h.n,"row")}{h.kind==="partial"?" · too few rows, not used as reference":""}</span></>}
+        </div>
+      ); })()}
+    </div>
+  );
+}
+
 function ForecastTab({ rows, w, t, showToast }) {
+  const rf = useMemo(()=>computeRolling(rows),[rows]);
+  const [pSort, setPSort] = useState({ col:"avg", dir:"desc" });
+  const phone = w<640;
+  const partners = useMemo(()=>{
+    if (!rf) return [];
+    const { col, dir } = pSort, m = dir==="asc" ? 1 : -1;
+    return [...rf.partners].sort((a,b)=> col==="name" ? m*a.name.localeCompare(b.name) : col.startsWith("v") ? m*(a.v[+col.slice(1)]-b.v[+col.slice(1)]) : m*(a[col]-b[col]));
+  },[rf,pSort]);
+  if (!rf || !rf.next) return <Card t={t} style={{marginBottom:14}}><EmptyNote t={t}>Not enough partner data for a forecast</EmptyNote></Card>;
+  const { next, fcMonths, refText, formula } = rf;
+  const exportXlsx = async () => {
+    const XLSX = await getXLSX();
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rf.months.map(m=>({
+      Month:m.label, Type:m.kind==="forecast"?"Forecast":m.kind==="partial"?"Actual (incomplete, not used)":m.kind==="empty"?"No data":"Actual",
+      Actual:m.actual??"", Forecast:m.kind==="forecast"?Math.round(m.fc||0):"", Rows:m.n,
+      "Reference months":m.kind==="forecast"?m.refs.map((k,i)=>ymLabel(k)+(m.refIsFc[i]?" (forecast)":"")).join(", "):"",
+      Formula:m.kind==="forecast"?`${formula(m)} (Rp miliar)`:"",
+    }))), "Forecast by month");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(partners.map(p=>{ const o={ Partner:p.name }; next.refs.forEach((k,i)=>{ o[ymLabel(k)]=p.v[i]; }); o[`Forecast ${next.label} (3-month average)`]=Math.round(p.avg); return o; })), "Forecast by partner");
+    XLSX.writeFile(wb, `partner_forecast_${new Date().toISOString().slice(0,10)}.xlsx`);
+    showToast("Partner forecast downloaded — Excel","success");
+  };
+  const th = (left) => ({ ...thS(t,left), padding:"8px 12px" });
+  const td = (left) => ({ ...tdS(t,left), padding:"8px 12px" });
+  return (
+    <div style={{marginBottom:14}}>
+      <div style={{display:"flex",alignItems:"flex-start",gap:12,flexWrap:"wrap",marginBottom:14}}>
+        <div style={{flex:"1 1 420px",minWidth:0}}>
+          <div style={{fontWeight:800,fontSize:20,letterSpacing:"-0.02em",color:t.ink}}>Partner payment forecast</div>
+          <div style={{fontSize:14,color:t.ink2,marginTop:6,lineHeight:1.5}}>
+            Forecast for <strong style={{color:t.ink}}>{next.label}</strong>: <strong style={{color:t.ink}}>{fmtRpWord(next.fc)}</strong>, the average of the previous 3 months with complete data. <span style={{display:"inline-block",padding:"1px 8px",borderRadius:99,background:t.surf2,border:`1px solid ${t.line}`,fontSize:12.5,fontWeight:600,color:t.ink2}}>Reference: {refText(next)}</span>
+          </div>
+        </div>
+        <Btn t={t} variant="primary" sm onClick={exportXlsx}>Export Excel</Btn>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:w>=900?`repeat(${Math.min(fcMonths.length,4)},1fr)`:"repeat(2,1fr)",gap:12,marginBottom:14}}>
+        {fcMonths.slice(0,4).map(m=>(
+          <YtdKpi key={m.mk} t={t} label={`Forecast ${m.label}`} value={<span title={fmtRpFull(m.fc||0)}>{fmtRpWord(m.fc||0)}</span>} sub={<>Ref: {refText(m)}{m.refIsFc.some(Boolean)?" (incl. forecast)":""}</>}/>
+        ))}
+      </div>
+      <Card t={t} style={{marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap",marginBottom:6}}>
+          <span style={{fontWeight:700,fontSize:14,color:t.ink}}>Partner cost per month</span>
+          <span style={{display:"inline-flex",gap:14,fontSize:12.5,color:t.ink2,marginLeft:"auto",flexWrap:"wrap"}}>
+            <span style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:10,height:10,borderRadius:3,background:t.chartA}}/>Actual</span>
+            <span style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:10,height:10,borderRadius:3,border:`1.5px dashed ${t.chartA}`,background:`repeating-linear-gradient(45deg, ${t.chartA}, ${t.chartA} 2px, transparent 2px, transparent 5px)`}}/>Forecast (3-month average)</span>
+            <span style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:10,height:10,borderRadius:3,background:t.chartA,opacity:.35}}/>Incomplete</span>
+          </span>
+        </div>
+        <RollingChart months={rf.shown} refText={refText} t={t}/>
+        <div style={{fontSize:12,color:t.muted,marginTop:8,lineHeight:1.5}}>
+          Based on partner cost by program month (all statuses, PO + MDI). Each forecast month = average of the previous 3 months that have data; months with fewer than {rf.minRows} rows count as incomplete and are skipped{rf.skipped.length?` (${rf.skipped.map(m=>`${m.label}${m.n?`: ${plural(m.n,"row")}`:": no data"}`).join(", ")})`:""}. Later forecast months roll forward and include earlier forecast months.
+        </div>
+      </Card>
+      <div style={{display:"grid",gridTemplateColumns:w>=1100?"minmax(0,1fr) minmax(0,1fr)":"1fr",gap:14,marginBottom:14,alignItems:"start"}}>
+        <Card t={t} pad={false}>
+          <div style={{padding:"12px 16px",borderBottom:`1px solid ${t.line}`,display:"flex",gap:10,alignItems:"baseline",flexWrap:"wrap"}}>
+            <span style={{fontWeight:700,fontSize:14,color:t.ink}}>By month</span><span style={{fontSize:12.5,color:t.muted}}>Rp miliar · formula = average of the 3 reference months</span>
+          </div>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr><th style={th(true)}>Month</th><th style={th(false)}>Actual</th><th style={th(false)}>Forecast</th><th style={th(true)}>Reference</th>{!phone&&<th style={th(true)}>Formula</th>}</tr></thead>
+              <tbody>{rf.shown.map((m,i)=>{ const fc = m.kind==="forecast"; return (
+                <tr key={m.mk} style={{background:fc?`${C.teal}0F`:i%2===1?t.rowStripe:"transparent"}}>
+                  <td style={{...td(true),fontWeight:600,color:t.ink}}>{m.label}{m.kind==="partial"&&<span style={{marginLeft:6,fontSize:12,fontWeight:500,color:t.warnDark}}>· incomplete</span>}</td>
+                  <td style={{...td(false),color:m.actual!=null?t.ink2:t.muted}} title={m.actual!=null?fmtRpFull(m.actual):undefined}>{m.actual!=null?fmtMiliar(m.actual):"—"}</td>
+                  <td style={{...td(false),fontWeight:fc?700:400,color:fc?t.ink:t.muted}} title={fc?fmtRpFull(m.fc||0):undefined}>{fc?fmtMiliar(m.fc||0):"—"}</td>
+                  <td style={{...td(true),color:t.ink2}}>{fc?refText(m):""}</td>
+                  {!phone&&<td style={{...td(true),color:t.muted,maxWidth:220}} title={fc?formula(m):undefined}>{fc?formula(m):""}</td>}
+                </tr>
+              ); })}</tbody>
+            </table>
+          </div>
+        </Card>
+        <Card t={t} pad={false}>
+          <div style={{padding:"12px 16px",borderBottom:`1px solid ${t.line}`,display:"flex",gap:10,alignItems:"baseline",flexWrap:"wrap"}}>
+            <span style={{fontWeight:700,fontSize:14,color:t.ink}}>By partner · {next.label}</span><span style={{fontSize:12.5,color:t.muted}}>average of {refText(next)}</span>
+          </div>
+          <div style={{maxHeight:420,overflow:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr>
+                <SortTh col="name" left sort={pSort} setSort={setPSort} t={t}>Partner</SortTh>
+                {!phone&&next.refs.map((k,i)=><SortTh key={k} col={`v${i}`} sort={pSort} setSort={setPSort} t={t}>{MONTHS_SHORT[k%100]}</SortTh>)}
+                <SortTh col="avg" sort={pSort} setSort={setPSort} t={t}>Forecast</SortTh>
+              </tr></thead>
+              <tbody>{partners.map((p,i)=>(
+                <tr key={p.name} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+                  <td style={{...td(true),fontWeight:600,color:t.ink,maxWidth:phone?150:220}} title={p.name}>{p.name}</td>
+                  {!phone&&p.v.map((x,j)=><td key={j} style={{...td(false),color:x?t.ink2:t.muted}} title={x?fmtRpFull(x):undefined}>{x?fmtMiliar(x):"—"}</td>)}
+                  <td style={{...td(false),fontWeight:700,color:t.ink}} title={`(${p.v.map(x=>fmtRpFull(x)).join(" + ")}) / ${p.v.length}`}>{fmtMiliar(p.avg)}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </Card>
+      </div>
+      <OpenBillsSection rows={rows} w={w} t={t} showToast={showToast}/>
+    </div>
+  );
+}
+
+function OpenBillsSection({ rows, w, t, showToast }) {
   const fc = useMemo(()=>computeForecast(rows),[rows]);
   const [sort, setSort] = useState({ col:"total", dir:"desc" });
   const [dSort, setDSort] = useState({ col:"due", dir:"asc" });
@@ -2263,11 +2474,11 @@ function ForecastTab({ rows, w, t, showToast }) {
   const dot = (c) => <span style={{width:10,height:10,borderRadius:3,background:c,flexShrink:0}}/>;
   const lbl = (c, s) => <span style={{display:"inline-flex",alignItems:"center",gap:6}}>{c&&dot(c)}{s}</span>;
   const amt = (v, c) => <td style={{...tdS(t),color:v?(c||t.ink2):t.muted}} title={v?fmtRpFull(v):undefined}>{v?fmtMiliar(v):"—"}</td>;
-  if (!fc.items.length) return <Card t={t} style={{marginBottom:14}}><EmptyNote t={t}>No open partner payments — everything is paid</EmptyNote></Card>;
+  if (!fc.items.length) return <Card t={t} style={{marginBottom:14}}><div style={{fontWeight:700,fontSize:16,color:t.ink,marginBottom:6}}>Open bills to pay</div><EmptyNote t={t}>No open partner payments — everything is paid</EmptyNote></Card>;
   return (
     <div style={{marginBottom:14}}>
       <div style={{marginBottom:14}}>
-        <div style={{fontWeight:800,fontSize:20,letterSpacing:"-0.02em",color:t.ink}}>Partner payment forecast</div>
+        <div style={{fontWeight:800,fontSize:17,letterSpacing:"-0.02em",color:t.ink,paddingTop:14,borderTop:`1px solid ${t.line2}`}}>Open bills to pay <span style={{fontWeight:500,fontSize:13,color:t.muted}}>· tagihan terbuka yang perlu dibayar</span></div>
         <div style={{fontSize:14,color:t.ink2,marginTop:6,lineHeight:1.5}}>
           <strong style={{color:t.ink}}>{fmtRpWord(fc.total)}</strong> still to be paid to partners. <strong style={{color:t.ink}}>{fmtRpWord(fc.next3)}</strong> is expected in {fc.next3Label}{fc.over.amt?<>, and <strong style={{color:t.badDark}}>{fmtRpWord(fc.over.amt)}</strong> is already past its expected date</>:null}.
         </div>
