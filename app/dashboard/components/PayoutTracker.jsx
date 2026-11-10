@@ -333,12 +333,6 @@ function parseRows(raw, src) {
   return { raw: rows, agg: buildAgg(rows,src) };
 }
 
-function heatClr(p) {
-  if (p>=95) return C.tealDp; if (p>=80) return C.tealD; if (p>=65) return C.teal;
-  if (p>=45) return C.yellow; if (p>=25) return C.yellowD; if (p>0) return "#b27c00";
-  return C.grey;
-}
-
 function normalizeName(s) {
   if (!s) return "";
   let n = s.toString().trim().toUpperCase();
@@ -768,7 +762,6 @@ export default function PayoutTracker({
   const [screen, setScreen]          = useState("loading");
   const [src, setSrc]                = useState("partner");
   const [activeTab, setActiveTab]    = useState("dash");
-  const [heatMetric, setHeatMetric]  = useState("clr");
   const [loading, setLoading]        = useState(false);
   const [loadText, setLoadText]      = useState("Loading…");
   const [toast, setToast]            = useState({ msg:"", type:"", show:false });
@@ -798,12 +791,9 @@ export default function PayoutTracker({
 
   const [filters, setFilters]         = useState({ month:[], entity:[], ptype:[], prog:[], status:[], flow:"all", q:"" });
   const [searchInput, setSearchInput] = useState("");
-  const [tblSort, setTblSort]         = useState({ col:"month", dir:"desc" });
   const [rawSort, setRawSort]         = useState({ col:null, dir:"asc" });
   const [rawPage, setRawPage]         = useState(1);
   const [rawPageSize]                 = useState(100);
-  // Status collapse Monthly Summary: { sig, map } — map hanya berlaku untuk set bulan (sig) saat itu.
-  const [collapseState, setCollapseState] = useState({ sig:null, map:{} });
   const [searchFocus, setSearchFocus] = useState(false);
   const [searchIdx, setSearchIdx]     = useState(-1);
   const searchRef                     = useRef(null);
@@ -986,13 +976,6 @@ export default function PayoutTracker({
   // Satu ramp teal (gelap → terang) mengikuti urutan tahap
   const funnelStages = useMemo(()=>funnelStagesRaw.map((st,i)=>({...st,color:FUNNEL_RAMP[i],darkText:i>=3})),[funnelStagesRaw]);
 
-  const trendSeries = useMemo(()=>{
-    return unique(filtAgg.map(r=>r.month)).sort((a,b)=>monthKey(a)-monthKey(b)).map(m=>{
-      const g = sumRows(filtAgg.filter(r=>r.month===m));
-      return { month:m, inv:g.n?(g.inv/g.n)*100:0, clr:g.n?(g.clr/g.n)*100:0 };
-    });
-  },[filtAgg]);
-
   const bnResults = useMemo(()=>{
     if (!filtRaw.length) return [];
     return slaSet.map(p=>{
@@ -1003,30 +986,6 @@ export default function PayoutTracker({
       return {...p,avg:ds.length?ds.reduce((a,b)=>a+b,0)/ds.length:0,n:ds.length,ok:ds.filter(d=>d<=p.sla).length,details:details.sort((a,b)=>b.days-a.days)};
     });
   },[filtRaw,slaSet]);
-
-  const heatData = useMemo(()=>{
-    const months=unique(filtAgg.map(r=>r.month)).sort((a,b)=>monthKey(b)-monthKey(a));
-    const ptypes=unique(filtAgg.map(r=>r.ptype)).filter(Boolean).sort();
-    const cells={};
-    filtAgg.forEach(r=>{ const k=r.month+"\x00"+r.ptype; if(!cells[k])cells[k]={n:0,inv:0,clv:0,clr:0}; const c=cells[k]; c.n+=r.n; c.inv+=r.inv; c.clv+=r.clv; c.clr+=r.clr; });
-    return { months, ptypes, cells };
-  },[filtAgg]);
-
-  const sortedMonths = useMemo(()=>unique(filtAgg.map(r=>r.month)).sort((a,b)=>{ const d=monthKey(a)-monthKey(b); return tblSort.dir==="asc"?d:-d; }),[filtAgg,tblSort]);
-  // Default Monthly Summary (semua user): hanya bulan terakhir terbuka, lainnya collapse.
-  // Default dipakai ulang setiap set bulan berubah (load data, ganti Partner/Agency, filter);
-  // toggle manual user tetap dipertahankan selama set bulannya sama. Arah sort tidak berpengaruh.
-  const monthsSig = useMemo(()=>src+"|"+unique(filtAgg.map(r=>r.month)).sort((a,b)=>monthKey(a)-monthKey(b)).join("¦"),[filtAgg,src]);
-  const defaultCollapsed = useMemo(()=>{
-    const ms=unique(filtAgg.map(r=>r.month)); if(!ms.length) return {};
-    const latest=ms.reduce((a,b)=>monthKey(b)>monthKey(a)?b:a);
-    const map={}; ms.forEach(m=>{ if(m!==latest) map[m]=true; }); return map;
-  },[filtAgg]);
-  const collapsed = collapseState.sig===monthsSig ? collapseState.map : defaultCollapsed;
-  const setCollapsed = useCallback(upd=>setCollapseState(st=>{
-    const base = st.sig===monthsSig ? st.map : defaultCollapsed;
-    return { sig:monthsSig, map: typeof upd==="function" ? upd(base) : upd };
-  }),[monthsSig,defaultCollapsed]);
 
   async function exportSummary(fmt) {
     if (!filtAgg.length) { showToast("No data available","error"); return; }
@@ -1176,14 +1135,14 @@ export default function PayoutTracker({
     upload,setUpload,
     viewPartnerRaw:partnerRaw, viewAgencyRaw:agencyRaw,
     pubMeta,
-    filters,setFilters,opts,tblSort,setTblSort,rawSort,setRawSort,
-    rawPage,setRawPage,rawPageSize,collapsed,setCollapsed,
+    filters,setFilters,opts,rawSort,setRawSort,
+    rawPage,setRawPage,rawPageSize,
     searchFocus,setSearchFocus,searchIdx,setSearchIdx,
     searchRef,searchSuggestions,allSuggestions,searchInput,setSearchInput,
     funnelExp,setFunnelExp,bnExp,setBnExp,
-    src,setSrc,flowSel,activeTab,setActiveTab,heatMetric,setHeatMetric,
+    src,setSrc,flowSel,activeTab,setActiveTab,
     curRaw,curAgg,filtAgg,filtRaw,grand,grandPartnerCount,
-    funnelStages,trendSeries,heatData,bnResults,sortedMonths,
+    funnelStages,bnResults,
     rawKeys,rawKeysAll,rawKeysMain,showAllCols,setShowAllCols,
     pageRaw,curRawPage,totalRawPages,fmtCellT,isLeftCol,
     handleFile,publish,viewDash,clearData,exportSummary,exportRaw,showToast,
@@ -1373,16 +1332,6 @@ function SugItem({s,active,iconLabel,accentColor,onPick,t}) {
   return <div {...hE} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 14px",cursor:"pointer",background:active||hov?t.surf3:"transparent",borderTop:`1px solid ${t.line}`,transition:"background .1s"}} onMouseDown={onPick}><span style={{width:22,height:22,borderRadius:7,background:accentColor,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontFamily:MONO,fontSize:12,fontWeight:700,color:"#fff"}}>{iconLabel}</span><span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontSize:12.5,fontWeight:500,color:t.ink}}>{s.label}</span><span style={{fontFamily:MONO,fontSize:12,flexShrink:0,color:t.muted}}>{s.count}</span></div>;
 }
 
-function HeatBtn({m,active,onClick,t}) {
-  const [hov,hE]=useHover();
-  return <button {...hE} onClick={onClick} style={{fontSize:12,letterSpacing:"0.01em",padding:"5px 10px",borderRadius:8,border:`1px solid ${active?m.ac:hov?C.tealD:t.line}`,background:active?m.ac:hov?t.surf3:t.surf2,color:active?(m.dark?"#1a1a1a":"#fff"):hov?t.ink:t.muted,cursor:"pointer",transition:"all .15s"}}>{m.l}</button>;
-}
-
-function HeatCell({bg,light,pp,v,n}) {
-  const [hov,hE]=useHover();
-  return <div {...hE} style={{borderRadius:8,padding:"9px 5px",textAlign:"center",background:bg,color:light?"#1a1a1a":"#fff",cursor:"default",transition:"transform .12s",transform:hov?"scale(1.05)":"scale(1)",position:"relative",zIndex:hov?2:0}}><div style={{fontWeight:700,fontSize:12,fontFamily:MONO,lineHeight:1}}>{pp}%</div><div style={{fontSize:12,opacity:.9,marginTop:2,fontFamily:MONO}}>{v}/{n}</div></div>;
-}
-
 function BnDetailRow({d,t}) {
   const [hov,hE]=useHover();
   return <div {...hE} style={{display:"grid",gridTemplateColumns:"44px auto 1fr auto",gap:8,padding:"7px 12px",borderBottom:`1px solid ${t.line}`,fontSize:12,alignItems:"center",background:hov?t.surf2:"transparent",transition:"background .1s"}}><span style={{fontFamily:MONO,fontSize:12,fontWeight:700,color:t.bad,textAlign:"center",background:t.badBg,padding:"3px 5px",borderRadius:6}}>{d.days}d</span><span style={{fontFamily:MONO,fontSize:12,fontWeight:600,background:t.surf3,padding:"2px 7px",borderRadius:5,border:`1px solid ${t.line}`,whiteSpace:"nowrap",color:t.ink}}>{d.po||"No PO"}</span><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{d.title}</span><span style={{fontFamily:MONO,fontSize:12,color:t.muted,textAlign:"right",whiteSpace:"nowrap"}}>{d.month}{d.amt&&<><br/>{fmtMoney(d.amt)}</>}</span></div>;
@@ -1457,7 +1406,7 @@ function DashScreen(props) {
     isIOHUmbrella, canPickRegion, regionView, setRegionView, regionOptions,
     regionFilter, filterMpxType, viewPartnerRaw, viewAgencyRaw, pubMeta,
     filters, setFilters, opts, curAgg, curRaw, filtAgg, filtRaw,
-    setCollapsed, searchFocus, setSearchFocus, searchIdx, setSearchIdx,
+    searchFocus, setSearchFocus, searchIdx, setSearchIdx,
     searchRef, searchSuggestions, allSuggestions, searchInput, setSearchInput,
     setRawPage, showToast, exportSummary, profile, flowSel } = props;
   const isAg = src === "agency";
@@ -1587,7 +1536,7 @@ function DashScreen(props) {
                 if (s===src) return;
                 setSrc(s);
                 resetFilters();
-                setSearchIdx(-1); setCollapsed({}); setRawPage(1);
+                setSearchIdx(-1); setRawPage(1);
                 showToast(`Switched to ${s==="partner"?"Partner":"Agency"} Prepaid — filters reset`);
               }}
               t={t}/>
@@ -1909,12 +1858,11 @@ function DashTab(props) {
 
 /* ── Area detail bertab (default: Outstanding) ── */
 function DetailsTabs(props) {
-  const { t, w, ins, isAg, flowSel } = props;
+  const { t, w, ins, isAg, flowSel, exportSummary } = props;
   const [tab, setTab] = useState("out");
   const tabs = [
     { id:"out",  label:"Outstanding", count:ins.out.length },
     { id:"own",  label:isAg?"Agencies":"Partners", count:ins.owners.length },
-    { id:"mon",  label:"Monthly" },
     { id:"flow", label:"Flow Comparison" },
   ];
   const cur = tabs.some(x=>x.id===tab) ? tab : "out";
@@ -1922,10 +1870,15 @@ function DetailsTabs(props) {
     <Card t={t} pad={false} style={{marginBottom:14}}>
       <div style={{display:"flex",gap:22,padding:"0 20px",borderBottom:`1px solid ${t.line}`,background:t.surf2,overflowX:"auto"}} role="tablist">
         {tabs.map(x=><TabBtn key={x.id} label={x.label} count={x.count} active={cur===x.id} onClick={()=>setTab(x.id)} t={t}/>)}
+        {/* Ekspor ringkasan (per bulan × entity × tipe × program × flow, ikut filter) — tersedia di semua tab detail */}
+        <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8,flexShrink:0,padding:"8px 0"}}>
+          <span style={{fontSize:12.5,color:t.muted,whiteSpace:"nowrap"}}>Export summary</span>
+          <Btn t={t} variant="outline" sm onClick={()=>exportSummary("csv")} title="Filtered monthly summary as CSV">CSV</Btn>
+          <Btn t={t} variant="primary" sm onClick={()=>exportSummary("xlsx")} title="Filtered monthly summary as Excel">Excel</Btn>
+        </div>
       </div>
       {cur==="out"  && <OutstandingTab ins={ins} isAg={isAg} w={w} t={t}/>}
       {cur==="own"  && <PartnersTab ins={ins} isAg={isAg} w={w} t={t}/>}
-      {cur==="mon"  && <MonthlyTab {...props}/>}
       {cur==="flow" && <FlowCompareTab ins={ins} flowSel={flowSel} t={t}/>}
     </Card>
   );
@@ -2160,53 +2113,6 @@ function niceMax(v, ticks=4) {
   const raw = v/ticks, p = Math.pow(10, Math.floor(Math.log10(raw)));
   const step = [1,2,2.5,5,10].map(m=>m*p).find(s=>s>=raw);
   return { max:Math.ceil(v/step)*step, step };
-}
-
-// Grafik % per bulan: dua batang berdampingan (Invoiced / Cleared), tooltip saat hover
-function TrendChart({ series, t }) {
-  const [ref, bw] = useBoxWidth();
-  const [hov, setHov] = useState(null);
-  const H = 220, pL = 40, pR = 6, pT = 10, pB = 28;
-  const W = Math.max(bw, 260), cW = W-pL-pR, cH = H-pT-pB;
-  const y = (v) => pT + cH - (Math.min(100,Math.max(0,v))/100)*cH;
-  const band = cW/Math.max(series.length,1), bw1 = Math.max(4, Math.min(18, band*0.32));
-  const bar = (x, v, c, k) => { const yt=y(v), h=Math.max(0,y(0)-yt), r=Math.min(3,h); return <path key={k} d={`M${x},${yt+h} V${yt+r} Q${x},${yt} ${x+r},${yt} H${x+bw1-r} Q${x+bw1},${yt} ${x+bw1},${yt+r} V${yt+h} Z`} fill={c}/>; };
-  const s = hov!=null ? series[hov] : null;
-  const short = (m) => String(m).replace(/^(\w{3})\w*\s+\d{2}(\d{2})$/,"$1 ’$2");
-  return (
-    <div ref={ref} style={{position:"relative"}}>
-      {bw>0&&(
-        <svg width={W} height={H} role="img" aria-label="Percent invoiced and cleared per month" style={{display:"block"}} onMouseLeave={()=>setHov(null)}>
-          {[0,25,50,75,100].map(v=>(
-            <g key={v}>
-              <line x1={pL} x2={W-pR} y1={y(v)} y2={y(v)} stroke={v?t.line:t.line2} strokeWidth={1}/>
-              <text x={pL-6} y={y(v)+4} textAnchor="end" fontSize={12} fill={t.muted}>{v}%</text>
-            </g>
-          ))}
-          {series.map((d,i)=>{
-            const cx = pL + band*i + band/2;
-            const every = Math.ceil(series.length/Math.max(1,Math.floor(cW/56)));
-            return (
-              <g key={i} opacity={hov==null||hov===i?1:0.45}>
-                {bar(cx-bw1-1, d.inv, t.chartA, "i")}
-                {bar(cx+1, d.clr, t.chartB, "c")}
-                {(i%every===0)&&<text x={cx} y={H-pB+18} textAnchor="middle" fontSize={12} fill={t.muted}>{short(d.month)}</text>}
-                <rect x={pL+band*i} y={pT} width={band} height={cH} fill="transparent" tabIndex={0} onMouseEnter={()=>setHov(i)} onFocus={()=>setHov(i)} onBlur={()=>setHov(null)} aria-label={`${d.month}: invoiced ${Math.round(d.inv)}%, cleared ${Math.round(d.clr)}%`}/>
-              </g>
-            );
-          })}
-        </svg>
-      )}
-      {s&&(()=>{ const cx = pL + band*hov + band/2, right = cx + bw1 + 10, left = right + 190 <= W ? right : Math.max(0, cx - bw1 - 200); return (
-        <div style={{position:"absolute",top:6,left,width:190,background:t.surf,border:`1px solid ${t.line2}`,borderRadius:12,boxShadow:t.shadow3,padding:"9px 12px",fontSize:12.5,pointerEvents:"none",display:"flex",flexDirection:"column",gap:4,zIndex:5}}>
-          <div style={{fontWeight:700,color:t.ink}}>{s.month}</div>
-          {[[t.chartA,"Invoiced",s.inv],[t.chartB,"Cleared",s.clr]].map(([c,l,v])=>(
-            <div key={l} style={{display:"flex",justifyContent:"space-between",gap:8}}><span style={{display:"inline-flex",alignItems:"center",gap:6,color:t.ink2}}><span style={{width:10,height:10,borderRadius:3,background:c}}/>{l}</span><strong style={{color:t.ink,fontVariantNumeric:"tabular-nums"}}>{v.toFixed(0)}%</strong></div>
-          ))}
-        </div>
-      ); })()}
-    </div>
-  );
 }
 
 function YtdKpi({ label, value, sub, children, t }) {
@@ -2635,101 +2541,6 @@ function AccrualEstimate({ acc, year, w, t }) {
               <td style={{...ft,textAlign:"left",fontFamily:"inherit",fontWeight:800}}>TOTAL</td>
               {months.map(m=><td key={m} style={ft} title={`Actual ${fmtRpFull(acc.tot[m].act)} · Estimated ${fmtRpFull(acc.tot[m].est)}`}>{fmtRpFull(acc.tot[m].act+acc.tot[m].est)}</td>)}
               <td style={ft}>{fmtRpFull(months.reduce((a,m)=>a+acc.tot[m].act+acc.tot[m].est,0))}</td>
-            </>; })()}
-          </tr></tfoot>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-/* ── Monthly: tren + heatmap + ringkasan per bulan (≤ 6 kolom) ── */
-function MonthlyTab(props) {
-  const { t, w, filtAgg, grand, sortedMonths, collapsed, setCollapsed, tblSort, setTblSort, trendSeries, heatData, heatMetric, setHeatMetric, exportSummary, isAg } = props;
-  const phone = w<640;
-  const series = useMemo(()=>trendSeries.map(s=>({...s,month:fmtMonthYear(s.month)})),[trendSeries]);
-  const allExpanded = sortedMonths.length>0 && sortedMonths.every(m=>!collapsed[m]);
-  const toggleAll = () => { const next={}; if(allExpanded) sortedMonths.forEach(m=>{next[m]=true;}); setCollapsed(next); };
-  const byMonth = useMemo(()=>{ const m={}; filtAgg.forEach(r=>{ (m[r.month]=m[r.month]||[]).push(r); }); return m; },[filtAgg]);
-  const pcell = (v,n) => n?<PctBadge val={pct(v,n)} t={t}/>:"—";
-  return (
-    <div style={{padding:18}}>
-      <div style={{display:"grid",gridTemplateColumns:"1fr",gap:20,marginBottom:18}}>
-        <div>
-          <div style={{fontWeight:700,fontSize:13,color:t.ink,marginBottom:8}}>% Invoiced &amp; % Cleared per month</div>
-          <div style={{display:"flex",gap:14,marginBottom:6,fontSize:12.5,color:t.ink2}}>
-            <span style={{display:"flex",alignItems:"center",gap:6}}><span style={{width:10,height:10,background:t.chartA,borderRadius:3}}/>% Invoiced</span>
-            <span style={{display:"flex",alignItems:"center",gap:6}}><span style={{width:10,height:10,background:t.chartB,borderRadius:3}}/>% Cleared</span>
-          </div>
-          <TrendChart series={series} t={t}/>
-        </div>
-        <div style={{minWidth:0}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
-            <span style={{fontWeight:700,fontSize:13,color:t.ink}}>Month × {isAg?"Agency":"Partner Type"}</span>
-            <div style={{display:"flex",gap:5}}>{[{k:"inv",l:"Invoice",ac:C.yellow,dark:true},{k:"clv",l:"CLV",ac:C.tealD},{k:"clr",l:"Cleared",ac:C.teal}].map(m=><HeatBtn key={m.k} m={m} active={heatMetric===m.k} onClick={()=>setHeatMetric(m.k)} t={t}/>)}</div>
-          </div>
-          <div style={{overflowX:"auto"}}>
-            <table style={{borderCollapse:"separate",borderSpacing:3,fontSize:12,width:"100%"}}>
-              <thead><tr><th style={{fontFamily:MONO,fontSize:12,color:t.muted,textAlign:"left",padding:"4px 6px",fontWeight:500}}>MONTH</th>{heatData.ptypes.map(p=><th key={p} style={{fontFamily:MONO,fontSize:12,color:t.muted,padding:"4px 6px",fontWeight:500,whiteSpace:"nowrap"}}>{p}</th>)}</tr></thead>
-              <tbody>{heatData.months.map(m=><tr key={m}><td style={{fontFamily:MONO,fontSize:12,fontWeight:600,color:t.ink,padding:"3px 6px",whiteSpace:"nowrap"}}>{fmtMonthYear(m)}</td>{heatData.ptypes.map(p=>{ const c=heatData.cells[m+"\x00"+p]; if(!c)return <td key={p}><div style={{borderRadius:8,padding:"9px 5px",textAlign:"center",background:t.surf3,color:t.muted2,fontFamily:MONO,fontSize:12}}>—</div></td>; const v=c[heatMetric]||0,pp=pct(v,c.n),bg=heatClr(pp),light=bg===C.yellow; return <td key={p} title={`${fmtMonthYear(m)} · ${p}: ${v}/${c.n} (${pp}%)`}><HeatCell bg={bg} light={light} pp={pp} v={v} n={c.n}/></td>; })}</tr>)}</tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
-        <span style={{fontWeight:700,fontSize:13,color:t.ink}}>Monthly summary <span style={{fontWeight:400,fontSize:12,color:t.muted}}>· click a month to expand</span></span>
-        <div style={{display:"flex",gap:8}}>
-          <Btn t={t} variant="ghost" sm onClick={toggleAll}>{allExpanded?"Collapse all":"Expand all"}</Btn>
-          <Btn t={t} variant="outline" sm onClick={()=>exportSummary("csv")}>CSV</Btn>
-          <Btn t={t} variant="primary" sm onClick={()=>exportSummary("xlsx")}>Excel</Btn>
-        </div>
-      </div>
-      <div style={{overflowX:"auto",border:`1px solid ${t.line}`,borderRadius:10}}>
-        <table style={{width:"100%",borderCollapse:"collapse"}}>
-          <thead><tr>
-            <SortTh col="month" left sort={tblSort} setSort={setTblSort} t={t}>Month / Group</SortTh>
-            {!phone&&<th style={thS(t,true)}>Flow</th>}
-            <th style={thS(t)}>Records</th>
-            <th style={thS(t)}>% Invoice</th>
-            {!phone&&<th style={thS(t)}>% CLV</th>}
-            <th style={thS(t)}>% Cleared</th>
-          </tr></thead>
-          <tbody>
-            {sortedMonths.map(m=>{
-              const rows=byMonth[m]||[], mT=sumRows(rows), isCol=!!collapsed[m];
-              return (
-                <React.Fragment key={m}>
-                  <tr {...kbd(()=>setCollapsed(c=>({...c,[m]:!c[m]})))} onClick={()=>setCollapsed(c=>({...c,[m]:!c[m]}))} aria-expanded={!isCol} style={{background:t.monthBg,cursor:"pointer"}}>
-                    <td style={{...tdS(t,true),fontWeight:700,color:t.ink}}><span style={{display:"inline-block",width:14,color:t.muted,transform:isCol?"rotate(-90deg)":"none",transition:"transform .15s"}}>▼</span>{fmtMonthYear(m)}</td>
-                    {!phone&&<td style={tdS(t,true)}/>}
-                    <td style={{...tdS(t),fontFamily:MONO,fontWeight:700,color:t.ink}}>{mT.n.toLocaleString()}</td>
-                    <td style={tdS(t)}>{pcell(mT.inv,mT.n)}</td>
-                    {!phone&&<td style={tdS(t)}>{pcell(mT.clv,mT.n)}</td>}
-                    <td style={tdS(t)}>{pcell(mT.clr,mT.n)}</td>
-                  </tr>
-                  {!isCol&&rows.map((r,j)=>(
-                    <tr key={j}>
-                      <td style={{...tdS(t,true),paddingLeft:28,maxWidth:phone?180:380}} title={`${entLabel(r.entity,props.flowSel)} · ${r.ptype} · ${r.prog}`}><strong style={{color:t.ink}}>{r.ptype||"—"}</strong><span style={{color:t.muted}}> · {r.prog||"—"}{r.entity?` · ${entLabel(r.entity,props.flowSel)}`:""}</span></td>
-                      {!phone&&<td style={tdS(t,true)}><FlowBadge flow={r.flow} t={t}/></td>}
-                      <td style={{...tdS(t),fontFamily:MONO}}>{r.n}</td>
-                      <td style={tdS(t)}>{pcell(r.inv,r.n)}</td>
-                      {!phone&&<td style={tdS(t)}>{pcell(r.clv,r.n)}</td>}
-                      <td style={tdS(t)}>{pcell(r.clr,r.n)}</td>
-                    </tr>
-                  ))}
-                </React.Fragment>
-              );
-            })}
-            {sortedMonths.length===0&&<tr><td colSpan={6}><EmptyNote t={t}>No data matches the current filters</EmptyNote></td></tr>}
-          </tbody>
-          <tfoot><tr>
-            {(()=>{ const ft={...tdS(t),background:"#1E2128",color:"#fff",fontFamily:MONO,fontWeight:800,borderTop:`2px solid ${C.teal}`,position:"sticky",bottom:0,zIndex:3}; const pf=(v)=><span style={{padding:"3px 10px",borderRadius:99,background:C.tealD}}>{pct(v,grand.n)}%</span>; return <>
-              <td style={{...ft,textAlign:"left",fontFamily:"inherit"}}>TOTAL · {fmtRpWord(grand.amt)}</td>
-              {!phone&&<td style={ft}/>}
-              <td style={ft}>{grand.n.toLocaleString()}</td>
-              <td style={ft}>{pf(grand.inv)}</td>
-              {!phone&&<td style={ft}>{pf(grand.clv)}</td>}
-              <td style={ft}>{pf(grand.clr)}</td>
             </>; })()}
           </tr></tfoot>
         </table>
