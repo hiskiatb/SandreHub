@@ -12,7 +12,7 @@ const TEAL  = "#32BCAD";
 const RED   = "#ED1C24";
 const MAGA  = "#C6168D";
 
-const ROLE_LABEL = { cse_rse: "CSE / RSE", bsm: "BSM", pic_region: "PIC Region", spm_sumatera: "SPM Sumatera", internal_ioh: "Internal IOH", finance_mpx: "Admin MC", admin_area: "Admin Area" };
+const ROLE_LABEL = { cse_rse: "CSE / RSE", bsm: "BSM", pic_region: "PIC Region", spm_sumatera: "SPM Sumatera", internal_ioh: "Internal IOH", admin_mc: "Admin MC", admin_area: "Admin Area" };
 
 const mk = (d) => ({
   bg:      d ? "#0A0A0B" : "#F4F4F6",
@@ -84,7 +84,7 @@ function SandraLoginInner() {
         // email Admin MC bisa di-mapping ke LEBIH DARI 1 MC (lihat field
         // "mcs" dari mf_dse_admin_mc_lookup) - simpan semua, bukan cuma
         // mcLookup.mc (MC pertama saja).
-        setDetected({ source: "admin_mc", role: "finance_mpx", mcs: (mcLookup.mcs || []).map((x) => x.mc).filter(Boolean) });
+        setDetected({ source: "admin_mc", role: "admin_mc", mcs: (mcLookup.mcs || []).map((x) => x.mc).filter(Boolean) });
         // UPDATE (permintaan user - "mengapa masih menggunakan magic link saya
         // ingin otp yang dikirimkan bukan click to login"): sebelumnya di sini
         // pakai supabase.auth.signInWithOtp() langsung - itu mengirim email

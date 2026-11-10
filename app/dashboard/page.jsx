@@ -48,7 +48,9 @@ import SDP_DseDatabase    from "./components/SDP_DseDatabase";
 import AdminMcMapping     from "./components/AdminMcMapping";
 import AdminAreaMapping   from "./components/AdminAreaMapping";
 import CombinedEmailExport from "./components/CombinedEmailExport";
-import DSE_ProdAR, { CATEGORY_OPTIONS as DSE_CATEGORY_OPTIONS, getCategoryOptionsForRole } from "./components/DSE_ProdAR";
+import RoleAccessMatrix from "./components/RoleAccessMatrix";
+import RoleDebugLookup from "./components/RoleDebugLookup";
+import DSE_ProdAR, { CATEGORY_OPTIONS as DSE_CATEGORY_OPTIONS, getCategoryOptionsForRoles, hasRole, hasAnyRole } from "./components/DSE_ProdAR";
 
 // ─── Role Maps ────────────────────────────────────────────────────────────────
 const IOH_ROLE_REGION_MAP = {
@@ -69,6 +71,7 @@ const SFM_ROLES = new Set(["salesforce_mgmt_sumatera","region_sfm_north","region
 const ROLE_BADGE = {
   "spm_sumatera":         { bg: "magentaBg", bd: "magentaBd", color: "magenta" },
   "finance_mpx":          { bg: "greenBg",   bd: "greenBd",   color: "green"   },
+  "admin_mc":             { bg: "greenBg",   bd: "greenBd",   color: "green"   },
   "internal_ioh":         { bg: "yellowBg",  bd: "yellowBd",  color: "yellow"  },
   "ioh_north_sumatera":   { bg: "yellowBg",  bd: "yellowBd",  color: "yellow"  },
   "ioh_central_sumatera": { bg: "yellowBg",  bd: "yellowBd",  color: "yellow"  },
@@ -251,7 +254,7 @@ const HIDE_DATE_PICKER_VIEWS    = new Set(["overview","control-center","pivot-su
 // User Management (permintaan user - "beda beda untuk detailnya"). ready:
 // false = belum ada UI kelolanya, tampil placeholder "Segera hadir".
 const USER_MGMT_ROLES = [
-  { k: "finance_mpx",                 label: "District Admin",                ready: true },
+  { k: "admin_mc",                    label: "District Admin",                ready: true },
   { k: "admin_area",                  label: "Admin Area",                    ready: true },
   { k: "spm_sumatera",                label: "SPM Sumatera",                  ready: false },
   { k: "marketing_sumatera_program",  label: "Marketing Sumatera Program",    ready: false },
@@ -569,7 +572,7 @@ export default function DashboardPage() {
   // defaultnya finance_mpx karena itu yg udah ada implementasinya (bukan
   // "Admin MC" - itu istilah beda, permintaan user: "admin MC itu bukan
   // finance mpx").
-  const [umRole,            setUmRole]             = useState("finance_mpx");
+  const [umRole,            setUmRole]             = useState("admin_mc");
   // Sub-menu langsung ke 4 modul di dalam "MPX P&L Report" — collapsed
   // default; klik label menu tetap buka layar PNL_MPX_Menu, chevron ini
   // cuma pintasan sidebar.
@@ -577,8 +580,17 @@ export default function DashboardPage() {
   const [prodArOpen,        setProdArOpen]       = useState(false);
 
   // ── Role flags ────────────────────────────────────────────────────────────
-  const isSPM       = profile?.role === "spm_sumatera";
-  const isMPX       = profile?.role === "finance_mpx";
+  // MULTI-ROLE (permintaan user - role bisa ganda, hak akses digabung,
+  // "kalau terdaftar di dua role... bisa edit maka dia akan bisa edit"):
+  // isSPM/isMPX/isAdminArea sekarang baca GABUNGAN role (profile.roles,
+  // lihat my_roles() RPC di atas), bukan cuma profile.role tunggal -
+  // supaya akun yg terdaftar di >1 role (co: finance_mpx + admin_area)
+  // dapat SEMUA gate yg relevan utk SETIAP role-nya, bukan cuma satu.
+  const isSPM       = hasRole(profile, "spm_sumatera");
+  // MIGRASI ROLE (permintaan user - Admin MC pindah dari "finance_mpx"
+  // ke "admin_mc" sbg role sendiri) - dual-support sementara spy akun
+  // yg belum/sudah dimigrasi di DB sama2 tetap dikenali.
+  const isMPX       = hasAnyRole(profile, ["finance_mpx", "admin_mc"]);
   // FIX AKSES (audit user - "pastikan 100persen tidak ada bug"): role baru
   // admin_area sebelumnya ga ke-handle sama sekali di gating sidebar/menu
   // halaman ini - karena kebanyakan gate di bawah pakai pola "!isMPX" (bukan
@@ -586,7 +598,7 @@ export default function DashboardPage() {
   // P&L Report, Payout Tracker) SEKALIGUS ke-block dari menu yg SEHARUSNYA
   // dia akses (Prod. & AR, khususnya tab HoA AR). isAdminArea ditambahkan
   // eksplisit supaya kedua arah itu dibenerin.
-  const isAdminArea = profile?.role === "admin_area";
+  const isAdminArea = hasRole(profile, "admin_area");
   const isIOHAny    = IOH_ROLES.has(profile?.role);
   const isSFM       = SFM_ROLES.has(profile?.role);
   const canMfts     = isSPM || isIOHAny || isSFM;
@@ -662,6 +674,20 @@ export default function DashboardPage() {
       if (!user) return router.push("/sandra/login");
       const { data: prof } = await supabase.from("profiles").select("*").eq("id", user.id).single();
 
+      // MULTI-ROLE (permintaan user - "ini role akan ada beberapa dan bisa
+      // menggunakan email yang sama, jadi nanti hak akses teratas digabung
+      // gabung"): selain role utama (profiles.role, TIDAK diubah/dihapus -
+      // tetap dipakai sbg fallback), 1 akun sekarang bisa punya role
+      // TAMBAHAN (tabel profile_extra_roles). my_roles() RPC mengembalikan
+      // gabungan role utama + tambahan sbg array - dipasang sbg prof.roles
+      // supaya semua pengecekan akses di komponen (isMPX/isAdminArea/dst)
+      // bisa baca SELURUH role yg dimiliki, bukan cuma satu. Kalau RPC
+      // gagal/kosong, fallback ke [prof.role] saja (perilaku lama, aman).
+      if (prof && prof.role) {
+        const { data: rolesData } = await supabase.rpc("my_roles");
+        prof.roles = Array.isArray(rolesData) && rolesData.length ? rolesData : [prof.role];
+      }
+
       // FIX KEAMANAN (permintaan user - "saya takutnya bisa mengakses data
       // lain padahal login gagal"): sebelumnya kalau baris `profiles` tidak
       // ada / role-nya null (misal krn RPC mf_dse_admin_mc_login_apply gagal
@@ -687,7 +713,7 @@ export default function DashboardPage() {
       let mapData = [];
       if (!isCseOrSdp) {
         let query = supabase.from("partner_branches").select("*").order("partner_name", { ascending: true });
-        if (prof?.role === "finance_mpx") query = query.eq("partner_name", prof?.partner_name);
+        if (prof?.role === "finance_mpx" || prof?.role === "admin_mc") query = query.eq("partner_name", prof?.partner_name);
         const lockedRegion = IOH_ROLE_REGION_MAP[prof?.role];
         if (lockedRegion) query = query.eq("region", lockedRegion);
         const { data } = await query;
@@ -697,7 +723,7 @@ export default function DashboardPage() {
       setProfile(prof);
       setMasterData(mapData);
       setRegions([...new Set(mapData.map(i => i.region))].sort());
-      if (prof?.role === "finance_mpx") setActivePartner(prof?.partner_name || "");
+      if (prof?.role === "finance_mpx" || prof?.role === "admin_mc") setActivePartner(prof?.partner_name || "");
       const lockedRegion = IOH_ROLE_REGION_MAP[prof?.role];
       if (lockedRegion) setActiveRegion(lockedRegion);
 
@@ -838,7 +864,7 @@ export default function DashboardPage() {
     const isCseOrSdp = profile.role === "cse_rse" || profile.role === "bsm" || profile.role === "pic_region";
     if (isCseOrSdp) return;
     let query = supabase.from("partner_branches").select("*").order("partner_name", { ascending: true });
-    if (profile.role === "finance_mpx") query = query.eq("partner_name", profile.partner_name);
+    if (profile.role === "finance_mpx" || profile.role === "admin_mc") query = query.eq("partner_name", profile.partner_name);
     const lockedRegion = IOH_ROLE_REGION_MAP[profile.role];
     if (lockedRegion) query = query.eq("region", lockedRegion);
     const { data } = await query;
@@ -1018,7 +1044,7 @@ export default function DashboardPage() {
                           {/* FIX AKSES (audit user): tab kategori difilter sesuai role -
                               District Admin cuma DSE+DSO/DSP, Admin Area cuma HoA (lihat
                               getCategoryOptionsForRole di DSE_ProdAR.jsx). */}
-                          {getCategoryOptionsForRole(profile?.role).map((opt) => (
+                          {getCategoryOptionsForRoles(Array.isArray(profile?.roles) && profile.roles.length ? profile.roles : [profile?.role]).map((opt) => (
                             <SNavItem key={opt.k} icon={<Wallet size={13} />} label={opt.label}
                               active={view === "dse-prod-ar" && dseCategory === opt.k}
                               onClick={() => { setDseCategory(opt.k); navigate("dse-prod-ar"); }} />
@@ -1514,6 +1540,18 @@ export default function DashboardPage() {
                     Excel multi-sheet (Admin MC + Admin Area, dipecah per Region) &
                     upload baliknya - ditaruh di sini, SELALU tampil terlepas dari
                     role mana yg sedang dipilih di bawah (umRole). */}
+                {/* PANEL BARU (permintaan user - "pada user management ada
+                    informasi untuk menampilkan hak akses menu untuk
+                    setiap role... jika misal dia terdaftar di dua role
+                    hanya edit dan bisa edit maka dia akan bisa edit"):
+                    matrix referensi role x tab DSE Prod&AR + daftar akun
+                    multi-role & akses gabungannya - SELALU tampil di atas
+                    terlepas dari role mana yg sedang dipilih (umRole),
+                    sama seperti CombinedEmailExport. */}
+                <RoleAccessMatrix theme={theme} />
+
+                <RoleDebugLookup theme={theme} />
+
                 <CombinedEmailExport theme={theme} />
 
                 {/* UPDATE (permintaan user - "pilih role di kiri pencarian"):
@@ -1523,7 +1561,7 @@ export default function DashboardPage() {
                     terpisah di sini cuma dipertahankan utk role yg BELUM
                     ready (placeholder "Segera hadir" tidak punya baris
                     pencarian sendiri). */}
-                {umRole === "finance_mpx" ? (
+                {umRole === "admin_mc" ? (
                   <AdminMcMapping theme={theme} roleValue={umRole} roleOptions={USER_MGMT_ROLES} onRoleChange={setUmRole} />
                 ) : umRole === "admin_area" ? (
                   <AdminAreaMapping theme={theme} roleValue={umRole} roleOptions={USER_MGMT_ROLES} onRoleChange={setUmRole} />

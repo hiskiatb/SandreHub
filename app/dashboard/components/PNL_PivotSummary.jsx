@@ -554,7 +554,7 @@ export default function PNL_PivotSummary({ theme, activeYear, userRole, partnerN
   const d = theme === "dark";
   const t = tk(d);
 
-  const isMPX = userRole === "finance_mpx";
+  const isMPX = userRole === "finance_mpx" || userRole === "admin_mc";
   const lockedPartner = isMPX ? (partnerName || null) : null;
 
   const now      = new Date();

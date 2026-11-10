@@ -17,7 +17,7 @@ import {
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
 const TEAL = "#32BCAD", RED = "#ED1C24", MAGA = "#C6168D";
-const ADMIN_ROLES = ["spm_sumatera", "finance_mpx", "internal_ioh"];
+const ADMIN_ROLES = ["spm_sumatera", "finance_mpx", "admin_mc", "internal_ioh"];
 const ROLES = [
   { v: "cse_rse", label: "CSE / RSE" }, { v: "bsm", label: "BSM" },
   { v: "pic_region", label: "PIC Region" }, { v: "spm_sumatera", label: "SPM Sumatera" },

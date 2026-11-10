@@ -25,7 +25,7 @@ async function requireAdmin(req, supabaseAdmin) {
     .eq("id", user.id)
     .single();
 
-  const ADMIN_ROLES = ["spm_sumatera", "finance_mpx", "internal_ioh"];
+  const ADMIN_ROLES = ["spm_sumatera", "finance_mpx", "admin_mc", "internal_ioh"];
   if (!prof || !ADMIN_ROLES.includes(prof.role)) {
     return { error: "Akses tidak diizinkan.", status: 403 };
   }

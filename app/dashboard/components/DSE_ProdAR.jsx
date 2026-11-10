@@ -5408,9 +5408,42 @@ export function getCategoryOptionsForRole(role) {
   // sumatera"): tab "Control Center" cuma utk spm_sumatera - role lain
   // (admin_area/finance_mpx) difilter keluar di sini.
   if (role === "admin_area") return CATEGORY_OPTIONS.filter((o) => o.k !== "control-center"); // hoa (full) + dso (full) + dse (view-only)
-  if (role === "finance_mpx") return CATEGORY_OPTIONS.filter((o) => o.k !== "hoa" && o.k !== "control-center");
+  // MIGRASI ROLE: "admin_mc" (nilai baru) diperlakukan SAMA PERSIS dgn
+  // "finance_mpx" (nilai lama, transisi) di sini - KALAU LUPA ditambahkan,
+  // admin_mc akan jatuh ke cabang default di bawah (dse+dso+HOA), padahal
+  // harusnya TIDAK dapat tab "hoa" (sama seperti finance_mpx).
+  if (role === "finance_mpx" || role === "admin_mc") return CATEGORY_OPTIONS.filter((o) => o.k !== "hoa" && o.k !== "control-center");
   if (role === "spm_sumatera") return CATEGORY_OPTIONS; // SPM Sumatera: semua kategori termasuk Control Center
   return CATEGORY_OPTIONS.filter((o) => o.k !== "control-center"); // role lain yg lolos gate di page.jsx: semua KECUALI Control Center
+}
+
+// MULTI-ROLE (permintaan user - "ini role akan ada beberapa dan bisa
+// menggunakan email yang sama, jadi nanti hak akses teratas digabung
+// gabung agar dapat mengakses menu tertentu... jika misal dia terdaftar
+// di dua role hanya edit dan bisa edit maka dia akan bisa edit"): 1 akun
+// sekarang bisa punya LEBIH dari 1 role (profiles.role = role utama,
+// profile_extra_roles = role tambahan, digabung jadi profile.roles oleh
+// my_roles() RPC di page.jsx). hasRole/hasAnyRole baca profile.roles kalau
+// ada, fallback ke profile.role tunggal (akun yg belum reload / RPC
+// gagal) - supaya TIDAK ada akun yang mendadak kehilangan akses.
+export function hasRole(profile, role) {
+  if (Array.isArray(profile?.roles) && profile.roles.length) return profile.roles.includes(role);
+  return profile?.role === role;
+}
+export function hasAnyRole(profile, roles) {
+  if (Array.isArray(profile?.roles) && profile.roles.length) return profile.roles.some((r) => roles.includes(r));
+  return roles.includes(profile?.role);
+}
+
+// Gabungan tab kategori utk akun multi-role: UNION semua tab yg dimiliki
+// SETIAP role-nya (bukan cuma role utama) - getCategoryOptionsForRole per
+// role di atas TIDAK diubah/disentuh (tetap dipakai sbg sumber kebenaran
+// per-role), cuma di-union di sini.
+export function getCategoryOptionsForRoles(roles) {
+  const list = Array.isArray(roles) && roles.length ? roles : [undefined];
+  const keys = new Set();
+  list.forEach((r) => getCategoryOptionsForRole(r).forEach((o) => keys.add(o.k)));
+  return CATEGORY_OPTIONS.filter((o) => keys.has(o.k));
 }
 
 
@@ -5794,9 +5827,18 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // rapi di baliknya, bukan numpuk transparan/beda warna.
   const stickyBg = d ? "#0D0D0E" : "#F5F5F6";
 
-  const isSPM = profile?.role === "spm_sumatera";
-  const isMPX = profile?.role === "finance_mpx";
-  const isAdminArea = profile?.role === "admin_area";
+  const isSPM = hasRole(profile, "spm_sumatera");
+  // MIGRASI ROLE (permintaan user - "pindahkan user admin mc, rolenya
+  // tidak lagi menggunakan finance_mpx, namun admin_mc"): selama masa
+  // transisi, "finance_mpx" (nilai lama) & "admin_mc" (nilai baru) DUA
+  // DUANYA dianggap Admin MC - supaya akun yg belum/sudah dimigrasi di
+  // DB sama2 tetap jalan tanpa ada jendela waktu kehilangan akses.
+  const isMPX = hasAnyRole(profile, ["finance_mpx", "admin_mc"]);
+  const isAdminArea = hasRole(profile, "admin_area");
+  // Admin Area dipaksa view-only utk tab "dse" HANYA kalau dia TIDAK juga
+  // punya role lain yg berhak edit (finance_mpx/spm_sumatera) - "kalau
+  // terdaftar di dua role, salah satunya bisa edit, maka dia bisa edit".
+  const dseEditLocked = isAdminArea && !isMPX && !isSPM;
 
   // UPDATE (permintaan user - satu email Admin District sekarang bisa dipasang ke
   // lebih dari 1 District lewat mf_dse_admin_mc_mapping): dulu lockedMc cuma 1
@@ -5880,13 +5922,13 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // FIX AKSES (audit user - jangan biarkan Admin Area "nyangkut" di
   // category default "dse" yg bukan wewenangnya & ga kebuka datanya -
   // auto-pindah ke kategori pertama yg memang diizinkan utk role ini).
-  const myCategoryOptions = getCategoryOptionsForRole(profile?.role);
+  const myCategoryOptions = getCategoryOptionsForRoles(Array.isArray(profile?.roles) && profile.roles.length ? profile.roles : [profile?.role]);
   useEffect(() => {
     if (myCategoryOptions.length && !myCategoryOptions.some((o) => o.k === category)) {
       setCategory(myCategoryOptions[0].k);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile?.role, category]);
+  }, [profile?.role, profile?.roles, category]);
   const currentCategoryOpt = myCategoryOptions.find((o) => o.k === category) || myCategoryOptions[0] || CATEGORY_OPTIONS[0];
   const mobileTitleLabel = currentCategoryOpt.label;
   const desktopTitleLabel = currentCategoryOpt.label;
@@ -8165,7 +8207,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
         </div>
       )}
       {historyFor && <DseHistoryModal t={t} dseCode={historyFor} dse={historyDse} initialTab={historyInitialTab} initialMonth={historyInitialMonth}
-        readOnly={isAdminArea}
+        readOnly={dseEditLocked}
         onClose={() => { setHistoryFor(null); setHistoryDse(null); setHistoryOnBack(null); }}
         onBack={() => { historyOnBack?.(); setHistoryFor(null); setHistoryDse(null); setHistoryOnBack(null); }}
         onInfoPeriodDeleted={(code, period) => {
@@ -9318,8 +9360,8 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                   dirty={!!dirty[dse.dse_code]}
                   prevOutstanding={prevAr[dse.dse_code]}
                   onShowHistory={(dseObj, tab, onBack) => { setHistoryFor(dseObj.dse_code); setHistoryDse(dseObj); setHistoryInitialTab(tab || "info"); setHistoryInitialMonth(entryDate ? entryDate.slice(0, 7) : ""); setHistoryOnBack(() => onBack); }}
-                  readOnly={isRangeMode || isAdminArea}
-                  isAdminAreaRole={isAdminArea}
+                  readOnly={isRangeMode || dseEditLocked}
+                  isAdminAreaRole={dseEditLocked}
                   infoPeriodsByDse={infoPeriodsByDse}
                   runGuarded={runGuarded}
                   statusEvents={statusEvents}
@@ -9534,8 +9576,8 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                         dirty={!!dirty[dse.dse_code]}
                         prevOutstanding={prevAr[dse.dse_code]}
                         onShowHistory={(dseObj, tab, onBack) => { setHistoryFor(dseObj.dse_code); setHistoryDse(dseObj); setHistoryInitialTab(tab || "info"); setHistoryInitialMonth(entryDate ? entryDate.slice(0, 7) : ""); setHistoryOnBack(() => onBack); }}
-                        readOnly={isRangeMode || isAdminArea}
-                        isAdminAreaRole={isAdminArea}
+                        readOnly={isRangeMode || dseEditLocked}
+                        isAdminAreaRole={dseEditLocked}
                         infoPeriodsByDse={infoPeriodsByDse}
                         runGuarded={runGuarded}
                         statusEvents={statusEvents}
