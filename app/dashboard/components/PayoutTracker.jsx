@@ -1413,8 +1413,11 @@ function DashScreen(props) {
   // Accrual (Agency) tampil di level atas untuk role yang boleh melihat Agency, apa pun pilihan Partner/Agency
   const showAccrual = (isSPM||isIOHAny) && (viewAgencyRaw||[]).length>0;
   const isAcc = activeTab==="acc" && showAccrual;
+  // Forecast pembayaran Partner Prepaid (tab level atas)
+  const showForecast = (viewPartnerRaw||[]).length>0;
+  const isFc = activeTab==="fc" && showForecast;
   // Tab YTD & Accrual punya pilihan tahun sendiri: switch PO/MDI, Partner/Agency & filter disembunyikan
-  const isYtd = activeTab==="ytd" || isAcc;
+  const isYtd = activeTab==="ytd" || isAcc || isFc;
 
   // Dokumen per PO (Partner & Agency): dipakai kolom Dokumen di Raw Data & tab Upload & Merge Dokumen
   // profile null → hook tidak aktif (docs.enabled=false), tidak ada fetch dokumen/approval
@@ -1547,7 +1550,7 @@ function DashScreen(props) {
       </div>}
 
       <div style={{display:"flex",gap:24,borderBottom:`1px solid ${t.line}`,marginBottom:18,overflowX:"auto"}}>
-        {[{id:"dash",label:"Dashboard"},{id:"raw",label:"Raw Data",count:filtRaw.length},{id:"ytd",label:"YTD Summary"},...(showAccrual?[{id:"acc",label:"Accrual"}]:[]),...(SHOW_DOCUMENT_TABS&&docs.enabled?[{id:"docs",label:"Document Upload & Merge",count:docPOsDone}]:[]),...(SHOW_DOCUMENT_TABS&&docs.enabled&&docs.canManageApprovals?[{id:"letters",label:"Partner Letters"}]:[])].map(tab=>(
+        {[{id:"dash",label:"Dashboard"},{id:"raw",label:"Raw Data",count:filtRaw.length},{id:"ytd",label:"YTD Summary"},...(showAccrual?[{id:"acc",label:"Accrual"}]:[]),...(showForecast?[{id:"fc",label:"Forecast"}]:[]),...(SHOW_DOCUMENT_TABS&&docs.enabled?[{id:"docs",label:"Document Upload & Merge",count:docPOsDone}]:[]),...(SHOW_DOCUMENT_TABS&&docs.enabled&&docs.canManageApprovals?[{id:"letters",label:"Partner Letters"}]:[])].map(tab=>(
           <TabBtn key={tab.id} label={tab.label} count={tab.count} active={activeTab===tab.id} onClick={()=>setActiveTab(tab.id)} t={t}/>
         ))}
       </div>
@@ -1616,7 +1619,9 @@ function DashScreen(props) {
         </div>
       )}
 
-      {isAcc ? (
+      {isFc ? (
+        <ForecastTab rows={viewPartnerRaw||[]} w={w} t={t} showToast={showToast}/>
+      ) : isAcc ? (
         <Card t={t} pad={false} style={{marginBottom:14}}>
           <CardHead title="Accrual · Agency Prepaid" accent={C.yellow} sub="Submission checklist, missing list & accrual estimate · always uses Agency data" t={t}/>
           <AccrualTab rows={viewAgencyRaw||[]} w={w} t={t} showToast={showToast}/>
@@ -2105,6 +2110,249 @@ function niceMax(v, ticks=4) {
   const raw = v/ticks, p = Math.pow(10, Math.floor(Math.log10(raw)));
   const step = [1,2,2.5,5,10].map(m=>m*p).find(s=>s>=raw);
   return { max:Math.ceil(v/step)*step, step };
+}
+
+/* ── Forecast pembayaran Partner Prepaid ──
+   Item terbuka: "Payment Process" (sudah ditagih) dan "Invoice Not Submitted" (belum ditagih).
+   Tanggal bayar yang diharapkan:
+   • Payment Process → Estimation Date; bila kosong: Invoice Submission + median (Invoice → Clearing).
+   • Invoice Not Submitted → akhir bulan program + median (akhir bulan program → Clearing) dari
+     histori partner tsb (≥3 data) atau seluruh partner.
+   Tanggal yang sudah lewat → bucket "Overdue". */
+const median = (a) => { if (!a.length) return null; const s=[...a].sort((x,y)=>x-y), m=Math.floor(s.length/2); return s.length%2 ? s[m] : Math.round((s[m-1]+s[m])/2); };
+const addDays = (d, n) => new Date(d.getTime() + n*DAY);
+const monthEndOf = (mk) => new Date(Math.floor(mk/100), mk%100, 0);
+
+function computeForecast(rows) {
+  const today = dayStart(new Date());
+  // histori: jeda akhir bulan program → clearing, dan invoice → clearing (hari kalender)
+  const lagAll = [], lagBy = {}, invLag = [];
+  rows.forEach(r=>{
+    const clr = toDate(gcell(r,H_CLR)); if (!clr) return;
+    const mk = rowMonthKey(r);
+    if (mk) { const d = Math.round((dayStart(clr) - monthEndOf(mk))/DAY); if (d>=0) { lagAll.push(d); const n = ownerName(r)||"—"; (lagBy[n]=lagBy[n]||[]).push(d); } }
+    const inv = toDate(gcell(r,H_INV)); if (inv) { const d = Math.round((dayStart(clr)-dayStart(inv))/DAY); if (d>=0) invLag.push(d); }
+  });
+  const lag = median(lagAll) ?? 45, lagInv = median(invLag) ?? 14;
+  const items = [];
+  rows.forEach(r=>{
+    const st = rowStatus(r), pp = isProcessStatus(st), ns = isNotSubStatus(st);
+    if (!pp && !ns) return;
+    const name = ownerName(r) || "—", mk = rowMonthKey(r), amt = gnum(r,["amount"]);
+    let due = null, basis = "";
+    const est = toDate(gcell(r,H_EST)), inv = toDate(gcell(r,H_INV));
+    if (pp && est) { due = dayStart(est); basis = "Est. Date"; }
+    else if (pp && inv) { due = addDays(dayStart(inv), lagInv); basis = `Invoice + ${lagInv}d`; }
+    else if (mk) {
+      const own = lagBy[name] && lagBy[name].length>=3 ? median(lagBy[name]) : null;
+      due = addDays(monthEndOf(mk), own ?? lag); basis = own!=null ? `Program month + ${own}d (partner)` : `Program month + ${lag}d`;
+    }
+    items.push({ name, title:gstr(r,["project title"])||"—", period:mk?ymLabel(mk):"—", amt, status:st, pp, due, basis,
+      overdue: !!due && due < today, days: mk ? Math.max(0, Math.round((today - monthEndOf(mk))/DAY)) : null });
+  });
+  const sum = (f) => items.filter(f).reduce((a,x)=>a+x.amt,0);
+  const cnt = (f) => items.filter(f).length;
+  // bucket bulan: Overdue + bulan ini s.d. bulan terakhir yang diharapkan
+  const curMk = today.getFullYear()*100 + today.getMonth() + 1;
+  const mkOf = (d) => d.getFullYear()*100 + d.getMonth() + 1;
+  const buckets = [{ key:"over", label:"Overdue", pp:0, ns:0 }];
+  const byMk = {};
+  items.forEach(x=>{
+    if (!x.due || x.overdue) { const b = buckets[0]; x.pp ? b.pp += x.amt : b.ns += x.amt; return; }
+    const k = mkOf(x.due); (byMk[k] = byMk[k] || { pp:0, ns:0 }); x.pp ? byMk[k].pp += x.amt : byMk[k].ns += x.amt;
+  });
+  const nextMk = (k) => k%100===12 ? (Math.floor(k/100)+1)*100+1 : k+1;
+  const lastMk = Math.max(nextMk(nextMk(curMk)), ...Object.keys(byMk).map(Number)); // minimal 3 bulan ke depan
+  for (let k=curMk; k<=lastMk; k = (k%100===12 ? (Math.floor(k/100)+1)*100+1 : k+1)) buckets.push({ key:String(k), label:ymLabel(k), short:MONTHS_SHORT[k%100], pp:byMk[k]?.pp||0, ns:byMk[k]?.ns||0 });
+  // per partner
+  const own = {};
+  items.forEach(x=>{
+    const o = (own[x.name] = own[x.name] || { name:x.name, pp:0, ns:0, n:0, earliest:null, oldest:0 });
+    x.pp ? o.pp += x.amt : o.ns += x.amt; o.n++;
+    if (x.due && (!o.earliest || x.due < o.earliest)) o.earliest = x.due;
+    if (x.days!=null) o.oldest = Math.max(o.oldest, x.days);
+  });
+  const partners = Object.values(own).map(o=>({ ...o, total:o.pp+o.ns }));
+  return { items, buckets, partners, lag, lagInv, lagN:lagAll.length,
+    total:sum(()=>true), pp:{ amt:sum(x=>x.pp), n:cnt(x=>x.pp) }, ns:{ amt:sum(x=>!x.pp), n:cnt(x=>!x.pp) },
+    over:{ amt:sum(x=>x.overdue), n:cnt(x=>x.overdue) },
+    next3:buckets.slice(1,4).reduce((a,b)=>a+b.pp+b.ns,0), next3Label:(()=>{ const b=buckets.slice(1,4); if (b.length<2) return b[0]?.label||""; const sameYear = b[0].key.slice(0,4)===b[b.length-1].key.slice(0,4); return `${sameYear?b[0].short:b[0].label}–${b[b.length-1].label}`; })() };
+}
+
+// Stacked bar per bulan bayar: In process (amber) + Not submitted (merah); bar pertama = Overdue
+function ForecastChart({ buckets, t }) {
+  const [ref, bw] = useBoxWidth();
+  const [hov, setHov] = useState(null);
+  const H = 240, pL = 46, pR = 8, pT = 22, pB = 30;
+  const W = Math.max(bw, 280), cW = W-pL-pR, cH = H-pT-pB;
+  const tot = (b) => b.pp + b.ns;
+  const { max, step } = niceMax(Math.max(...buckets.map(tot), 0));
+  const y = (v) => pT + cH - (v/max)*cH;
+  const band = cW/Math.max(buckets.length,1), bWid = Math.min(46, band*0.62);
+  const ticks = []; for (let v=0; v<=max+1e-6; v+=step) ticks.push(v);
+  const big = max >= 1e9, unit = big ? 1e9 : 1e6;
+  const h = hov!=null ? buckets[hov] : null;
+  return (
+    <div ref={ref} style={{position:"relative"}}>
+      {bw>0&&(
+        <svg width={W} height={H} role="img" aria-label="Expected partner payments per month" style={{display:"block"}} onMouseLeave={()=>setHov(null)}>
+          {ticks.map(v=>(
+            <g key={v}>
+              <line x1={pL} x2={W-pR} y1={y(v)} y2={y(v)} stroke={t.line} strokeWidth={1}/>
+              <text x={pL-8} y={y(v)+4} textAnchor="end" fontSize={12} fill={t.muted} style={{fontVariantNumeric:"tabular-nums"}}>{(v/unit).toLocaleString("id-ID",{maximumFractionDigits:1})}</text>
+            </g>
+          ))}
+          <text x={0} y={11} fontSize={12} fill={t.muted}>{big?"Rp miliar":"Rp juta"}</text>
+          {buckets.map((b,i)=>{
+            const cx = pL + band*i + band/2, x0 = cx-bWid/2;
+            const segs = [{k:"pp",v:b.pp,c:t.warn},{k:"ns",v:b.ns,c:t.bad}].filter(s=>s.v>0);
+            let acc = 0;
+            return (
+              <g key={b.key} opacity={hov==null||hov===i?1:0.45}>
+                {i===0&&<rect x={pL+1} y={pT} width={band-2} height={cH} fill={t.badBg} rx={6}/>}
+                {segs.map((s,j)=>{
+                  const yTop = y(acc+s.v), yBot = y(acc); acc += s.v;
+                  const top = j===segs.length-1, gap = j>0 ? 2 : 0;
+                  const hgt = Math.max(0, yBot-yTop-gap), rr = top ? Math.min(4, hgt) : 0;
+                  return <path key={s.k} d={`M${x0},${yTop+hgt} V${yTop+rr} Q${x0},${yTop} ${x0+rr},${yTop} H${x0+bWid-rr} Q${x0+bWid},${yTop} ${x0+bWid},${yTop+rr} V${yTop+hgt} Z`} fill={s.c}/>;
+                })}
+                <text x={cx} y={H-pB+18} textAnchor="middle" fontSize={12} fill={i===0?t.badDark:t.muted} fontWeight={i===0?700:400}>{i===0?"Overdue":b.short}</text>
+                <rect x={pL+band*i} y={pT} width={band} height={cH} fill="transparent" tabIndex={0} onMouseEnter={()=>setHov(i)} onFocus={()=>setHov(i)} onBlur={()=>setHov(null)} aria-label={`${b.label}: ${fmtRpWord(tot(b))}`}/>
+              </g>
+            );
+          })}
+          <line x1={pL} x2={W-pR} y1={y(0)} y2={y(0)} stroke={t.line2} strokeWidth={1}/>
+        </svg>
+      )}
+      {h&&(()=>{ const cx = pL + band*hov + band/2, right = cx + bWid/2 + 10, left = right + 220 <= W ? right : Math.max(0, cx - bWid/2 - 230);
+        const row = (c,l,v) => <div style={{display:"flex",justifyContent:"space-between",gap:8}}><span style={{display:"inline-flex",alignItems:"center",gap:6,color:t.ink2}}>{c&&<span style={{width:10,height:10,borderRadius:3,background:c}}/>}{l}</span><strong style={{color:t.ink,fontVariantNumeric:"tabular-nums"}}>{v}</strong></div>;
+        return (
+          <div style={{position:"absolute",top:8,left,width:220,background:t.surf,border:`1px solid ${t.line2}`,borderRadius:12,boxShadow:t.shadow3,padding:"10px 12px",fontSize:12.5,pointerEvents:"none",display:"flex",flexDirection:"column",gap:5,zIndex:5}}>
+            <div style={{fontWeight:700,color:t.ink}}>{hov===0?"Overdue (date already passed)":h.label}</div>
+            {row(t.warn,"In process",fmtRpWord(h.pp))}
+            {row(t.bad,"Not submitted",fmtRpWord(h.ns))}
+            <div style={{borderTop:`1px solid ${t.line}`,paddingTop:5}}>{row(null,"Total",fmtRpWord(tot(h)))}</div>
+          </div>
+        ); })()}
+    </div>
+  );
+}
+
+function ForecastTab({ rows, w, t, showToast }) {
+  const fc = useMemo(()=>computeForecast(rows),[rows]);
+  const [sort, setSort] = useState({ col:"total", dir:"desc" });
+  const [dSort, setDSort] = useState({ col:"due", dir:"asc" });
+  const [showDetail, setShowDetail] = useState(false);
+  const phone = w<640;
+  const partners = useMemo(()=>{
+    const { col, dir } = sort, m = dir==="asc" ? 1 : -1;
+    return [...fc.partners].sort((a,b)=> col==="name" ? m*a.name.localeCompare(b.name) : col==="earliest" ? m*((a.earliest||0)-(b.earliest||0)) : m*(a[col]-b[col]));
+  },[fc.partners,sort]);
+  const detail = useMemo(()=>{
+    const { col, dir } = dSort, m = dir==="asc" ? 1 : -1;
+    return [...fc.items].sort((a,b)=>{ const va=a[col], vb=b[col]; if (va instanceof Date || vb instanceof Date) return m*((va||0)-(vb||0)); return typeof va==="number" ? m*((va??-1)-(vb??-1)) : m*String(va).localeCompare(String(vb)); });
+  },[fc.items,dSort]);
+  const exportXlsx = async () => {
+    const XLSX = await getXLSX();
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detail.map(x=>({ Partner:x.name, "Project Title":x.title, Period:x.period, Amount:x.amt, Status:x.status, "Expected payment":x.due?fmtShortDate(x.due):"", Basis:x.basis, Overdue:x.overdue?"Yes":"", "Days since program month end":x.days??"" }))), "Forecast detail");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(fc.buckets.map(b=>({ Month:b.key==="over"?"Overdue":b.label, "In process":b.pp, "Not submitted":b.ns, Total:b.pp+b.ns }))), "By month");
+    XLSX.writeFile(wb, `partner_payment_forecast_${new Date().toISOString().slice(0,10)}.xlsx`);
+    showToast("Partner forecast downloaded — Excel","success");
+  };
+  const dot = (c) => <span style={{width:10,height:10,borderRadius:3,background:c,flexShrink:0}}/>;
+  const lbl = (c, s) => <span style={{display:"inline-flex",alignItems:"center",gap:6}}>{c&&dot(c)}{s}</span>;
+  const amt = (v, c) => <td style={{...tdS(t),color:v?(c||t.ink2):t.muted}} title={v?fmtRpFull(v):undefined}>{v?fmtMiliar(v):"—"}</td>;
+  if (!fc.items.length) return <Card t={t} style={{marginBottom:14}}><EmptyNote t={t}>No open partner payments — everything is paid</EmptyNote></Card>;
+  return (
+    <div style={{marginBottom:14}}>
+      <div style={{marginBottom:14}}>
+        <div style={{fontWeight:800,fontSize:20,letterSpacing:"-0.02em",color:t.ink}}>Partner payment forecast</div>
+        <div style={{fontSize:14,color:t.ink2,marginTop:6,lineHeight:1.5}}>
+          <strong style={{color:t.ink}}>{fmtRpWord(fc.total)}</strong> still to be paid to partners. <strong style={{color:t.ink}}>{fmtRpWord(fc.next3)}</strong> is expected in {fc.next3Label}{fc.over.amt?<>, and <strong style={{color:t.badDark}}>{fmtRpWord(fc.over.amt)}</strong> is already past its expected date</>:null}.
+        </div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:w>=900?"repeat(4,1fr)":"repeat(2,1fr)",gap:12,marginBottom:14}}>
+        <YtdKpi t={t} label={lbl(null,"Total expected")} value={<span title={fmtRpFull(fc.total)}>{fmtRpWord(fc.total)}</span>} sub={plural(fc.items.length,"row")}/>
+        <YtdKpi t={t} label={lbl(t.warn,"In process")} value={<span title={fmtRpFull(fc.pp.amt)}>{fmtRpWord(fc.pp.amt)}</span>} sub={`${plural(fc.pp.n,"row")} · invoiced`}/>
+        <YtdKpi t={t} label={lbl(t.bad,"Not submitted")} value={<span title={fmtRpFull(fc.ns.amt)}>{fmtRpWord(fc.ns.amt)}</span>} sub={`${plural(fc.ns.n,"row")} · no invoice yet`}/>
+        <YtdKpi t={t} label={lbl(t.bad,"Overdue")} value={<span title={fmtRpFull(fc.over.amt)}>{fmtRpWord(fc.over.amt)}</span>} sub={`${plural(fc.over.n,"row")} · expected date passed`}/>
+      </div>
+      <Card t={t} style={{marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap",marginBottom:6}}>
+          <span style={{fontWeight:700,fontSize:14,color:t.ink}}>Expected payments by month</span>
+          <span style={{display:"inline-flex",gap:14,fontSize:12.5,color:t.ink2,marginLeft:"auto"}}>{lbl(t.warn,"In process")}{lbl(t.bad,"Not submitted")}</span>
+        </div>
+        <ForecastChart buckets={fc.buckets} t={t}/>
+        <div style={{fontSize:12,color:t.muted,marginTop:8,lineHeight:1.5}}>
+          How dates are estimated: <strong style={{color:t.ink2}}>In process</strong> uses the Est. Date (or Invoice Submission + {fc.lagInv} days when empty). <strong style={{color:t.ink2}}>Not submitted</strong> uses the end of the program month + {fc.lag} days, the median time from program month end to bank clearing over {plural(fc.lagN,"paid row")} (the partner&rsquo;s own median when it has 3+ paid rows). All Partner rows (PO + MDI); dashboard filters don&rsquo;t apply.
+        </div>
+      </Card>
+      <Card t={t} pad={false}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",padding:"12px 16px",borderBottom:`1px solid ${t.line}`}}>
+          <span style={{fontWeight:700,fontSize:14,color:t.ink}}>By partner</span>
+          <span style={{fontSize:12.5,color:t.muted}}>Rp miliar · juta below 1 miliar · hover for the full amount</span>
+          <span style={{marginLeft:"auto",display:"inline-flex",gap:8}}>
+            <Btn t={t} variant="ghost" sm onClick={()=>setShowDetail(v=>!v)} aria-expanded={showDetail}>{showDetail?"Hide detail":"Show detail"}</Btn>
+            <Btn t={t} variant="primary" sm onClick={exportXlsx}>Export Excel</Btn>
+          </span>
+        </div>
+        <div style={{padding:"12px 16px 16px"}}>
+          <div style={{maxHeight:440,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10,width:"fit-content",maxWidth:"100%"}}>
+            <table style={{borderCollapse:"collapse"}}>
+              <thead><tr>
+                <SortTh col="name" left sort={sort} setSort={setSort} t={t}>Partner</SortTh>
+                <SortTh col="pp" sort={sort} setSort={setSort} t={t}>In process</SortTh>
+                <SortTh col="ns" sort={sort} setSort={setSort} t={t}>Not submitted</SortTh>
+                <SortTh col="total" sort={sort} setSort={setSort} t={t}>Total expected</SortTh>
+                {!phone&&<SortTh col="earliest" sort={sort} setSort={setSort} t={t}>Earliest date</SortTh>}
+                {!phone&&<SortTh col="oldest" sort={sort} setSort={setSort} t={t}>Oldest (days)</SortTh>}
+              </tr></thead>
+              <tbody>{partners.map((o,i)=>{ const late = o.earliest && o.earliest < dayStart(new Date()); return (
+                <tr key={o.name} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+                  <td style={{...tdS(t,true),fontWeight:600,color:t.ink,maxWidth:phone?150:280,paddingRight:24}} title={o.name}>{o.name}</td>
+                  {amt(o.pp,t.warnDark)}
+                  {amt(o.ns,t.badDark)}
+                  <td style={{...tdS(t),fontWeight:700,color:t.ink}} title={fmtRpFull(o.total)}>{fmtMiliar(o.total)}</td>
+                  {!phone&&<td style={{...tdS(t),color:late?t.bad:t.ink2,fontWeight:late?700:400}} title={late?"Already past":undefined}>{o.earliest?fmtDate(o.earliest):"—"}</td>}
+                  {!phone&&<td style={{...tdS(t),color:o.oldest>60?t.bad:o.oldest>30?t.warnDark:t.ink2}}>{o.oldest||"—"}</td>}
+                </tr>
+              ); })}</tbody>
+            </table>
+          </div>
+        </div>
+        {showDetail&&(
+          <div style={{borderTop:`1px solid ${t.line}`,padding:"12px 16px 16px"}}>
+            <div style={{fontSize:12.5,color:t.muted,marginBottom:8}}>{plural(detail.length,"row")} · expected date in red = already passed · days = since the end of the program month</div>
+            <div style={{maxHeight:420,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10}}>
+              <table style={{width:"100%",borderCollapse:"collapse"}}>
+                <thead><tr>
+                  <SortTh col="name" left sort={dSort} setSort={setDSort} t={t}>Partner</SortTh>
+                  {!phone&&<SortTh col="title" left sort={dSort} setSort={setDSort} t={t}>Project Title</SortTh>}
+                  {!phone&&<SortTh col="period" left sort={dSort} setSort={setDSort} t={t}>Period</SortTh>}
+                  <SortTh col="amt" sort={dSort} setSort={setDSort} t={t}>Amount</SortTh>
+                  {!phone&&<SortTh col="status" left sort={dSort} setSort={setDSort} t={t}>Status</SortTh>}
+                  <SortTh col="due" sort={dSort} setSort={setDSort} t={t}>Expected</SortTh>
+                  {!phone&&<SortTh col="days" sort={dSort} setSort={setDSort} t={t}>Days</SortTh>}
+                </tr></thead>
+                <tbody>{detail.slice(0,400).map((x,i)=>(
+                  <tr key={i} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+                    <td style={{...tdS(t,true),fontWeight:600,color:t.ink,maxWidth:phone?130:170}} title={x.name}>{x.name}</td>
+                    {!phone&&<td style={{...tdS(t,true),maxWidth:w<1150?150:220}} title={x.title}>{x.title}</td>}
+                    {!phone&&<td style={tdS(t,true)}>{x.period}</td>}
+                    <td style={{...tdS(t),color:t.ink}} title={fmtRpFull(x.amt)}>{fmtRpWord(x.amt)}</td>
+                    {!phone&&<td style={tdS(t,true)}><StatusBadge val={x.status} t={t}/></td>}
+                    <td style={{...tdS(t),color:x.overdue?t.bad:t.ink2,fontWeight:x.overdue?700:400}} title={x.basis}>{x.due?fmtDate(x.due):"—"}</td>
+                    {!phone&&<td style={{...tdS(t),color:x.days>60?t.bad:x.days>30?t.warnDark:t.ink2}}>{x.days??"—"}</td>}
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
 }
 
 function YtdKpi({ label, value, sub, children, t }) {
