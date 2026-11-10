@@ -711,7 +711,7 @@ function PctBadge({ val, t }) {
   const bg=ok?t.goodBg:mid?t.warnBg:t.badBg, bd=ok?t.goodBd:mid?t.warnBd:t.badBd;
   const clr=ok?t.goodDark:mid?t.warnDark:t.badDark, dot=ok?t.good:mid?t.warn:t.bad;
   return (
-    <span style={{display:"inline-flex",alignItems:"center",gap:5,padding:"3px 9px",borderRadius:99,fontFamily:MONO,fontSize:12,fontWeight:700,background:bg,color:clr,border:`1px solid ${bd}`}}>
+    <span style={{display:"inline-flex",alignItems:"center",gap:5,padding:"1px 8px",borderRadius:99,fontSize:12,lineHeight:"18px",fontVariantNumeric:"tabular-nums",fontWeight:700,background:bg,color:clr,border:`1px solid ${bd}`}}>
       <span style={{width:7,height:7,borderRadius:"50%",background:dot,flexShrink:0}}/>{val}%
     </span>
   );
@@ -1123,7 +1123,7 @@ export default function PayoutTracker({
     const kl=key.toLowerCase().replace(/\s+/g,"");
     if (kl==="entity") return String(entLabel(val,flowSel));
     if (kl==="status"||kl==="paymentstatus") return <StatusBadge val={String(val)} t={t}/>;
-    if (kl==="amount"||kl.includes("amount")) { const n=typeof val==="number"?val:parseFloat(String(val).replace(/[^\d.-]/g,"")); if(!isNaN(n)&&n!==0)return <span style={{fontFamily:MONO,fontSize:12,textAlign:"right",display:"block",color:t.ink}}>{fmtMoney(n,false)}</span>; }
+    if (kl==="amount"||kl.includes("amount")) { const n=typeof val==="number"?val:parseFloat(String(val).replace(/[^\d.-]/g,"")); if(!isNaN(n)&&n!==0)return <span style={{fontVariantNumeric:"tabular-nums",textAlign:"right",display:"block",color:t.ink}}>{fmtMoney(n,false)}</span>; }
     return String(val);
   };
 
@@ -1651,7 +1651,7 @@ function DashScreen(props) {
 
 /* ─────────────────────────────────────────────────────────────────────
    INSIGHTS — KPI cards, Outstanding (aging + due this/next week), Partners,
-   Flow Comparison, Accrual Agency.
+   Accrual Agency.
    Semua dihitung sekali dari filtRaw (sudah ikut filter Flow/Month/Entity/dst).
    ───────────────────────────────────────────────────────────────────── */
 const DAY = 86400000;
@@ -1663,11 +1663,6 @@ function rowMonthKey(r) {
   const d = toRealDate(v);
   return d ? d.getFullYear()*100 + d.getMonth() + 1 : monthKey(v);
 }
-// SLA compliance: step yang sama, target berbeda per flow (PO vs Direct Invoice)
-const SLA_COMPLIANCE = [
-  { key:"inv_ap", label:"Invoice → CLV / AP Verified",      from:H_INV, to:H_CLV, sla:{ [FLOW_PO]:2, [FLOW_DI]:4 } },
-  { key:"ap_clr", label:"CLV / AP Verified → Bank Clearing", from:H_CLV, to:H_CLR, sla:{ [FLOW_PO]:3, [FLOW_DI]:5 } },
-];
 const stripCat = (s) => String(s||"").toUpperCase().replace(/[^A-Z0-9]/g,"");
 
 // Accrual Agency: actual per Agency × Program Type × bulan; bulan kosong = rata-rata bulan terisi
@@ -1723,23 +1718,20 @@ function computeInsights(rows) {
   const wk1 = new Date(wk0.getTime()+7*DAY), wk2 = new Date(wk0.getTime()+14*DAY);
   const k = { total:0, n:rows.length, paid:0, paidN:0, out:0, outN:0, notSub:0, notSubAmt:0, cycSum:0, cycN:0 };
   const out = [], due = { this:[], next:[] }, notSub = [];
-  const newFlow = () => ({ n:0, amt:0, out:0, cycSum:0, cycN:0, slaN:0, slaOk:0 });
-  const fl = { [FLOW_PO]:newFlow(), [FLOW_DI]:newFlow() };
   const owners = {};
   rows.forEach(r=>{
     const amt = gnum(r,["amount"]), st = rowStatus(r), flow = rowFlow(r), name = ownerName(r) || "—";
     const invV = gcell(r,H_INV), clrV = gcell(r,H_CLR);
     const paid = isPaidStatus(st), proc = isProcessStatus(st);
-    const f = fl[flow] || fl[FLOW_PO];
-    k.total += amt; f.n++; f.amt += amt;
+    k.total += amt;
     if (paid) { k.paid += amt; k.paidN++; }
-    if (proc) { k.out += amt; k.outN++; f.out += amt; }
+    if (proc) { k.out += amt; k.outN++; }
     if (isNotSubStatus(st)) { k.notSub++; k.notSubAmt += amt; }
     const cyc = workDaysBetween(invV, clrV);
-    if (cyc!=null) { k.cycSum += cyc; k.cycN++; f.cycSum += cyc; f.cycN++; }
-    SLA_COMPLIANCE.forEach(s=>{ const wd = workDaysBetween(gcell(r,s.from), gcell(r,s.to)); if (wd==null) return; f.slaN++; if (wd<=s.sla[flow]) f.slaOk++; });
-    if (!owners[name]) owners[name] = { name, total:0, paid:0, out:0, n:0 };
-    const o = owners[name]; o.total += amt; o.n++; if (paid) o.paid += amt; if (proc) o.out += amt;
+    if (cyc!=null) { k.cycSum += cyc; k.cycN++; }
+    if (!owners[name]) owners[name] = { name, total:0, paid:0, out:0, ns:0, other:0, n:0 };
+    const o = owners[name]; o.total += amt; o.n++;
+    if (paid) o.paid += amt; else if (proc) o.out += amt; else if (isNotSubStatus(st)) o.ns += amt; else o.other += amt;
     if (!proc && (paid || clrV)) return;
     const invD = toDate(invV), estD = toDate(gcell(r,H_EST));
     const days = invD ? Math.max(0, Math.round((today - dayStart(invD))/DAY)) : null;
@@ -1755,7 +1747,7 @@ function computeInsights(rows) {
   out.sort((a,b)=>(b.days??-1)-(a.days??-1));
   due.this.sort((a,b)=>a.est-b.est); due.next.sort((a,b)=>a.est-b.est);
   notSub.sort((a,b)=>(a.est||Infinity)-(b.est||Infinity));
-  return { k, out, due, notSub, fl, owners:Object.values(owners), wk0, wk1, wk2 };
+  return { k, out, due, notSub, owners:Object.values(owners), wk0, wk1, wk2 };
 }
 
 /* ── KPI: 4 kartu (nominal besar + jumlah kecil) ── */
@@ -1858,12 +1850,11 @@ function DashTab(props) {
 
 /* ── Area detail bertab (default: Outstanding) ── */
 function DetailsTabs(props) {
-  const { t, w, ins, isAg, flowSel, exportSummary } = props;
+  const { t, w, ins, isAg, exportSummary } = props;
   const [tab, setTab] = useState("out");
   const tabs = [
     { id:"out",  label:"Outstanding", count:ins.out.length },
     { id:"own",  label:isAg?"Agencies":"Partners", count:ins.owners.length },
-    { id:"flow", label:"Flow Comparison" },
   ];
   const cur = tabs.some(x=>x.id===tab) ? tab : "out";
   return (
@@ -1879,7 +1870,6 @@ function DetailsTabs(props) {
       </div>
       {cur==="out"  && <OutstandingTab ins={ins} isAg={isAg} w={w} t={t}/>}
       {cur==="own"  && <PartnersTab ins={ins} isAg={isAg} w={w} t={t}/>}
-      {cur==="flow" && <FlowCompareTab ins={ins} flowSel={flowSel} t={t}/>}
     </Card>
   );
 }
@@ -1903,52 +1893,38 @@ function PartnersTab({ ins, isAg, w, t }) {
     return arr;
   },[ins.owners,sort]);
   const phone = w<640;
+  const hasOther = list.some(o=>o.other>0);
   if (!list.length) return <EmptyNote t={t}>No data available</EmptyNote>;
+  const amt = (v, color) => <td style={{...tdS(t),color:v?(color||t.ink2):t.muted}} title={v?fmtRpFull(v):undefined}>{v?fmtMiliar(v):"—"}</td>;
   return (
-    <div style={{maxHeight:460,overflow:"auto"}}>
-      <table style={{width:"100%",borderCollapse:"collapse"}}>
-        <thead><tr>
-          <SortTh col="name" left sort={sort} setSort={setSort} t={t}>{isAg?"Agency":"Partner"}</SortTh>
-          <SortTh col="total" sort={sort} setSort={setSort} t={t}>Total</SortTh>
-          {!phone&&<SortTh col="paid" sort={sort} setSort={setSort} t={t}>Paid</SortTh>}
-          <SortTh col="out" sort={sort} setSort={setSort} t={t}>Outstanding</SortTh>
-          <SortTh col="pPaid" sort={sort} setSort={setSort} t={t}>% Paid</SortTh>
-        </tr></thead>
-        <tbody>{list.map((o,i)=>{ const p=Math.round(o.pPaid); return (
-          <tr key={o.name} style={{background:i%2===1?t.rowStripe:"transparent"}}>
-            <td style={{...tdS(t,true),fontWeight:600,color:t.ink,maxWidth:phone?140:320}} title={o.name}>{o.name}</td>
-            <td style={{...tdS(t),fontFamily:MONO}} title={fmtRpFull(o.total)}>{fmtRpWord(o.total)}</td>
-            {!phone&&<td style={{...tdS(t),fontFamily:MONO}} title={fmtRpFull(o.paid)}>{fmtRpWord(o.paid)}</td>}
-            <td style={{...tdS(t),fontFamily:MONO,color:o.out?t.warnDark:t.muted}} title={fmtRpFull(o.out)}>{o.out?fmtRpWord(o.out):"—"}</td>
-            <td style={tdS(t)}><PctBadge val={p} t={t}/></td>
-          </tr>
-        ); })}</tbody>
-      </table>
-    </div>
-  );
-}
-
-function FlowCompareTab({ ins, flowSel, t }) {
-  const cols = [FLOW_PO, FLOW_DI];
-  const f = ins.fl;
-  const rows = [
-    { l:"Records",             v:(x)=>x.n.toLocaleString() },
-    { l:"Amount",              v:(x)=>fmtRpFull(x.amt) },
-    { l:"Avg days to clear",   v:(x)=>x.cycN?`${(x.cycSum/x.cycN).toFixed(1)} WD`:"—" },
-    { l:"% on time (SLA)",     v:(x)=>x.slaN?<PctBadge val={pct(x.slaOk,x.slaN)} t={t}/>:"—" },
-  ];
-  return (
-    <div style={{padding:18}}>
-      {flowSel!=="all"&&<div style={{fontSize:12,color:t.muted,marginBottom:10}}>Flow filter is on — set it to <strong style={{color:t.ink}}>All Flows</strong> to compare both side by side.</div>}
-      <div style={{overflowX:"auto",border:`1px solid ${t.line}`,borderRadius:10,maxWidth:640}}>
-        <table style={{width:"100%",borderCollapse:"collapse"}}>
-          <thead><tr><th style={thS(t,true)}>Metric</th>{cols.map(c=><th key={c} style={thS(t)}><FlowBadge flow={c} t={t}/></th>)}</tr></thead>
-          <tbody>{rows.map(r=>(
-            <tr key={r.l}><td style={{...tdS(t,true),fontWeight:600,color:t.ink}}>{r.l}</td>{cols.map(c=><td key={c} style={{...tdS(t),fontFamily:MONO}}>{r.v(f[c])}</td>)}</tr>
-          ))}</tbody>
+    <div style={{padding:"12px 16px 16px"}}>
+      <div style={{fontSize:12.5,color:t.muted,marginBottom:10,lineHeight:1.5}}>
+        Total = <strong style={{color:t.ink2}}>Paid</strong> + <strong style={{color:t.warnDark}}>In process</strong> (Payment Process) + <strong style={{color:t.badDark}}>Not submitted</strong> (Invoice Not Submitted){hasOther?" + other status":""}. Amounts in Rp; hover for the full value.
+      </div>
+      <div style={{maxHeight:460,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10,width:"fit-content",maxWidth:"100%"}}>
+        <table style={{borderCollapse:"collapse"}}>
+          <thead><tr>
+            <SortTh col="name" left sort={sort} setSort={setSort} t={t}>{isAg?"Agency":"Partner"}</SortTh>
+            <SortTh col="total" sort={sort} setSort={setSort} t={t}>Total</SortTh>
+            {!phone&&<SortTh col="paid" sort={sort} setSort={setSort} t={t}>Paid</SortTh>}
+            <SortTh col="out" sort={sort} setSort={setSort} t={t}>In process</SortTh>
+            {!phone&&<SortTh col="ns" sort={sort} setSort={setSort} t={t}>Not submitted</SortTh>}
+            {!phone&&hasOther&&<SortTh col="other" sort={sort} setSort={setSort} t={t}>Other</SortTh>}
+            <SortTh col="pPaid" sort={sort} setSort={setSort} t={t}>% Paid</SortTh>
+          </tr></thead>
+          <tbody>{list.map((o,i)=>{ const p=Math.round(o.pPaid); return (
+            <tr key={o.name} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+              <td style={{...tdS(t,true),fontWeight:600,color:t.ink,maxWidth:phone?150:300,paddingRight:24}} title={o.name}>{o.name}</td>
+              <td style={{...tdS(t),fontWeight:700,color:t.ink}} title={fmtRpFull(o.total)}>{fmtMiliar(o.total)}</td>
+              {!phone&&amt(o.paid)}
+              {amt(o.out, t.warnDark)}
+              {!phone&&amt(o.ns, t.badDark)}
+              {!phone&&hasOther&&amt(o.other)}
+              <td style={tdS(t)} title={`Paid ${fmtRpFull(o.paid)} of ${fmtRpFull(o.total)}`}><PctBadge val={p} t={t}/></td>
+            </tr>
+          ); })}</tbody>
         </table>
       </div>
-      <div style={{fontFamily:MONO,fontSize:12,color:t.muted,marginTop:8}}>Avg days = Invoice Submission → Bank Cleared (working days). On time: PO 2 + 3 WD · Direct Invoice 4 + 5 WD.</div>
     </div>
   );
 }
@@ -2008,11 +1984,11 @@ function OutstandingTab({ ins, isAg, w, t }) {
                 <tr key={i} style={{background:i%2===1?t.rowStripe:"transparent"}}>
                   <td style={{...tdS(t,true),maxWidth:phone?130:180,color:t.ink,fontWeight:600}} title={`${a.name} · ${a.ref||"no ref"} · ${a.flow}`}>{a.name}</td>
                   {!phone&&<td style={{...tdS(t,true),maxWidth:w<1100?170:260}} title={a.title}>{a.title}</td>}
-                  <td style={{...tdS(t,true),fontFamily:MONO,fontWeight:700,background:late?t.badBg:`${C.yellow}14`,color:late?t.bad:t.ink}} title={late?"Estimation date has passed":undefined}>{a.est?fmtDate(a.est):"—"}</td>
-                  {!phone&&<td style={{...tdS(t,true),fontFamily:MONO}}>{a.period}</td>}
-                  <td style={{...tdS(t),fontFamily:MONO,color:t.ink}} title={fmtRpFull(a.amt)}>{fmtRpWord(a.amt)}</td>
+                  <td style={{...tdS(t,true),fontWeight:700,background:late?t.badBg:`${C.yellow}14`,color:late?t.bad:t.ink}} title={late?"Estimation date has passed":undefined}>{a.est?fmtDate(a.est):"—"}</td>
+                  {!phone&&<td style={{...tdS(t,true)}}>{a.period}</td>}
+                  <td style={{...tdS(t),color:t.ink}} title={fmtRpFull(a.amt)}>{fmtRpWord(a.amt)}</td>
                   {!phone&&<td style={{...tdS(t,true),maxWidth:170}} title={a.status}>{a.stage}</td>}
-                  {!phone&&<td style={{...tdS(t),fontFamily:MONO,fontWeight:700,color:dayClr(a.days)}} title="Days since Invoice Submission">{a.days==null?"—":a.days}</td>}
+                  {!phone&&<td style={{...tdS(t),fontWeight:700,color:dayClr(a.days)}} title="Days since Invoice Submission">{a.days==null?"—":a.days}</td>}
                 </tr>
               );
             })}</tbody>
@@ -2511,7 +2487,7 @@ function AccrualTab({ rows, w, t, showToast }) {
               <tr key={i} style={{background:i%2===1?t.rowStripe:"transparent"}}>
                 <td style={{...tdS(t,true),fontWeight:600,color:t.ink}}>{x.agency}</td>
                 <td style={tdS(t,true)}>{x.prog}</td>
-                <td style={{...tdS(t,true),fontFamily:MONO}}>{x.period}</td>
+                <td style={{...tdS(t,true)}}>{x.period}</td>
               </tr>
             ))}</tbody>
           </table>
@@ -2545,12 +2521,12 @@ function AccrualEstimate({ acc, year, w, t }) {
           <tbody>{acc.list.map((g,i)=>(
             <tr key={g.agency+"\x00"+g.prog} style={{background:i%2===1?t.rowStripe:"transparent"}}>
               <td style={{...tdS(t,true),maxWidth:280}} title={`${g.agency} · ${g.prog}`}><strong style={{color:t.ink}}>{g.agency}</strong><span style={{color:t.muted}}> · {g.prog}</span>{g.noAccrue&&<span style={{marginLeft:6,fontFamily:MONO,fontSize:12,color:t.muted}}>(no accrual)</span>}</td>
-              {months.map(m=>{ const c=g.cells[m]; return <td key={m} style={{...tdS(t),fontFamily:MONO,fontStyle:c?.est?"italic":"normal",color:c?.est?t.muted:t.ink2}}>{c?fmtRpFull(c.v):"—"}</td>; })}
-              <td style={{...tdS(t),fontFamily:MONO,fontWeight:700,color:t.ink}}>{fmtRpFull(rowTotal(g))}</td>
+              {months.map(m=>{ const c=g.cells[m]; return <td key={m} style={{...tdS(t),fontStyle:c?.est?"italic":"normal",color:c?.est?t.muted:t.ink2}}>{c?fmtRpFull(c.v):"—"}</td>; })}
+              <td style={{...tdS(t),fontWeight:700,color:t.ink}}>{fmtRpFull(rowTotal(g))}</td>
             </tr>
           ))}</tbody>
           <tfoot><tr>
-            {(()=>{ const ft={...tdS(t),background:"#1E2128",color:"#fff",fontFamily:MONO,fontWeight:700,borderTop:`2px solid ${C.teal}`,position:"sticky",bottom:0,zIndex:3}; return <>
+            {(()=>{ const ft={...tdS(t),background:"#1E2128",color:"#fff",fontWeight:700,borderTop:`2px solid ${C.teal}`,position:"sticky",bottom:0,zIndex:3}; return <>
               <td style={{...ft,textAlign:"left",fontFamily:"inherit",fontWeight:800}}>TOTAL</td>
               {months.map(m=><td key={m} style={ft} title={`Actual ${fmtRpFull(acc.tot[m].act)} · Estimated ${fmtRpFull(acc.tot[m].est)}`}>{fmtRpFull(acc.tot[m].act+acc.tot[m].est)}</td>)}
               <td style={ft}>{fmtRpFull(months.reduce((a,m)=>a+acc.tot[m].act+acc.tot[m].est,0))}</td>
