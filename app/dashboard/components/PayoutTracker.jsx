@@ -521,6 +521,7 @@ const LIGHT = {
   shadow1:"0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.05)",
   shadow2:"0 4px 16px rgba(0,0,0,0.09), 0 1px 4px rgba(0,0,0,0.05)",
   shadow3:"0 12px 40px rgba(0,0,0,0.14), 0 4px 12px rgba(0,0,0,0.06)",
+  chartA:"#32BCAD",chartB:"#C6168D", // seri chart Sales Team / Partner (dicek: lightness, CVD, kontras)
 };
 
 const DARK = {
@@ -537,6 +538,7 @@ const DARK = {
   shadow1:"0 1px 2px rgba(0,0,0,0.45), 0 1px 2px rgba(0,0,0,0.30)",
   shadow2:"0 6px 18px rgba(0,0,0,0.55), 0 1px 4px rgba(0,0,0,0.35)",
   shadow3:"0 20px 48px rgba(0,0,0,0.65), 0 4px 12px rgba(0,0,0,0.45)",
+  chartA:"#28AA9B",chartB:"#BA1384", // versi gelap, dicek terpisah terhadap permukaan gelap
 };
 
 function resolveTheme(themeProp) {
@@ -2172,20 +2174,144 @@ function computeYtd(pRows, aRows, year) {
   return { rows, tot, entList };
 }
 
+// Rupiah dengan satuan kata (miliar/juta) untuk ringkasan & kartu
+function fmtRpWord(n, d=1) {
+  n = Number(n) || 0;
+  const a = Math.abs(n), f = (v) => v.toFixed(d).replace(".", ",");
+  if (a>=1e12) return `Rp ${f(n/1e12)} triliun`;
+  if (a>=1e9)  return `Rp ${f(n/1e9)} miliar`;
+  if (a>=1e6)  return `Rp ${Math.round(n/1e6).toLocaleString("id-ID")} juta`;
+  return "Rp "+Math.round(n).toLocaleString("id-ID");
+}
+// Angka tabel ringkas dalam juta (nilai penuh di tooltip)
+const fmtJuta = (n) => n ? `${Math.round(n/1e6).toLocaleString("id-ID")} jt` : "—";
+
+// Lebar elemen (chart SVG mengikuti lebar kartu, teks tetap ≥12px)
+function useBoxWidth() {
+  const ref = useRef(null);
+  const [bw, setBw] = useState(0);
+  useEffect(()=>{
+    const el = ref.current;
+    if (!el || typeof ResizeObserver==="undefined") return;
+    const ro = new ResizeObserver(es=>setBw(Math.round(es[0].contentRect.width)));
+    ro.observe(el);
+    return ()=>ro.disconnect();
+  },[]);
+  return [ref, bw];
+}
+
+// Skala sumbu Y "rapi" (1/2/2,5/5 × 10^n)
+function niceMax(v, ticks=4) {
+  if (!v) return { max:1, step:1 };
+  const raw = v/ticks, p = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1,2,2.5,5,10].map(m=>m*p).find(s=>s>=raw);
+  return { max:Math.ceil(v/step)*step, step };
+}
+
+function YtdKpi({ label, value, sub, children, t }) {
+  return (
+    <div style={{background:t.surf,border:`1px solid ${t.line}`,borderRadius:16,padding:"14px 16px",boxShadow:t.shadow1,minWidth:0}}>
+      <div style={{fontSize:12,fontWeight:600,color:t.muted}}>{label}</div>
+      <div style={{fontWeight:800,fontSize:22,letterSpacing:"-0.02em",color:t.ink,lineHeight:1.2,marginTop:6}}>{value}</div>
+      {sub&&<div style={{fontSize:12.5,color:t.muted,marginTop:4,lineHeight:1.4}}>{sub}</div>}
+      {children}
+    </div>
+  );
+}
+
+// Stacked bar per bulan: Sales Team (bawah) + Partner (atas)
+function YtdChart({ rows, showTeam, latest, t }) {
+  const [ref, bw] = useBoxWidth();
+  const [hov, setHov] = useState(null);
+  const H = 260, pL = 46, pR = 8, pT = 22, pB = 30;
+  const W = Math.max(bw, 280), cW = W-pL-pR, cH = H-pT-pB;
+  const tot = (r) => (showTeam?r.team.a:0) + r.partner.a;
+  const { max, step } = niceMax(Math.max(...rows.map(tot), 0));
+  const y = (v) => pT + cH - (v/max)*cH;
+  const band = cW/Math.max(rows.length,1), bWid = Math.min(46, band*0.62);
+  const segs = (r) => [...(showTeam?[{k:"team",v:r.team.a,c:t.chartA}]:[]),{k:"partner",v:r.partner.a,c:t.chartB}];
+  const ticks = []; for (let v=0; v<=max+1e-6; v+=step) ticks.push(v);
+  const h = hov!=null ? rows[hov] : null;
+  return (
+    <div ref={ref} style={{position:"relative"}}>
+      {bw>0&&(
+        <svg width={W} height={H} role="img" aria-label="Monthly cost, stacked by Sales Team and Partner" style={{display:"block"}} onMouseLeave={()=>setHov(null)}>
+          {ticks.map(v=>(
+            <g key={v}>
+              <line x1={pL} x2={W-pR} y1={y(v)} y2={y(v)} stroke={t.line} strokeWidth={1}/>
+              <text x={pL-8} y={y(v)+4} textAnchor="end" fontSize={12} fill={t.muted} style={{fontVariantNumeric:"tabular-nums"}}>{(v/1e9).toLocaleString("id-ID",{maximumFractionDigits:1})}</text>
+            </g>
+          ))}
+          <text x={0} y={11} fontSize={12} fill={t.muted}>Rp miliar</text>
+          {rows.map((r,i)=>{
+            const cx = pL + band*i + band/2, x0 = cx-bWid/2;
+            let acc = 0; const ss = segs(r).filter(s=>s.v>0);
+            return (
+              <g key={r.m} opacity={hov==null||hov===i?1:0.45} style={{transition:"opacity .12s"}}>
+                {ss.map((s,j)=>{
+                  const yTop = y(acc+s.v), yBot = y(acc); acc += s.v;
+                  const top = j===ss.length-1, gap = j>0 ? 2 : 0;           // celah 2px antar segmen
+                  const hgt = Math.max(0, yBot-yTop-gap), rr = top ? Math.min(4, hgt) : 0;
+                  const d = `M${x0},${yTop+hgt} V${yTop+rr} Q${x0},${yTop} ${x0+rr},${yTop} H${x0+bWid-rr} Q${x0+bWid},${yTop} ${x0+bWid},${yTop+rr} V${yTop+hgt} Z`;
+                  return <path key={s.k} d={d} fill={s.c}/>;
+                })}
+                <text x={cx} y={H-pB+18} textAnchor="middle" fontSize={12} fill={r.m===latest?t.ink:t.muted} fontWeight={r.m===latest?700:400}>{MONTHS_SHORT[r.m]}</text>
+                <rect x={pL+band*i} y={pT} width={band} height={cH} fill="transparent" onMouseEnter={()=>setHov(i)} onFocus={()=>setHov(i)} onBlur={()=>setHov(null)} tabIndex={0} aria-label={`${r.label}: ${fmtRpWord(tot(r))}`}/>
+              </g>
+            );
+          })}
+          <line x1={pL} x2={W-pR} y1={y(0)} y2={y(0)} stroke={t.line2} strokeWidth={1}/>
+        </svg>
+      )}
+      {h&&(()=>{
+        // Tooltip di samping bar (kanan, atau kiri bila tidak muat) supaya bar yang di-hover tetap terlihat
+        const cx = pL + band*hov + band/2, right = cx + bWid/2 + 10;
+        const left = right + 220 <= W ? right : Math.max(0, cx - bWid/2 - 10 - 220);
+        const row = (c,l,v) => <div style={{display:"flex",alignItems:"center",gap:8,justifyContent:"space-between"}}><span style={{display:"inline-flex",alignItems:"center",gap:6,color:t.ink2}}>{c&&<span style={{width:10,height:10,borderRadius:3,background:c}}/>}{l}</span><strong style={{fontVariantNumeric:"tabular-nums",color:t.ink}}>{v}</strong></div>;
+        return (
+          <div style={{position:"absolute",top:8,left,width:220,background:t.surf,border:`1px solid ${t.line2}`,borderRadius:12,boxShadow:t.shadow3,padding:"10px 12px",fontSize:12.5,pointerEvents:"none",display:"flex",flexDirection:"column",gap:5,zIndex:5}}>
+            <div style={{fontWeight:700,color:t.ink}}>{h.label}</div>
+            {showTeam&&row(t.chartA,"Sales Team",fmtRpWord(h.team.a))}
+            {row(t.chartB,"Partner",fmtRpWord(h.partner.a))}
+            <div style={{borderTop:`1px solid ${t.line}`,paddingTop:5}}>{row(null,"Total",fmtRpWord(tot(h)))}</div>
+            {row(null,"Paid",`${pct(h.grand.p,h.grand.a)}%`)}
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+// Bar horizontal komposisi (porsi dalam grupnya)
+function ShareBars({ title, color, items, t }) {
+  const total = items.reduce((a,x)=>a+x.v,0) || 1;
+  return (
+    <div>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+        <span style={{width:10,height:10,borderRadius:3,background:color}}/>
+        <span style={{fontWeight:700,fontSize:13,color:t.ink}}>{title}</span>
+        <span style={{fontSize:12.5,color:t.muted,marginLeft:"auto"}}>{fmtRpWord(total)}</span>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:9}}>
+        {items.map(x=>{ const p = x.v/total*100; return (
+          <div key={x.l} title={`${x.l}: ${fmtRpFull(x.v)}`}>
+            <div style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:12.5,marginBottom:4}}>
+              <span style={{color:t.ink2}}>{x.l}</span>
+              <span style={{color:t.ink,fontVariantNumeric:"tabular-nums"}}><strong>{p.toFixed(0)}%</strong> <span style={{color:t.muted}}>· {fmtRpWord(x.v)}</span></span>
+            </div>
+            <div style={{height:8,borderRadius:4,background:t.surf3,overflow:"hidden"}}><div style={{height:"100%",width:`${p}%`,background:color,borderRadius:4}}/></div>
+          </div>
+        ); })}
+      </div>
+    </div>
+  );
+}
+
 function YtdTab({ partnerRows, agencyRows, showTeam, w, t, showToast }) {
   const years = useMemo(()=>yearsOf([...partnerRows,...agencyRows]),[partnerRows,agencyRows]);
   const [year, setYear] = useYear(years);
   const ytd = useMemo(()=>computeYtd(partnerRows, showTeam?agencyRows:[], year),[partnerRows,agencyRows,showTeam,year]);
-  const phone = w<700;
-  const cols = [
-    ...(showTeam?[{k:"sal",l:"Salary",g:"team",split:true},{k:"inc",l:"Incentive",g:"team",split:true},{k:"team",l:"Total",g:"team",tot:true}]:[]),
-    ...ytd.entList.map((e,i)=>({k:"ent",i,l:e,g:"partner",split:true})),
-    {k:"partner",l:"Total",g:"partner",tot:true},
-    {k:"grand",l:"Grand Total",g:"grand",tot:true},
-  ].filter(c=>!(phone&&c.split));
-  const val = (row,c) => c.k==="ent" ? row.ent[c.i] : row[c.k];
-  const num = (n) => Math.round(n).toLocaleString("id-ID");
-  const groups = [["team","Sales Team · Agency Prepaid"],["partner","Partner Incentive · Partner Prepaid"],["grand",""]].map(([g,l])=>({g,l,n:cols.filter(c=>c.g===g).length})).filter(x=>x.n);
+  const [showDetail, setShowDetail] = useState(false);
   const exportXlsx = async () => {
     const XLSX = await getXLSX();
     const line = (r) => {
@@ -2200,44 +2326,154 @@ function YtdTab({ partnerRows, agencyRows, showTeam, w, t, showToast }) {
     XLSX.writeFile(wb, `ytd_summary_${year}.xlsx`);
     showToast(`YTD ${year} downloaded — Excel`,"success");
   };
-  const cellTd = (c, v, foot) => (
-    <td key={c.k+(c.i??"")} style={{...tdS(t),fontFamily:MONO,verticalAlign:"top",background:foot?"#1E2128":c.tot?t.surf2:undefined,color:foot?"#fff":t.ink,fontWeight:c.tot||foot?700:500,borderLeft:c.tot?`1px solid ${t.line}`:undefined}}>
-      <div>{v.a?num(v.a):"—"}</div>
-      {v.a>0&&<div style={{fontSize:10,fontWeight:500,color:foot?"#C9CDD6":t.muted,marginTop:2}} title={`Paid ${fmtRpFull(v.p)} of ${fmtRpFull(v.a)}`}>paid {num(v.p)} · {pct(v.p,v.a)}%</div>}
-    </td>
-  );
-  return (
-    <Card t={t} pad={false} style={{marginBottom:14}}>
-      <CardHead title={`YTD Summary ${year}`} accent={C.yellow}
-        sub="Amount = committed · Paid = Clearing Date filled · by Program Date month"
-        right={<div style={{display:"flex",gap:8,alignItems:"center"}}><YearSelect years={years} value={year} onChange={setYear} t={t}/><Btn t={t} variant="primary" sm onClick={exportXlsx} disabled={!ytd.rows.length}>Export Excel</Btn></div>} t={t}/>
-      <div style={{padding:"10px 20px",fontSize:12,color:t.muted,lineHeight:1.55,borderBottom:`1px solid ${t.line}`}}>
-        {showTeam&&<>Sales Team = Agency Prepaid; <strong style={{color:t.ink2}}>Salary</strong> = SALARY, SALARY FWA, SALARYUUCK, THR; <strong style={{color:t.ink2}}>Incentive</strong> = all other programs. </>}
-        Partner = Partner Prepaid by Entity. Includes PO and MDI rows; dashboard filters don&rsquo;t apply here. Amounts in Rupiah.
+  const { rows, tot } = ytd;
+  const has = rows.some(r=>r.grand.a>0);
+  const first = rows.find(r=>r.grand.a>0)?.m || 1;
+  const latest = [...rows].reverse().find(r=>r.grand.a>0)?.m || 0;
+  const span = latest ? `${MONTHS_SHORT[first]}–${MONTHS_SHORT[latest]} ${year}` : `${year}`;
+  const paidPct = pct(tot.grand.p, tot.grand.a);
+  const entLbl = (e) => String(e).toUpperCase()==="MPX" ? "MDI (MPX)" : e;
+  const twoCol = w>=1000, narrow = w<640;
+  const thY = (left) => ({ ...thS(t,left), fontSize:12, letterSpacing:"0.02em", textTransform:"none", fontFamily:"inherit", fontWeight:600, padding:"9px 12px" });
+  const tdY = (left) => ({ ...tdS(t,left), fontSize:12.5, padding:"9px 12px", fontVariantNumeric:"tabular-nums", fontFamily:left?"inherit":MONO });
+  const head = (
+    <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",marginBottom:14}}>
+      <div style={{minWidth:0,flex:"1 1 320px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <span style={{fontWeight:800,fontSize:20,letterSpacing:"-0.02em",color:t.ink}}>YTD Summary</span>
+          <YearSelect years={years} value={year} onChange={setYear} t={t}/>
+        </div>
+        {has&&<div style={{fontSize:14,color:t.ink2,marginTop:6,lineHeight:1.5}}>
+          <strong style={{color:t.ink}}>{span}:</strong> total cost <strong style={{color:t.ink}}>{fmtRpWord(tot.grand.a)}</strong>, <strong style={{color:t.ink}}>{paidPct}%</strong> already paid ({fmtRpWord(tot.grand.a-tot.grand.p)} still unpaid).
+        </div>}
       </div>
-      {!ytd.rows.length ? <EmptyNote t={t}>No data for {year}</EmptyNote> : (
-        <div style={{overflowX:"auto"}}>
-          <table style={{width:"100%",borderCollapse:"collapse",minWidth:phone?undefined:Math.max(720,140+cols.length*125)}}>
-            <thead>
-              <tr><th style={{...thS(t,true),borderBottom:0}}/>{groups.map(x=><th key={x.g} colSpan={x.n} style={{...thS(t),textAlign:"center",borderBottom:0,color:t.ink,fontWeight:700}}>{x.l}</th>)}</tr>
-              <tr><th style={thS(t,true)}>Month</th>{cols.map(c=><th key={c.k+(c.i??"")} style={{...thS(t),color:c.tot?t.ink:t.muted,fontWeight:c.tot?700:500}}>{c.l}</th>)}</tr>
-            </thead>
-            <tbody>{ytd.rows.map((r,i)=>(
-              <tr key={r.m} style={{background:i%2===1?t.rowStripe:"transparent"}}>
-                <td style={{...tdS(t,true),fontWeight:700,color:t.ink,verticalAlign:"top"}}>{r.label}</td>
-                {cols.map(c=>cellTd(c,val(r,c),false))}
+      <Btn t={t} variant="primary" sm onClick={exportXlsx} disabled={!has}>Export Excel</Btn>
+    </div>
+  );
+  if (!has) return <Card t={t} style={{marginBottom:14}}>{head}<EmptyNote t={t}>No data for {year}</EmptyNote></Card>;
+  const kpis = [
+    { label:"Grand Total YTD", value:fmtRpWord(tot.grand.a), sub:`${span} · ${rows.filter(r=>r.grand.a>0).length} months with data` },
+    ...(showTeam?[{ label:"Sales Team (Agency)", value:fmtRpWord(tot.team.a), sub:`${pct(tot.team.a,tot.grand.a)}% of total · ${pct(tot.team.p,tot.team.a)}% paid`, dot:t.chartA }]:[]),
+    { label:"Partner", value:fmtRpWord(tot.partner.a), sub:`${pct(tot.partner.a,tot.grand.a)}% of total · ${pct(tot.partner.p,tot.partner.a)}% paid`, dot:t.chartB },
+  ];
+  return (
+    <div style={{marginBottom:14}}>
+      {head}
+      <div style={{display:"grid",gridTemplateColumns:w>=900?`repeat(${kpis.length+1},1fr)`:"repeat(2,1fr)",gap:12,marginBottom:14}}>
+        {kpis.map(k=><YtdKpi key={k.label} t={t} label={<span style={{display:"inline-flex",alignItems:"center",gap:6}}>{k.dot&&<span style={{width:10,height:10,borderRadius:3,background:k.dot}}/>}{k.label}</span>} value={k.value} sub={k.sub}/>)}
+        <YtdKpi t={t} label="Paid" value={`${paidPct}%`} sub={<>Paid {fmtRpWord(tot.grand.p)}<br/>Unpaid {fmtRpWord(tot.grand.a-tot.grand.p)}</>}>
+          <div style={{height:8,borderRadius:4,background:t.surf3,overflow:"hidden",marginTop:8}} role="meter" aria-valuenow={paidPct} aria-valuemin={0} aria-valuemax={100} aria-label="Share paid"><div style={{height:"100%",width:`${paidPct}%`,background:t.good,borderRadius:4}}/></div>
+        </YtdKpi>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:twoCol?"1.7fr 1fr":"1fr",gap:14,marginBottom:14}}>
+        <Card t={t}>
+          <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap",marginBottom:10}}>
+            <span style={{fontWeight:700,fontSize:14,color:t.ink}}>Monthly cost</span>
+            <span style={{display:"inline-flex",gap:14,fontSize:12.5,color:t.ink2,marginLeft:"auto"}}>
+              {showTeam&&<span style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:10,height:10,borderRadius:3,background:t.chartA}}/>Sales Team</span>}
+              <span style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:10,height:10,borderRadius:3,background:t.chartB}}/>Partner</span>
+            </span>
+          </div>
+          <YtdChart rows={rows} showTeam={showTeam} latest={latest} t={t}/>
+        </Card>
+        <Card t={t}>
+          <div style={{fontWeight:700,fontSize:14,color:t.ink,marginBottom:12}}>Where the money goes</div>
+          <div style={{display:"flex",flexDirection:"column",gap:18}}>
+            {showTeam&&<ShareBars title="Sales Team" color={t.chartA} t={t} items={[{l:"Salary",v:tot.sal.a},{l:"Incentive",v:tot.inc.a}]}/>}
+            <ShareBars title="Partner" color={t.chartB} t={t} items={ytd.entList.map((e,i)=>({l:entLbl(e),v:tot.ent[i].a})).sort((a,b)=>b.v-a.v)}/>
+          </div>
+          {showTeam&&<div style={{fontSize:12,color:t.muted,marginTop:14,lineHeight:1.5}}>Salary = SALARY, SALARY FWA, SALARYUUCK, THR. Incentive = all other agency programs.</div>}
+        </Card>
+      </div>
+      <Card t={t} pad={false}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",padding:"14px 16px",borderBottom:`1px solid ${t.line}`}}>
+          <span style={{fontWeight:700,fontSize:14,color:t.ink}}>By month</span>
+          <span style={{fontSize:12.5,color:t.muted}}>in Rp juta · hover a number for the full amount</span>
+          <Btn t={t} variant="ghost" sm style={{marginLeft:"auto"}} onClick={()=>setShowDetail(v=>!v)} aria-expanded={showDetail}>{showDetail?"Hide detailed breakdown":"Show detailed breakdown"}</Btn>
+        </div>
+        <div style={{maxHeight:520,overflowY:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse"}}>
+            <thead><tr>
+              <th style={thY(true)}>Month</th>
+              {showTeam&&<th style={thY(false)}>Sales Team</th>}
+              <th style={thY(false)}>Partner</th>
+              <th style={thY(false)}>Total</th>
+              <th style={{...thY(false),width:narrow?90:170}}>Paid</th>
+            </tr></thead>
+            <tbody>{rows.map((r,i)=>{ const isLatest = r.m===latest, p = pct(r.grand.p,r.grand.a); return (
+              <tr key={r.m} style={{background:isLatest?`${C.teal}14`:i%2===1?t.rowStripe:"transparent"}}>
+                <td style={{...tdY(true),fontWeight:600,color:t.ink}}>{r.label}{isLatest&&<span style={{marginLeft:8,fontSize:12,fontWeight:600,color:t.goodDark}}>latest</span>}</td>
+                {showTeam&&<td style={tdY(false)} title={fmtRpFull(r.team.a)}>{fmtJuta(r.team.a)}</td>}
+                <td style={tdY(false)} title={fmtRpFull(r.partner.a)}>{fmtJuta(r.partner.a)}</td>
+                <td style={{...tdY(false),fontWeight:700,color:t.ink}} title={fmtRpFull(r.grand.a)}>{fmtJuta(r.grand.a)}</td>
+                <td style={tdY(false)} title={`Paid ${fmtRpFull(r.grand.p)} of ${fmtRpFull(r.grand.a)}`}>
+                  {r.grand.a ? <span style={{display:"inline-flex",alignItems:"center",gap:8,justifyContent:"flex-end",width:"100%"}}>
+                    {!narrow&&<span style={{flex:"0 0 90px",height:6,borderRadius:3,background:t.surf3,overflow:"hidden"}}><span style={{display:"block",height:"100%",width:`${p}%`,background:t.good}}/></span>}
+                    <span style={{minWidth:36,textAlign:"right"}}>{p}%</span>
+                  </span> : "—"}
+                </td>
               </tr>
-            ))}</tbody>
+            ); })}</tbody>
             <tfoot><tr>
-              <td style={{...tdS(t,true),background:"#1E2128",color:"#fff",fontWeight:800,borderTop:`2px solid ${C.teal}`,verticalAlign:"top"}}>{ytd.tot.label}</td>
-              {cols.map(c=>cellTd(c,val(ytd.tot,c),true))}
+              {(()=>{ const ft = { ...tdY(false), background:"#1E2128", color:"#fff", fontWeight:800, borderTop:`2px solid ${C.teal}`, position:"sticky", bottom:0, zIndex:3 }; return <>
+                <td style={{...ft,textAlign:"left",fontFamily:"inherit"}}>Total {span}</td>
+                {showTeam&&<td style={ft} title={fmtRpFull(tot.team.a)}>{fmtJuta(tot.team.a)}</td>}
+                <td style={ft} title={fmtRpFull(tot.partner.a)}>{fmtJuta(tot.partner.a)}</td>
+                <td style={ft} title={fmtRpFull(tot.grand.a)}>{fmtJuta(tot.grand.a)}</td>
+                <td style={ft}>{paidPct}%</td>
+              </>; })()}
             </tr></tfoot>
           </table>
         </div>
-      )}
-    </Card>
+        {showDetail&&<YtdDetailTable ytd={ytd} showTeam={showTeam} entLbl={entLbl} narrow={narrow} t={t}/>}
+      </Card>
+    </div>
   );
 }
+
+// Rincian lengkap (tampilan lama): Salary/Incentive & per Entity + % paid, dalam Rupiah penuh
+function YtdDetailTable({ ytd, showTeam, entLbl, narrow, t }) {
+  const cols = [
+    ...(showTeam?[{k:"sal",l:"Salary",g:"team"},{k:"inc",l:"Incentive",g:"team"},{k:"team",l:"Total",g:"team",tot:true}]:[]),
+    ...ytd.entList.map((e,i)=>({k:"ent",i,l:entLbl(e),g:"partner"})),
+    {k:"partner",l:"Total",g:"partner",tot:true},
+    {k:"grand",l:"Grand Total",g:"grand",tot:true},
+  ];
+  const val = (row,c) => c.k==="ent" ? row.ent[c.i] : row[c.k];
+  const num = (n) => Math.round(n).toLocaleString("id-ID");
+  const groups = [["team","Sales Team (Agency)"],["partner","Partner"],["grand",""]].map(([g,l])=>({g,l,n:cols.filter(c=>c.g===g).length})).filter(x=>x.n);
+  const th = (extra) => ({ ...thS(t,false), fontSize:12, letterSpacing:"0.02em", textTransform:"none", fontFamily:"inherit", fontWeight:600, padding:"8px 10px", position:"static", ...extra });
+  const cell = (c, v, foot) => (
+    <td key={c.k+(c.i??"")} style={{...tdS(t),fontSize:12,padding:"8px 10px",fontFamily:MONO,fontVariantNumeric:"tabular-nums",verticalAlign:"top",background:foot?"#1E2128":c.tot?t.surf2:undefined,color:foot?"#fff":t.ink,fontWeight:c.tot||foot?700:500}}>
+      <div>{v.a?num(v.a):"—"}</div>
+      {v.a>0&&<div style={{fontSize:12,fontWeight:500,color:foot?"#C9CDD6":t.muted,marginTop:2}}>paid {pct(v.p,v.a)}%</div>}
+    </td>
+  );
+  return (
+    <div style={{borderTop:`1px solid ${t.line}`}}>
+      <div style={{padding:"12px 16px",fontSize:12.5,color:t.muted}}>Detailed breakdown in full Rupiah · paid = Clearing Date filled</div>
+      <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",minWidth:narrow?640:undefined}}>
+          <thead>
+            <tr><th style={th({borderBottom:0})}/>{groups.map(x=><th key={x.g} colSpan={x.n} style={th({textAlign:"center",borderBottom:0,color:t.ink,fontWeight:700})}>{x.l}</th>)}</tr>
+            <tr><th style={th({textAlign:"left"})}>Month</th>{cols.map(c=><th key={c.k+(c.i??"")} style={th({color:c.tot?t.ink:t.muted,fontWeight:c.tot?700:600})}>{c.l}</th>)}</tr>
+          </thead>
+          <tbody>{ytd.rows.map((r,i)=>(
+            <tr key={r.m} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+              <td style={{...tdS(t,true),fontSize:12.5,fontWeight:700,color:t.ink,verticalAlign:"top",padding:"8px 10px"}}>{r.label}</td>
+              {cols.map(c=>cell(c,val(r,c),false))}
+            </tr>
+          ))}</tbody>
+          <tfoot><tr>
+            <td style={{...tdS(t,true),fontSize:12.5,background:"#1E2128",color:"#fff",fontWeight:800,borderTop:`2px solid ${C.teal}`,verticalAlign:"top",padding:"8px 10px"}}>{ytd.tot.label}</td>
+            {cols.map(c=>cell(c,val(ytd.tot,c),true))}
+          </tr></tfoot>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 
 /* ── Accrual Agency: checklist submission + estimasi ── */
 // Jadwal submission yang DIHARAPKAN per Program Type (kunci = huruf/angka saja, kapital).
