@@ -36,6 +36,43 @@ import {
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif`;
 const MONTH_NAMES = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+
+// BUGFIX MENYELURUH (dilaporkan user - "mengapa hasilnya menjadi lebih
+// banyak dari data awal, lakukan sangat teliti"): akar masalah SEBENARNYA
+// bukan cuma di 1 query mf_dse_prod_ar - SEMUA fetch tanpa .range() di
+// halaman ini (roster mf_dse_database = 1078+ baris, prodRows SATU BULAN
+// SAJA bisa >4000 baris, infoRows) diam-diam kepotong di limit default
+// PostgREST (1000 baris/request) tanpa error - jadi roster/transaksi yg
+// dipakai buat SEMUA perhitungan di halaman ini (bukan cuma kartu "Belum
+// Pernah Mengisi") selama ini TIDAK LENGKAP, besarannya beda2 setiap kali
+// query jalan (urutan default Postgres tanpa ORDER BY tidak stabil) -
+// itu sebabnya angkanya berubah2 (77 -> 120) padahal "diperbaiki". Helper
+// generik ini dipakai utk SEMUA fetch di bawah: iterasi .range() dengan
+// .order("id") eksplisit sampai benar2 habis, jadi hasilnya selalu
+// LENGKAP & KONSISTEN berapa pun jumlah barisnya.
+// BUGFIX #2 (DB "statement timeout" setelah bugfix #1): pagination berbasis
+// .range(from, to) (OFFSET) butuh DB men-scan & membuang ulang SEMUA baris
+// sebelumnya di setiap halaman -> makin dalam offsetnya, makin berat (biaya
+// ~O(n^2) utk keseluruhan loop). Dengan 4 query paginated jalan bersamaan
+// saat halaman ini dibuka, DB jadi overload dan kena statement timeout.
+// Solusi: keyset/cursor pagination - urutkan oleh "id", lalu setiap halaman
+// minta baris dengan id > id_terakhir_yang_didapat (pakai index id secara
+// efisien, TANPA OFFSET sama sekali) -> biaya total tetap O(n) walau
+// jumlah baris/halaman terus bertambah besar.
+// buildQuery(afterId, limit) WAJIB meng-select kolom "id" juga.
+async function fetchAllRows(buildQuery, pageSize = 1000) {
+  const rows = [];
+  let afterId = 0;
+  for (;;) {
+    const { data, error } = await buildQuery(afterId, pageSize);
+    if (error) { console.error("[DSE_ControlCenter] fetchAllRows error:", error.message); break; }
+    if (!data || data.length === 0) break;
+    rows.push(...data);
+    if (data.length < pageSize) break;
+    afterId = data[data.length - 1].id;
+  }
+  return rows;
+}
 const START_YEAR = 2026;
 
 function fmtID(n) {
@@ -107,6 +144,24 @@ export default function DSE_ControlCenter({ theme, profile }) {
   const [infoRows, setInfoRows] = useState([]);
   const [search, setSearch] = useState("");
   const [hover, setHover] = useState(null);
+  // UPDATE (permintaan user - "summary card yang bisa di-screenshot utk
+  // pengisian SELAMA INI, mc mana yang BELUM SAMA SEKALI mengisi,
+  // dikelompokkan per branch"): ini konsep "sepanjang waktu" (ALL-TIME),
+  // terpisah dari grid utama yg scoped ke 1 bulan terpilih - jadi di-fetch
+  // SEKALI saat mount (bukan ikut berubah2 ketika ganti bulan di atas).
+  // Cuma ambil kolom `mc` (bukan semua kolom) biar ringan meski row-nya
+  // banyak - MC dianggap "pernah mengisi" kalau MUNCUL SATU KALI SAJA di
+  // mf_dse_prod_ar, kapanpun tanggalnya.
+  const [everFilledMc, setEverFilledMc] = useState(null); // null = belum selesai load, Set kalau sudah
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const rows = await fetchAllRows((afterId, limit) => supabase.from("mf_dse_prod_ar").select("id, mc").gt("id", afterId).order("id", { ascending: true }).limit(limit));
+      if (cancelled) return;
+      setEverFilledMc(new Set(rows.map((r) => (r.mc || "").toLowerCase()).filter(Boolean)));
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // UPDATE (permintaan user - "seharusnya bisa pilih region / di filter
   // per partner juga"): filter cascading Partner -> Region -> Branch.
@@ -134,15 +189,15 @@ export default function DSE_ControlCenter({ theme, profile }) {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const [rosterRes, prodRes, infoRes] = await Promise.all([
-        supabase.from("mf_dse_database").select("dse_code, mc, branch, region, mdi, dse_status").or("is_revoked.is.null,is_revoked.eq.false"),
-        supabase.from("mf_dse_prod_ar").select("mc, tanggal, nilai_sp, nilai_fwa, nilai_voucher, nilai_saldo, qty_sp, qty_voucher, qty_saldo").gte("tanggal", monthStart).lte("tanggal", monthEnd),
-        supabase.from("mf_dse_info_periods").select("dse_code, mc").eq("period", periodKey),
+      const [rosterRows, prodRowsAll, infoRowsAll] = await Promise.all([
+        fetchAllRows((afterId, limit) => supabase.from("mf_dse_database").select("id, dse_code, mc, branch, region, mdi, dse_status").or("is_revoked.is.null,is_revoked.eq.false").gt("id", afterId).order("id", { ascending: true }).limit(limit)),
+        fetchAllRows((afterId, limit) => supabase.from("mf_dse_prod_ar").select("id, mc, tanggal, nilai_sp, nilai_fwa, nilai_voucher, nilai_saldo, qty_sp, qty_voucher, qty_saldo").gte("tanggal", monthStart).lte("tanggal", monthEnd).gt("id", afterId).order("id", { ascending: true }).limit(limit)),
+        fetchAllRows((afterId, limit) => supabase.from("mf_dse_info_periods").select("id, dse_code, mc").eq("period", periodKey).gt("id", afterId).order("id", { ascending: true }).limit(limit)),
       ]);
       if (cancelled) return;
-      setRoster(Array.isArray(rosterRes.data) ? rosterRes.data : []);
-      setProdRows(Array.isArray(prodRes.data) ? prodRes.data : []);
-      setInfoRows(Array.isArray(infoRes.data) ? infoRes.data : []);
+      setRoster(rosterRows);
+      setProdRows(prodRowsAll);
+      setInfoRows(infoRowsAll);
       setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -198,6 +253,33 @@ export default function DSE_ControlCenter({ theme, profile }) {
     out.sort((a, b) => a.mc.localeCompare(b.mc));
     return out;
   }, [roster, prodRows, infoRows, daysElapsed]);
+
+  // UPDATE (permintaan user - "mc mana yang belum sama sekali mengisi,
+  // dikelompokkan per branch"): daftar MC yg BELUM PERNAH SAMA SEKALI ada
+  // baris Penjualan di mf_dse_prod_ar (ALL-TIME, dari everFilledMc di
+  // atas - BUKAN dari bulan yg lagi dipilih di toolbar), dikelompokkan per
+  // Branch lalu per Partner di dalamnya biar gampang ditindaklanjuti.
+  // UPDATE (permintaan user - "tambahkan yang dibagi per partner"): kartu
+  // ini sekarang bisa toggle pengelompokan Branch <-> Partner (dulu
+  // hardcoded per Branch saja) - helper generik `groupNeverFilled` dipakai
+  // utk kedua mode biar logicnya satu sumber, ga duplikat.
+  const neverFilledMcs = useMemo(() => {
+    if (!everFilledMc) return [];
+    return mcRows.filter((r) => !everFilledMc.has(r.mc.toLowerCase()));
+  }, [mcRows, everFilledMc]);
+  const groupNeverFilled = (field, fallbackLabel) => {
+    const map = new Map();
+    for (const r of neverFilledMcs) {
+      const key = r[field] || fallbackLabel;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(r);
+    }
+    return [...map.entries()].sort((a, b) => b[1].length - a[1].length).map(([label, items]) => ({ label, items: items.sort((a, b) => a.mc.localeCompare(b.mc)) }));
+  };
+  const [neverGroupMode, setNeverGroupMode] = useState("branch"); // "branch" | "partner"
+  const neverFilledGrouped = useMemo(() => groupNeverFilled(neverGroupMode === "branch" ? "branch" : "partner", neverGroupMode === "branch" ? "(Tanpa Branch)" : "(Tanpa Partner)"), [neverFilledMcs, neverGroupMode]);
+  const neverFilledTotal = neverFilledMcs.length;
+  const [neverCardCollapsed, setNeverCardCollapsed] = useState(false);
 
   // Opsi filter - cascading: Region cuma nampilin yg cocok dgn Partner
   // terpilih, Branch cuma yg cocok dgn Partner+Region terpilih.
@@ -315,15 +397,34 @@ export default function DSE_ControlCenter({ theme, profile }) {
     return () => document.removeEventListener("mousedown", onClick);
   }, [monthPickerOpen]);
 
-  // UPDATE (permintaan user - "buat border yang rapi... pnl control
-  // center itu sangat bagus"): badge harian sekarang SELALU punya border
-  // tegas (dulu sel kosong nyaris invisible - border super tipis & warna
-  // nyaris sama dgn background, keliatan berantakan). Pola badge persis
-  // StatusCell PNL: kosong = outline tipis transparan, terisi = solid
-  // teal dgn border lebih gelap, kontras jelas di kedua tema.
-  const dayDotStyle = (agg) => {
-    if (!agg) return { background: d ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.015)", border: `1.5px solid ${t.line}` };
-    return { background: t.teal, border: `1.5px solid ${d ? "#1F8276" : "#147268"}` };
+  // UPDATE (permintaan user - "contoh persis PNL Control Center yang
+  // sudah rapi"): badge harian DIGANTI TOTAL dari kotak datar polos jadi
+  // pola StatusCell PNL PERSIS - lingkaran kecil dgn ICON di dalamnya
+  // (check utk lengkap, badge angka utk sebagian, outline kosong utk
+  // kosong), SATU bentuk konsisten dipakai di semua baris/kolom (dulu
+  // kotak mentah tanpa icon, ukurannya juga kurang presisi antar baris).
+  // Status harian SEKARANG 3 tingkat (dulu cuma terisi/kosong biner):
+  // "full" = SEMUA DSE aktif di MC itu sudah input hari itu, "partial" =
+  // SEBAGIAN (badge angka = jumlah DSE yg sudah input), "empty" = belum
+  // ada sama sekali - PERSIS pola Finalized(✓)/Draft(angka)/Kosong(○) PNL.
+  const DayStatusBadge = ({ agg, totalDse, future }) => {
+    const count = agg?.count || 0;
+    const status = count === 0 ? "empty" : (totalDse > 0 && count >= totalDse) ? "full" : "partial";
+    if (status === "empty") return (
+      <div style={{ width: 24, height: 24, borderRadius: 7, border: `1.5px solid ${t.line}`, background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", opacity: future ? 0.4 : 0.7 }}>
+        <Circle size={11} color={t.lo} strokeWidth={2} style={{ opacity: 0.5 }} />
+      </div>
+    );
+    if (status === "full") return (
+      <div style={{ width: 24, height: 24, borderRadius: 7, border: `1.5px solid ${t.tealBd}`, background: t.tealBg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <CheckCircle2 size={14} color={t.teal} strokeWidth={2.4} />
+      </div>
+    );
+    return (
+      <div style={{ width: 24, height: 24, borderRadius: 7, border: `1.5px solid rgba(251,191,36,0.35)`, background: t.amberBg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <span style={{ fontSize: 10.5, fontWeight: 800, color: t.amber, lineHeight: 1 }}>{count}</span>
+      </div>
+    );
   };
 
   const StatusBadge = ({ status }) => {
@@ -391,6 +492,63 @@ export default function DSE_ControlCenter({ theme, profile }) {
           proporsional di light & dark mode). */}
       <SummaryHeroCard t={t} d={d} monthLabel={monthLabel} totals={totals} />
 
+      {/* UPDATE (permintaan user - "satu summary card yang bisa saya
+          screenshot, untuk pengisian selama ini, menampilkan mc mana saja
+          yang belum sama sekali melakukan pengisian, dikelompokkan per
+          branch"): kartu BARU, TERPISAH dari grid bulanan di atas - scope
+          ALL-TIME (bukan bulan yg lagi dipilih), didesain utk di-screenshot
+          & dikirim langsung ke Branch terkait (judul tegas, dikelompokkan
+          per Branch, MC ditampilkan sbg chip biar ringkas). */}
+      {everFilledMc && neverFilledTotal > 0 && (
+        <div style={{ background: t.card, border: `1.5px solid ${d ? "rgba(248,113,113,0.28)" : "rgba(220,38,38,0.22)"}`, borderRadius: 18, overflow: "hidden", boxShadow: t.shadowSm }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "16px 18px" }}>
+            <button onClick={() => setNeverCardCollapsed((v) => !v)} style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 12, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left", padding: 0 }}>
+              <div style={{ width: 38, height: 38, borderRadius: 12, background: t.redBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <AlertTriangle size={18} color={t.red} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14.5, fontWeight: 800, color: t.hi }}>MC Belum Pernah Mengisi Penjualan (Sepanjang Waktu)</div>
+                <div style={{ fontSize: 11.5, color: t.mid, marginTop: 1 }}>{neverFilledTotal} District belum pernah ada entri Penjualan DSE sejak awal</div>
+              </div>
+              <span style={{ flexShrink: 0, padding: "5px 12px", borderRadius: 999, background: t.redBg, color: t.red, fontSize: 13, fontWeight: 800 }}>{neverFilledTotal}</span>
+              {neverCardCollapsed ? <ChevronRight size={15} color={t.mid} /> : <ChevronDown size={15} color={t.mid} />}
+            </button>
+          </div>
+          {!neverCardCollapsed && (
+            <>
+              {/* UPDATE (permintaan user - "tambahkan yang dibagi per
+                  partner"): toggle pengelompokan Branch <-> Partner. */}
+              <div style={{ padding: "0 18px 12px", display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: t.mid }}>Kelompokkan:</span>
+                <div style={{ display: "flex", background: t.sub, border: `1px solid ${t.line}`, borderRadius: 9, padding: 3, gap: 2 }}>
+                  {[{ k: "branch", label: "Per Branch" }, { k: "partner", label: "Per Partner" }].map((opt) => (
+                    <button key={opt.k} onClick={() => setNeverGroupMode(opt.k)}
+                      style={{ border: "none", borderRadius: 7, padding: "6px 12px", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, cursor: "pointer", background: neverGroupMode === opt.k ? t.red : "transparent", color: neverGroupMode === opt.k ? "#fff" : t.mid, transition: "background 0.12s" }}>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ padding: "0 18px 18px", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 10 }}>
+                {neverFilledGrouped.map(({ label, items }) => (
+                  <div key={label} style={{ border: `1px solid ${t.line}`, borderRadius: 12, padding: "11px 13px", background: t.sub }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 800, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</div>
+                      <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 800, color: t.red, background: t.redBg, borderRadius: 999, padding: "2px 8px" }}>{items.length}</span>
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                      {items.map((r) => (
+                        <span key={r.mc} title={neverGroupMode === "branch" ? (r.partner ? `${r.mc} · ${r.partner}` : r.mc) : (r.branch ? `${r.mc} · ${r.branch}` : r.mc)} style={{ fontSize: 11, fontWeight: 700, color: t.hi, background: t.card, border: `1px solid ${t.line}`, borderRadius: 7, padding: "4px 8px" }}>{r.mc.replace(/^MC-/, "")}</span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Filter bar */}
       <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 12, boxShadow: t.shadowSm, display: "flex", flexDirection: "column", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -432,12 +590,24 @@ export default function DSE_ControlCenter({ theme, profile }) {
             <ChevronsUp size={12} /> Tutup Semua
           </button>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", fontSize: 11, color: t.mid, borderTop: `1px solid ${t.line}`, paddingTop: 10 }}>
-          <span style={{ fontWeight: 700, color: t.hi }}>Keterangan:</span>
-          <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: t.teal, display: "inline-block" }} /> Ada penjualan tercatat</span>
-          <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: t.sub, border: `1px solid ${t.line}`, display: "inline-block" }} /> Belum ada data</span>
-          <span style={{ display: "flex", alignItems: "center", gap: 6 }}><CheckCircle2 size={12} color={t.teal} /> Informasi DSE lengkap</span>
-          <span style={{ display: "flex", alignItems: "center", gap: 6 }}><AlertTriangle size={12} color={t.amber} /> Sebagian terisi</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", fontSize: 11, color: t.mid, borderTop: `1px solid ${t.line}`, paddingTop: 10 }}>
+          <span style={{ fontWeight: 700, color: t.hi }}>Keterangan harian:</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 18, height: 18, borderRadius: 5, border: `1.5px solid ${t.tealBd}`, background: t.tealBg, display: "flex", alignItems: "center", justifyContent: "center" }}><CheckCircle2 size={11} color={t.teal} /></div>
+            Semua DSE sudah input
+          </span>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 18, height: 18, borderRadius: 5, border: "1.5px solid rgba(251,191,36,0.35)", background: t.amberBg, display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ fontSize: 9, fontWeight: 800, color: t.amber }}>2</span></div>
+            Sebagian DSE sudah input
+          </span>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 18, height: 18, borderRadius: 5, border: `1.5px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "center" }}><Circle size={10} color={t.lo} style={{ opacity: 0.5 }} /></div>
+            Belum ada input
+          </span>
+          <span style={{ width: 1, height: 16, background: t.line }} />
+          <span style={{ fontWeight: 700, color: t.hi }}>Informasi DSE:</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}><CheckCircle2 size={12} color={t.teal} /> Lengkap</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}><AlertTriangle size={12} color={t.amber} /> Sebagian</span>
           <span style={{ display: "flex", alignItems: "center", gap: 6 }}><Circle size={12} color={t.lo} /> Belum diisi</span>
         </div>
       </div>
@@ -452,14 +622,14 @@ export default function DSE_ControlCenter({ theme, profile }) {
           <div style={{ padding: 48, textAlign: "center", color: t.mid, fontSize: 13 }}>Tidak ada District yang cocok dengan filter ini.</div>
         ) : (
           <div style={{ overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 760 + totalDays * 26 }}>
+            <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 760 + totalDays * 30 }}>
               <thead>
                 <tr style={{ background: t.sub }}>
-                  <th style={{ position: "sticky", left: 0, zIndex: 3, background: t.sub, textAlign: "left", padding: "10px 14px", fontSize: 11, fontWeight: 800, color: t.mid, borderBottom: `1px solid ${t.line}`, borderRight: `1px solid ${t.line}`, minWidth: 220 }}>District (MC)</th>
+                  <th style={{ position: "sticky", left: 0, zIndex: 3, background: t.sub, textAlign: "left", padding: "10px 14px", fontSize: 11, fontWeight: 800, color: t.mid, borderBottom: `2px solid ${t.line}`, borderRight: `1px solid ${t.line}`, minWidth: 220 }}>District (MC)</th>
                   {Array.from({ length: totalDays }, (_, i) => i + 1).map((day) => (
-                    <th key={day} style={{ textAlign: "center", padding: "10px 2px", fontSize: 10, fontWeight: 700, color: day > daysElapsed && isCurrentMonth ? t.lo : t.mid, borderBottom: `1px solid ${t.line}`, borderRight: `1px solid ${t.line}`, width: 26, opacity: day > daysElapsed && isCurrentMonth ? 0.5 : 1 }}>{day}</th>
+                    <th key={day} style={{ textAlign: "center", padding: "10px 1px", fontSize: 10, fontWeight: 700, color: day > daysElapsed && isCurrentMonth ? t.lo : t.mid, borderBottom: `2px solid ${t.line}`, width: 30, opacity: day > daysElapsed && isCurrentMonth ? 0.5 : 1 }}>{day}</th>
                   ))}
-                  <th style={{ position: "sticky", right: 0, zIndex: 3, background: t.sub, textAlign: "center", padding: "10px 14px", fontSize: 11, fontWeight: 800, color: t.mid, borderBottom: `1px solid ${t.line}`, borderLeft: `1px solid ${t.line}`, minWidth: 130 }}>Informasi DSE</th>
+                  <th style={{ position: "sticky", right: 0, zIndex: 3, background: t.sub, textAlign: "center", padding: "10px 14px", fontSize: 11, fontWeight: 800, color: t.mid, borderBottom: `2px solid ${t.line}`, borderLeft: `1px solid ${t.line}`, minWidth: 130 }}>Informasi DSE</th>
                 </tr>
               </thead>
               <tbody>
@@ -471,7 +641,7 @@ export default function DSE_ControlCenter({ theme, profile }) {
                     <RegionGroupRows key={regionKey} t={t} regionKey={regionKey} rows={rows} collapsed={collapsed}
                       onToggle={() => toggleRegion(regionKey)} totalDays={totalDays} daysElapsed={daysElapsed} isCurrentMonth={isCurrentMonth}
                       regionInfoFull={regionInfoFull} regionSalesFull={regionSalesFull}
-                      dayDotStyle={dayDotStyle} StatusBadge={StatusBadge} setHover={setHover} />
+                      DayStatusBadge={DayStatusBadge} StatusBadge={StatusBadge} setHover={setHover} />
                   );
                 })}
               </tbody>
@@ -509,7 +679,7 @@ export default function DSE_ControlCenter({ theme, profile }) {
                       <span style={{ fontWeight: 800, fontSize: 12 }}>Total Penjualan</span>
                       <span style={{ fontWeight: 800, fontSize: 12.5, color: "#5EEAD4", fontVariantNumeric: "tabular-nums" }}>Rp {fmtID(hover.agg.sp + hover.agg.fwa + hover.agg.voucher + hover.agg.saldo)}</span>
                     </div>
-                    <div style={{ marginTop: 6, fontSize: 10, opacity: 0.6 }}>{hover.agg.count} DSE input hari ini</div>
+                    <div style={{ marginTop: 6, fontSize: 10, opacity: 0.6 }}>{hover.agg.count} / {hover.totalDse} DSE sudah input hari ini</div>
                   </>
                 ) : (
                   <div style={{ opacity: 0.8 }}>Belum ada entri penjualan.</div>
@@ -607,7 +777,7 @@ function SummaryHeroCard({ t, d, monthLabel, totals }) {
   );
 }
 
-function RegionGroupRows({ t, regionKey, rows, collapsed, onToggle, totalDays, daysElapsed, isCurrentMonth, regionInfoFull, regionSalesFull, dayDotStyle, StatusBadge, setHover }) {
+function RegionGroupRows({ t, regionKey, rows, collapsed, onToggle, totalDays, daysElapsed, isCurrentMonth, regionInfoFull, regionSalesFull, DayStatusBadge, StatusBadge, setHover }) {
   const isFlat = regionKey === "__ALL__";
   return (
     <>
@@ -630,7 +800,7 @@ function RegionGroupRows({ t, regionKey, rows, collapsed, onToggle, totalDays, d
         const rowBg = idx % 2 === 1 ? t.sub : t.card;
         return (
         <tr key={row.mc} style={{ background: rowBg }}>
-          <td style={{ position: "sticky", left: 0, zIndex: 1, background: rowBg, padding: "9px 14px 9px 30px", borderBottom: `1px solid ${t.line}`, borderRight: `1px solid ${t.line}` }}>
+          <td style={{ position: "sticky", left: 0, zIndex: 1, background: rowBg, padding: "8px 14px 8px 30px", borderBottom: `1px solid ${t.line}`, borderRight: `1px solid ${t.line}` }}>
             <div style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>{row.mc}</div>
             <div style={{ fontSize: 10.5, color: t.mid, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 180 }}>{row.branch}{row.partner ? ` · ${row.partner}` : ""}</div>
           </td>
@@ -638,10 +808,12 @@ function RegionGroupRows({ t, regionKey, rows, collapsed, onToggle, totalDays, d
             const agg = row.dayMap.get(day);
             const future = isCurrentMonth && day > daysElapsed;
             return (
-              <td key={day} style={{ textAlign: "center", padding: "7px 2px", borderBottom: `1px solid ${t.line}`, borderRight: `1px solid ${t.line}`, opacity: future ? 0.4 : 1 }}
-                onMouseEnter={(e) => { const r = e.currentTarget.getBoundingClientRect(); setHover({ kind: "day", mc: row.mc, day, agg, rect: r }); }}
+              <td key={day} style={{ textAlign: "center", padding: "6px 3px", borderBottom: `1px solid ${t.line}` }}
+                onMouseEnter={(e) => { const r = e.currentTarget.getBoundingClientRect(); setHover({ kind: "day", mc: row.mc, day, agg, totalDse: row.totalDse, rect: r }); }}
                 onMouseLeave={() => setHover(null)}>
-                <span style={{ width: 18, height: 18, borderRadius: 6, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "default", boxSizing: "border-box", ...dayDotStyle(agg) }} />
+                <div style={{ display: "inline-flex", cursor: "default" }}>
+                  <DayStatusBadge agg={agg} totalDse={row.totalDse} future={future} />
+                </div>
               </td>
             );
           })}
