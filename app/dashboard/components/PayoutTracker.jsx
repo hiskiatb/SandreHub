@@ -2088,8 +2088,24 @@ function fmtRpWord(n, d=1) {
 }
 // Jumlah + kata benda tunggal/jamak: "1 row", "2 rows"
 const plural = (n, word, many) => `${Number(n||0).toLocaleString()} ${Number(n)===1 ? word : (many || word+"s")}`;
-// Angka tabel ringkas dalam juta (nilai penuh di tooltip)
-const fmtJuta = (n) => n ? `${Math.round(n/1e6).toLocaleString("id-ID")} jt` : "—";
+// Angka tabel YTD: "10,66 miliar", di bawah 1 miliar "248 juta" (nilai penuh di tooltip)
+const fmtMiliar = (n) => {
+  n = Number(n) || 0;
+  if (!n) return "—";
+  if (Math.abs(n) >= 1e9) return `${(n/1e9).toFixed(2).replace(".", ",")} miliar`;
+  if (Math.abs(n) >= 1e6) return `${Math.round(n/1e6).toLocaleString("id-ID")} juta`;
+  return Math.round(n).toLocaleString("id-ID");
+};
+// Bar paid kecil sebaris dengan persen
+function PaidMini({ p, narrow, t }) {
+  if (p==null) return "—";
+  return (
+    <span style={{display:"inline-flex",alignItems:"center",gap:8,justifyContent:"flex-end"}}>
+      {!narrow&&<span style={{width:44,height:5,borderRadius:3,background:t.surf3,overflow:"hidden",flexShrink:0}}><span style={{display:"block",height:"100%",width:`${p}%`,background:t.good}}/></span>}
+      <span style={{minWidth:34,textAlign:"right"}}>{p}%</span>
+    </span>
+  );
+}
 
 // Lebar elemen (chart SVG mengikuti lebar kartu, teks tetap ≥12px)
 function useBoxWidth() {
@@ -2241,8 +2257,8 @@ function YtdTab({ partnerRows, agencyRows, showTeam, w, t, showToast }) {
   const paidPct = pct(tot.grand.p, tot.grand.a);
   const entLbl = (e) => String(e).toUpperCase()==="MPX" ? "MDI (MPX)" : e;
   const twoCol = w>=1000, narrow = w<640;
-  const thY = (left) => ({ ...thS(t,left), fontSize:12, letterSpacing:"0.02em", textTransform:"none", fontFamily:"inherit", fontWeight:600, padding:"9px 12px" });
-  const tdY = (left) => ({ ...tdS(t,left), fontSize:12.5, padding:"9px 12px", fontVariantNumeric:"tabular-nums", fontFamily:left?"inherit":MONO });
+  const thY = (left) => ({ ...thS(t,left), fontSize:12, letterSpacing:"0.01em", fontWeight:600, padding:"8px 12px" });
+  const tdY = (left) => ({ ...tdS(t,left), fontSize:13, lineHeight:"20px", padding:"8px 12px", fontVariantNumeric:"tabular-nums" });
   const head = (
     <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",marginBottom:14}}>
       <div style={{minWidth:0,flex:"1 1 320px"}}>
@@ -2272,16 +2288,54 @@ function YtdTab({ partnerRows, agencyRows, showTeam, w, t, showToast }) {
           <div style={{height:8,borderRadius:4,background:t.surf3,overflow:"hidden",marginTop:8}} role="meter" aria-valuenow={paidPct} aria-valuemin={0} aria-valuemax={100} aria-label="Share paid"><div style={{height:"100%",width:`${paidPct}%`,background:t.good,borderRadius:4}}/></div>
         </YtdKpi>
       </div>
-      <div style={{display:"grid",gridTemplateColumns:twoCol?"1.7fr 1fr":"1fr",gap:14,marginBottom:14}}>
-        <Card t={t}>
-          <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap",marginBottom:10}}>
-            <span style={{fontWeight:700,fontSize:14,color:t.ink}}>Monthly cost</span>
-            <span style={{display:"inline-flex",gap:14,fontSize:12.5,color:t.ink2,marginLeft:"auto"}}>
-              {showTeam&&<span style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:10,height:10,borderRadius:3,background:t.chartA}}/>Sales Team</span>}
-              <span style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:10,height:10,borderRadius:3,background:t.chartB}}/>Partner</span>
-            </span>
+      <Card t={t} style={{marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap",marginBottom:10}}>
+          <span style={{fontWeight:700,fontSize:14,color:t.ink}}>Monthly cost</span>
+          <span style={{display:"inline-flex",gap:14,fontSize:12.5,color:t.ink2,marginLeft:"auto"}}>
+            {showTeam&&<span style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:10,height:10,borderRadius:3,background:t.chartA}}/>Sales Team</span>}
+            <span style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:10,height:10,borderRadius:3,background:t.chartB}}/>Partner</span>
+          </span>
+        </div>
+        <YtdChart rows={rows} showTeam={showTeam} latest={latest} t={t}/>
+      </Card>
+      <div style={{display:"grid",gridTemplateColumns:twoCol?"minmax(0,1.45fr) minmax(0,1fr)":"1fr",gap:14,marginBottom:14,alignItems:"start"}}>
+        <Card t={t} pad={false}>
+          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",padding:"12px 16px",borderBottom:`1px solid ${t.line}`}}>
+            <span style={{fontWeight:700,fontSize:14,color:t.ink}}>By month</span>
+            <span style={{fontSize:12.5,color:t.muted}}>Rp miliar · juta below 1 miliar · hover for the full amount</span>
           </div>
-          <YtdChart rows={rows} showTeam={showTeam} latest={latest} t={t}/>
+          <div style={{maxHeight:520,overflowY:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr>
+                <th style={thY(true)}>Month</th>
+                {showTeam&&<th style={thY(false)}>Sales Team</th>}
+                <th style={thY(false)}>Partner</th>
+                <th style={thY(false)}>Total</th>
+                <th style={thY(false)}>Paid</th>
+              </tr></thead>
+              <tbody>{rows.map((r,i)=>{ const isLatest = r.m===latest, p = pct(r.grand.p,r.grand.a); return (
+                <tr key={r.m} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+                  <td style={{...tdY(true),fontWeight:600,color:t.ink}}>{r.label}{isLatest&&<span style={{marginLeft:6,fontSize:12,fontWeight:500,color:t.muted}}>· latest</span>}</td>
+                  {showTeam&&<td style={tdY(false)} title={fmtRpFull(r.team.a)}>{fmtMiliar(r.team.a)}</td>}
+                  <td style={tdY(false)} title={fmtRpFull(r.partner.a)}>{fmtMiliar(r.partner.a)}</td>
+                  <td style={{...tdY(false),fontWeight:700,color:t.ink}} title={fmtRpFull(r.grand.a)}>{fmtMiliar(r.grand.a)}</td>
+                  <td style={tdY(false)} title={`Paid ${fmtRpFull(r.grand.p)} of ${fmtRpFull(r.grand.a)}`}><PaidMini p={r.grand.a?p:null} narrow={narrow} t={t}/></td>
+                </tr>
+              ); })}</tbody>
+              <tfoot><tr>
+                {(()=>{ const ft = { ...tdY(false), background:`linear-gradient(${C.teal}14,${C.teal}14),${t.surf}`, color:t.ink, fontWeight:800, borderTop:`2px solid ${t.line2}`, borderBottom:0, position:"sticky", bottom:0, zIndex:3 }; return <>
+                  <td style={{...ft,textAlign:"left"}}>Total {span}</td>
+                  {showTeam&&<td style={ft} title={fmtRpFull(tot.team.a)}>{fmtMiliar(tot.team.a)}</td>}
+                  <td style={ft} title={fmtRpFull(tot.partner.a)}>{fmtMiliar(tot.partner.a)}</td>
+                  <td style={ft} title={fmtRpFull(tot.grand.a)}>{fmtMiliar(tot.grand.a)}</td>
+                  <td style={ft} title={`Paid ${fmtRpFull(tot.grand.p)} of ${fmtRpFull(tot.grand.a)}`}><PaidMini p={paidPct} narrow={narrow} t={t}/></td>
+                </>; })()}
+              </tr></tfoot>
+            </table>
+          </div>
+          <div style={{display:"flex",justifyContent:"flex-end",padding:"8px 12px",borderTop:`1px solid ${t.line}`}}>
+            <Btn t={t} variant="ghost" sm onClick={()=>setShowDetail(v=>!v)} aria-expanded={showDetail}>{showDetail?"Hide detailed breakdown":"Show detailed breakdown"}</Btn>
+          </div>
         </Card>
         <Card t={t}>
           <div style={{fontWeight:700,fontSize:14,color:t.ink,marginBottom:12}}>Where the money goes</div>
@@ -2292,48 +2346,7 @@ function YtdTab({ partnerRows, agencyRows, showTeam, w, t, showToast }) {
           {showTeam&&<div style={{fontSize:12,color:t.muted,marginTop:14,lineHeight:1.5}}>Salary = SALARY, SALARY FWA, SALARYUUCK, THR. Incentive = all other agency programs.</div>}
         </Card>
       </div>
-      <Card t={t} pad={false}>
-        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",padding:"14px 16px",borderBottom:`1px solid ${t.line}`}}>
-          <span style={{fontWeight:700,fontSize:14,color:t.ink}}>By month</span>
-          <span style={{fontSize:12.5,color:t.muted}}>in Rp juta · hover a number for the full amount</span>
-          <Btn t={t} variant="ghost" sm style={{marginLeft:"auto"}} onClick={()=>setShowDetail(v=>!v)} aria-expanded={showDetail}>{showDetail?"Hide detailed breakdown":"Show detailed breakdown"}</Btn>
-        </div>
-        <div style={{maxHeight:520,overflowY:"auto"}}>
-          <table style={{width:"100%",borderCollapse:"collapse"}}>
-            <thead><tr>
-              <th style={thY(true)}>Month</th>
-              {showTeam&&<th style={thY(false)}>Sales Team</th>}
-              <th style={thY(false)}>Partner</th>
-              <th style={thY(false)}>Total</th>
-              <th style={{...thY(false),width:narrow?90:170}}>Paid</th>
-            </tr></thead>
-            <tbody>{rows.map((r,i)=>{ const isLatest = r.m===latest, p = pct(r.grand.p,r.grand.a); return (
-              <tr key={r.m} style={{background:isLatest?`${C.teal}14`:i%2===1?t.rowStripe:"transparent"}}>
-                <td style={{...tdY(true),fontWeight:600,color:t.ink}}>{r.label}{isLatest&&<span style={{marginLeft:8,fontSize:12,fontWeight:600,color:t.goodDark}}>latest</span>}</td>
-                {showTeam&&<td style={tdY(false)} title={fmtRpFull(r.team.a)}>{fmtJuta(r.team.a)}</td>}
-                <td style={tdY(false)} title={fmtRpFull(r.partner.a)}>{fmtJuta(r.partner.a)}</td>
-                <td style={{...tdY(false),fontWeight:700,color:t.ink}} title={fmtRpFull(r.grand.a)}>{fmtJuta(r.grand.a)}</td>
-                <td style={tdY(false)} title={`Paid ${fmtRpFull(r.grand.p)} of ${fmtRpFull(r.grand.a)}`}>
-                  {r.grand.a ? <span style={{display:"inline-flex",alignItems:"center",gap:8,justifyContent:"flex-end",width:"100%"}}>
-                    {!narrow&&<span style={{flex:"0 0 90px",height:6,borderRadius:3,background:t.surf3,overflow:"hidden"}}><span style={{display:"block",height:"100%",width:`${p}%`,background:t.good}}/></span>}
-                    <span style={{minWidth:36,textAlign:"right"}}>{p}%</span>
-                  </span> : "—"}
-                </td>
-              </tr>
-            ); })}</tbody>
-            <tfoot><tr>
-              {(()=>{ const ft = { ...tdY(false), background:"#1E2128", color:"#fff", fontWeight:800, borderTop:`2px solid ${C.teal}`, position:"sticky", bottom:0, zIndex:3 }; return <>
-                <td style={{...ft,textAlign:"left",fontFamily:"inherit"}}>Total {span}</td>
-                {showTeam&&<td style={ft} title={fmtRpFull(tot.team.a)}>{fmtJuta(tot.team.a)}</td>}
-                <td style={ft} title={fmtRpFull(tot.partner.a)}>{fmtJuta(tot.partner.a)}</td>
-                <td style={ft} title={fmtRpFull(tot.grand.a)}>{fmtJuta(tot.grand.a)}</td>
-                <td style={ft}>{paidPct}%</td>
-              </>; })()}
-            </tr></tfoot>
-          </table>
-        </div>
-        {showDetail&&<YtdDetailTable ytd={ytd} showTeam={showTeam} entLbl={entLbl} narrow={narrow} t={t}/>}
-      </Card>
+      {showDetail&&<Card t={t} pad={false}><YtdDetailTable ytd={ytd} showTeam={showTeam} entLbl={entLbl} narrow={narrow} t={t}/></Card>}
     </div>
   );
 }
@@ -2351,7 +2364,7 @@ function YtdDetailTable({ ytd, showTeam, entLbl, narrow, t }) {
   const groups = [["team","Sales Team (Agency)"],["partner","Partner"],["grand",""]].map(([g,l])=>({g,l,n:cols.filter(c=>c.g===g).length})).filter(x=>x.n);
   const th = (extra) => ({ ...thS(t,false), fontSize:12, letterSpacing:"0.02em", textTransform:"none", fontFamily:"inherit", fontWeight:600, padding:"8px 10px", position:"static", ...extra });
   const cell = (c, v, foot) => (
-    <td key={c.k+(c.i??"")} style={{...tdS(t),fontSize:12,padding:"8px 10px",fontFamily:MONO,fontVariantNumeric:"tabular-nums",verticalAlign:"top",background:foot?"#1E2128":c.tot?t.surf2:undefined,color:foot?"#fff":t.ink,fontWeight:c.tot||foot?700:500}}>
+    <td key={c.k+(c.i??"")} style={{...tdS(t),fontSize:12.5,padding:"8px 10px",fontVariantNumeric:"tabular-nums",verticalAlign:"top",background:foot?"#1E2128":c.tot?t.surf2:undefined,color:foot?"#fff":t.ink,fontWeight:c.tot||foot?700:500}}>
       <div>{v.a?num(v.a):"—"}</div>
       {v.a>0&&<div style={{fontSize:12,fontWeight:500,color:foot?"#C9CDD6":t.muted,marginTop:2}}>paid {pct(v.p,v.a)}%</div>}
     </td>
