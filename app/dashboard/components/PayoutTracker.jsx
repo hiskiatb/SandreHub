@@ -1492,7 +1492,11 @@ function DashScreen(props) {
     searchRef, searchSuggestions, allSuggestions, searchInput, setSearchInput,
     setRawPage, showToast, exportSummary, profile, flowSel } = props;
   const isAg = src === "agency";
-  const isYtd = activeTab==="ytd";
+  // Accrual (Agency) tampil di level atas untuk role yang boleh melihat Agency, apa pun pilihan Partner/Agency
+  const showAccrual = (isSPM||isIOHAny) && (viewAgencyRaw||[]).length>0;
+  const isAcc = activeTab==="acc" && showAccrual;
+  // Tab YTD & Accrual punya pilihan tahun sendiri: switch PO/MDI, Partner/Agency & filter disembunyikan
+  const isYtd = activeTab==="ytd" || isAcc;
 
   // Dokumen per PO (Partner & Agency): dipakai kolom Dokumen di Raw Data & tab Upload & Merge Dokumen
   // profile null → hook tidak aktif (docs.enabled=false), tidak ada fetch dokumen/approval
@@ -1626,7 +1630,7 @@ function DashScreen(props) {
       </div>}
 
       <div style={{display:"flex",gap:24,borderBottom:`1px solid ${t.line}`,marginBottom:18,overflowX:"auto"}}>
-        {[{id:"dash",label:"Dashboard"},{id:"raw",label:"Raw Data",count:filtRaw.length},{id:"ytd",label:"YTD Summary"},...(SHOW_DOCUMENT_TABS&&docs.enabled?[{id:"docs",label:"Document Upload & Merge",count:docPOsDone}]:[]),...(SHOW_DOCUMENT_TABS&&docs.enabled&&docs.canManageApprovals?[{id:"letters",label:"Partner Letters"}]:[])].map(tab=>(
+        {[{id:"dash",label:"Dashboard"},{id:"raw",label:"Raw Data",count:filtRaw.length},{id:"ytd",label:"YTD Summary"},...(showAccrual?[{id:"acc",label:"Accrual"}]:[]),...(SHOW_DOCUMENT_TABS&&docs.enabled?[{id:"docs",label:"Document Upload & Merge",count:docPOsDone}]:[]),...(SHOW_DOCUMENT_TABS&&docs.enabled&&docs.canManageApprovals?[{id:"letters",label:"Partner Letters"}]:[])].map(tab=>(
           <TabBtn key={tab.id} label={tab.label} count={tab.count} active={activeTab===tab.id} onClick={()=>setActiveTab(tab.id)} t={t}/>
         ))}
       </div>
@@ -1699,7 +1703,12 @@ function DashScreen(props) {
         </div>
       )}
 
-      {isYtd ? (
+      {isAcc ? (
+        <Card t={t} pad={false} style={{marginBottom:14}}>
+          <CardHead title="Accrual · Agency Prepaid" accent={C.yellow} sub="Submission checklist, missing list & accrual estimate · always uses Agency data" t={t}/>
+          <AccrualTab rows={viewAgencyRaw||[]} w={w} t={t} showToast={showToast}/>
+        </Card>
+      ) : isYtd ? (
         <YtdTab partnerRows={viewPartnerRaw||[]} agencyRows={(isSPM||isIOHAny)?(viewAgencyRaw||[]):[]} showTeam={isSPM||isIOHAny} w={w} t={t} showToast={showToast}/>
       ) : filtersEmpty ? (
         <Card t={t} style={{marginBottom:14}}>
@@ -1954,7 +1963,6 @@ function DetailsTabs(props) {
     { id:"own",  label:isAg?"Agencies":"Partners", count:ins.owners.length },
     { id:"mon",  label:"Monthly" },
     { id:"flow", label:"Flow Comparison" },
-    ...(isAg?[{ id:"acc", label:"Accrual" }]:[]),
   ];
   const cur = tabs.some(x=>x.id===tab) ? tab : "out";
   return (
@@ -1966,7 +1974,6 @@ function DetailsTabs(props) {
       {cur==="own"  && <PartnersTab ins={ins} isAg={isAg} w={w} t={t}/>}
       {cur==="mon"  && <MonthlyTab {...props}/>}
       {cur==="flow" && <FlowCompareTab ins={ins} flowSel={flowSel} t={t}/>}
-      {cur==="acc"  && isAg && <AccrualTab rows={props.curRaw} w={w} t={t} showToast={props.showToast}/>}
     </Card>
   );
 }
