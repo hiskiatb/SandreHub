@@ -711,6 +711,8 @@
   .attach-chip:hover{ border-color:var(--teal); color:var(--teal); }
   .attach-chip .ac-name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   @media (max-width:640px){
+    .xlsx-card{ display:flex; }
+    .ss-foot .btn{ width:100%; justify-content:center; }
     .blast-mode-switch{ grid-template-columns:1fr; }
   }
   .archive-recipient-row{ border:1px solid var(--line2); border-radius:var(--radius-sm); margin-bottom:8px; overflow:hidden; }
@@ -723,14 +725,55 @@
   .archive-recipient-body table{ width:100%; border-collapse:collapse; margin-top:8px; font-size:11.5px; }
   .archive-recipient-body th, .archive-recipient-body td{ border:1px solid var(--line2); padding:5px 8px; text-align:left; white-space:nowrap; }
   .archive-recipient-body th{ background:var(--surf2); }
-  #sendLog{ margin-top:14px; max-height:220px; overflow-y:auto; font-size:12.5px; }
-  .log-row{ display:flex; justify-content:space-between; gap:10px; padding:8px 10px; border-bottom:1px solid var(--line); }
-  .log-row .ln{ color:var(--ink2); }
-  .log-row .lstatus{ font-weight:700; white-space:nowrap; font-family:var(--font-brand); font-size:11.5px; }
-  .log-row .lstatus.ok{ color:var(--good); }
-  .log-row .lstatus.err{ color:var(--bad); }
-  .log-row .lstatus.pending{ color:var(--muted); }
-  .log-row .lstatus.hold{ color:var(--warn-ink); }
+  #sendLog{ margin-top:10px; max-height:260px; overflow-y:auto; font-size:12.5px; border-radius:var(--radius); }
+  #sendLog:not(:empty){ border:1px solid var(--line); background:var(--surf); }
+  .log-row{ display:flex; justify-content:space-between; align-items:center; gap:12px; padding:9px 14px; border-bottom:1px solid var(--line); }
+  .log-row:last-child{ border-bottom:none; }
+  .log-row .ln{ color:var(--ink2); min-width:0; }
+  .log-row .ln-name{ display:block; font-weight:600; color:var(--ink); overflow-wrap:anywhere; }
+  .log-row .ln-msg{ display:block; margin-top:1px; font-size:11.5px; color:var(--muted); overflow-wrap:anywhere; }
+  .log-row.is-err{ background:var(--bad-bg); }
+  .log-row.is-err .ln-msg{ color:var(--bad-ink); }
+  .log-row .lstatus{ flex:none; font-weight:700; white-space:nowrap; font-family:var(--font-brand); font-size:11px; padding:3px 9px; border-radius:999px; border:1px solid transparent; }
+  .log-row .lstatus.ok{ color:var(--good-ink); background:var(--good-bg); border-color:var(--good-bd); }
+  .log-row .lstatus.err{ color:var(--bad-ink); background:var(--surf); border-color:var(--bad-bd); }
+  .log-row .lstatus.pending{ color:var(--muted); background:var(--surf2); border-color:var(--line2); }
+  .log-row .lstatus.hold{ color:var(--warn-ink); background:var(--warn-bg); border-color:var(--warn-bd); }
+  .log-row.is-sep{ justify-content:center; padding:7px 14px; background:var(--surf2); }
+  .log-row.is-sep .ln{ font-family:var(--font-brand); font-size:11px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; color:var(--muted); }
+
+  /* Ringkasan hasil kirim: hitungan + bar progres + aksi kirim ulang. */
+  .send-summary{ margin-top:16px; padding:14px 16px; border:1px solid var(--line2); border-radius:var(--radius); background:var(--surf2); }
+  .ss-top{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+  .ss-title{ font-family:var(--font-brand); font-weight:700; font-size:13px; color:var(--ink); }
+  .ss-counts{ display:flex; gap:6px; flex-wrap:wrap; }
+  .ss-pill{ font-family:var(--font-brand); font-size:11px; font-weight:700; padding:3px 9px; border-radius:999px; border:1px solid var(--line2); color:var(--muted); background:var(--surf); white-space:nowrap; }
+  .ss-pill.ok{ color:var(--good-ink); background:var(--good-bg); border-color:var(--good-bd); }
+  .ss-pill.err{ color:var(--bad-ink); background:var(--bad-bg); border-color:var(--bad-bd); }
+  .ss-bar{ display:flex; height:6px; margin:12px 0 10px; border-radius:999px; overflow:hidden; background:var(--surf3); }
+  .ss-bar span{ display:block; height:100%; transition:width .3s ease; }
+  .ss-bar .ok{ background:var(--good); }
+  .ss-bar .err{ background:var(--bad); }
+  .ss-foot{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .ss-note{ font-size:12px; color:var(--muted); line-height:1.5; flex:1 1 220px; }
+  .btn-retry{ background:var(--bad-bg); color:var(--bad-ink); border-color:var(--bad-bd); }
+  .btn-retry:hover{ border-color:var(--bad); filter:brightness(1.08); }
+
+  /* Status kirim per penerima di daftar kiri. */
+  .recipient-item .rtop{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .rstatus{ flex:none; font-family:var(--font-brand); font-size:10.5px; font-weight:700; padding:2px 8px; border-radius:999px; border:1px solid transparent; }
+  .rstatus.ok{ color:var(--good-ink); background:var(--good-bg); border-color:var(--good-bd); }
+  .rstatus.err{ color:var(--bad-ink); background:var(--bad-bg); border-color:var(--bad-bd); }
+
+  /* Kartu lampiran Excel di pratinjau — meniru lampiran di klien email. */
+  .attach-section{ padding:14px 20px 18px; border-top:1px solid var(--line); }
+  .attach-head{ font-family:var(--font-brand); font-size:11px; font-weight:700; letter-spacing:.6px; text-transform:uppercase; color:var(--muted); margin-bottom:10px; }
+  .xlsx-card{ display:inline-flex; align-items:center; gap:12px; max-width:100%; padding:9px 16px 9px 9px; border:1px solid var(--line2); border-radius:var(--radius); background:var(--surf2); }
+  .xlsx-icon{ flex:none; width:34px; height:40px; border-radius:6px; background:#1D6F42; color:#fff; font-family:var(--font-brand); font-size:9.5px; font-weight:700; letter-spacing:.4px; display:flex; align-items:flex-end; justify-content:center; padding-bottom:6px; position:relative; box-shadow:inset 0 -14px 0 rgba(0,0,0,.14); }
+  .xlsx-icon::before{ content:''; position:absolute; top:7px; left:8px; right:8px; height:13px; background:linear-gradient(#fff 0 0) 0 0/100% 1.5px no-repeat, linear-gradient(#fff 0 0) 0 5.5px/100% 1.5px no-repeat, linear-gradient(#fff 0 0) 0 11px/100% 1.5px no-repeat, linear-gradient(#fff 0 0) 50% 0/1.5px 100% no-repeat; opacity:.85; }
+  .xlsx-meta{ min-width:0; }
+  .xlsx-name{ font-size:13px; font-weight:600; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .xlsx-sub{ font-size:11.5px; color:var(--muted); margin-top:1px; }
   .status-ok{ background:var(--good-bg) !important; border-color:var(--good-bd) !important; color:var(--good-ink) !important; }
   .status-err{ background:var(--bad-bg) !important; border-color:var(--bad-bd) !important; color:var(--bad-ink) !important; }
 
@@ -1057,13 +1100,23 @@ Sales &amp; Distribution — Indosat Circle Sumatera</textarea>
 
       <div class="preview-main">
         <div class="mail-card" id="mailCard"></div>
-        <div class="token-hint" style="margin-top:10px;">"Kirim ke penerima ini" hanya mengirim ke penerima yang sedang ditampilkan di preview. "⚡ Kirim ke semua penerima" mengirim ke seluruh daftar, satu per satu, dan bisa dijeda kapan saja. Kalau ada yang gagal, muncul tombol "🔁 Kirim ulang yang gagal" untuk mengirim ulang penerima yang gagal saja.</div>
+        <div class="token-hint" style="margin-top:10px;">"Kirim ke penerima ini" hanya mengirim ke penerima yang sedang ditampilkan di preview. "⚡ Kirim ke semua penerima" mengirim ke seluruh daftar, satu per satu, dan bisa dijeda kapan saja.</div>
         <div class="actions">
           <button class="btn btn-secondary" id="btnSendOne" onclick="sendCurrent()">Kirim ke penerima ini</button>
           <button class="btn btn-primary" id="btnSendAll" onclick="confirmSendAll()">⚡ Kirim ke semua penerima</button>
-          <button class="btn btn-secondary" id="btnRetryFailed" style="display:none;" onclick="confirmRetryFailed()">🔁 Kirim ulang yang gagal</button>
           <button class="btn btn-hold" id="btnHoldAll" style="display:none;" onclick="toggleHoldSendAll()">⏸ Jeda</button>
           <button class="btn btn-cancel-hold" id="btnCancelHold" style="display:none;" onclick="cancelHeldSendAll()">Batalkan sisa</button>
+        </div>
+        <div id="sendSummary" class="send-summary" style="display:none;">
+          <div class="ss-top">
+            <div class="ss-title" id="ssTitle">Hasil pengiriman</div>
+            <div class="ss-counts" id="ssCounts"></div>
+          </div>
+          <div class="ss-bar"><span class="ok" id="ssBarOk"></span><span class="err" id="ssBarErr"></span></div>
+          <div class="ss-foot">
+            <div class="ss-note" id="ssNote"></div>
+            <button class="btn btn-retry" id="btnRetryFailed" style="display:none;" onclick="confirmRetryFailed()">↻ Kirim ulang yang gagal</button>
+          </div>
         </div>
         <div id="sendLog"></div>
       </div>
@@ -1978,7 +2031,7 @@ function loadSheet(sheetName){
   if(!json.length){ toast('Sheet "' + sheetName + '" kosong atau tidak terbaca.'); return; }
   state.rows = json;
   state.columns = Object.keys(json[0]);
-  sendFailedKeys.clear(); // data baru = daftar gagal lama tidak berlaku lagi
+  sendStatus.clear(); // data baru = status kirim lama tidak berlaku lagi
   refreshRetryButton();
   onFileParsed(state.fileName, wb.SheetNames.length > 1 ? sheetName : null);
 }
@@ -2706,7 +2759,10 @@ function renderRecipientList(){
   matches.forEach(({g, idx})=>{
     const el = document.createElement('div');
     el.className = 'recipient-item' + (idx===state.activeIndex ? ' active' : '');
-    el.innerHTML = `<div class="rname">${escapeHtml(g.name)}</div>
+    const st = sendStatus.get(g.key);
+    const badge = st === 'ok' ? '<span class="rstatus ok">Terkirim</span>'
+      : st === 'err' ? '<span class="rstatus err">Gagal</span>' : '';
+    el.innerHTML = `<div class="rtop"><div class="rname">${escapeHtml(g.name)}</div>${badge}</div>
       <div class="rmeta">${g.rows.length} baris · ${g.emails.length} email</div>`;
     el.onclick = ()=>{ state.activeIndex = idx; renderRecipientList(); renderMailCard(); };
     wrap.appendChild(el);
@@ -2849,7 +2905,16 @@ function renderMailCard(){
       </div>
     </div>
     <div class="mail-body">${buildEmailBodyHtml(group)}</div>
-    <div class="attach-row" style="padding-bottom:16px;"><span class="attach-chip">📎 <span class="ac-name">${escapeHtml(groupExcelFilename(group))}</span></span></div>
+    <div class="attach-section">
+      <div class="attach-head">1 lampiran</div>
+      <div class="xlsx-card" title="Isi lampiran = tabel di email ini">
+        <div class="xlsx-icon">XLSX</div>
+        <div class="xlsx-meta">
+          <div class="xlsx-name">${escapeHtml(groupExcelFilename(group))}</div>
+          <div class="xlsx-sub">Excel · ${group.rows.length} baris · ${(state.tableCols || []).filter(c=>c.included).length} kolom</div>
+        </div>
+      </div>
+    </div>
   `;
 }
 
@@ -2908,11 +2973,18 @@ async function checkSenderStatus(){
 function logRow(name, status, message){
   const wrap = document.getElementById('sendLog');
   const row = document.createElement('div');
-  row.className = 'log-row';
   const cls = status === 'ok' ? 'ok' : status === 'err' ? 'err' : (status === 'hold' || status === 'retry') ? 'hold' : 'pending';
-  const label = status === 'ok' ? '✅ Terkirim' : status === 'err' ? '❌ Gagal' : status === 'hold' ? '⏸ Dijeda' : status === 'retry' ? '🔁 Kirim ulang' : '⏳ Memproses…';
-  row.innerHTML = `<span class="ln">${escapeHtml(name)}${message ? ' — <span style="color:var(--muted)">'+escapeHtml(message)+'</span>' : ''}</span><span class="lstatus ${cls}">${label}</span>`;
-  wrap.prepend(row);
+  const label = status === 'ok' ? 'Terkirim' : status === 'err' ? 'Gagal' : status === 'hold' ? 'Dijeda' : status === 'retry' ? 'Kirim ulang' : 'Mengirim…';
+  if(status === 'retry'){
+    row.className = 'log-row is-sep';
+    row.innerHTML = `<span class="ln">${escapeHtml(name)}</span>`;
+  } else {
+    row.className = 'log-row' + (status === 'err' ? ' is-err' : '');
+    row.innerHTML = `<span class="ln"><span class="ln-name">${escapeHtml(name)}</span>${message ? `<span class="ln-msg">${escapeHtml(message)}</span>` : ''}</span><span class="lstatus ${cls}">${label}</span>`;
+  }
+  // Urut kronologis (yang terbaru di bawah) dan ikut tergulir ke bawah.
+  wrap.appendChild(row);
+  wrap.scrollTop = wrap.scrollHeight;
   return row;
 }
 
@@ -3040,24 +3112,54 @@ function closeConfirmModal(){
 }
 
 // --- Kirim ulang yang gagal ---
-// sendFailedKeys: group.key penerima yang pengiriman TERAKHIRNYA gagal
-// (dari "Kirim ke semua", "Kirim ke penerima ini", atau kirim ulang).
-// Begitu berhasil, key-nya dihapus lagi — jadi kirim ulang tidak pernah
-// mengirim dobel ke penerima yang sudah sukses.
-const sendFailedKeys = new Set();
+// sendStatus: group.key -> 'ok' | 'err', hasil pengiriman TERAKHIR tiap
+// penerima (dari "Kirim ke semua", "Kirim ke penerima ini", atau kirim
+// ulang). Kirim ulang hanya mengambil yang 'err' — penerima yang sudah
+// terkirim tidak pernah dikirimi dobel.
+const sendStatus = new Map();
+let sendRunning = false;
 function failedGroups(){
-  return state.groups.filter(g=>sendFailedKeys.has(g.key));
+  return state.groups.filter(g=>sendStatus.get(g.key) === 'err');
 }
 function markSendResult(group, ok){
-  if(ok) sendFailedKeys.delete(group.key); else sendFailedKeys.add(group.key);
+  sendStatus.set(group.key, ok ? 'ok' : 'err');
+  renderRecipientList();
+  refreshRetryButton();
 }
 function refreshRetryButton(){
+  const box = document.getElementById('sendSummary');
   const btn = document.getElementById('btnRetryFailed');
-  if(!btn) return;
-  const n = failedGroups().length;
-  const sending = document.getElementById('btnHoldAll').style.display !== 'none';
-  btn.style.display = (n && !sending) ? 'inline-flex' : 'none';
-  btn.textContent = `🔁 Kirim ulang yang gagal (${n})`;
+  if(!box || !btn) return;
+  if(!sendStatus.size && !sendRunning){ box.style.display = 'none'; return; }
+  const total = state.groups.length;
+  const ok = state.groups.filter(g=>sendStatus.get(g.key) === 'ok').length;
+  const err = failedGroups().length;
+  const rest = total - ok - err;
+  box.style.display = 'block';
+  document.getElementById('ssCounts').innerHTML =
+    `<span class="ss-pill ok">${ok} terkirim</span>` +
+    (err ? `<span class="ss-pill err">${err} gagal</span>` : '') +
+    (rest ? `<span class="ss-pill">${rest} belum dikirim</span>` : '');
+  document.getElementById('ssBarOk').style.width = (total ? ok / total * 100 : 0) + '%';
+  document.getElementById('ssBarErr').style.width = (total ? err / total * 100 : 0) + '%';
+  let title, note;
+  if(sendRunning){
+    title = 'Sedang mengirim…';
+    note = 'Email dikirim satu per satu. Tekan "Jeda" kalau ingin berhenti sebentar.';
+  } else if(err){
+    title = 'Ada email yang gagal terkirim';
+    note = 'Kirim ulang hanya ke penerima yang gagal — yang sudah terkirim tidak dikirimi lagi.';
+  } else if(rest){
+    title = 'Hasil pengiriman';
+    note = `${rest} penerima belum dikirimi email.`;
+  } else {
+    title = 'Semua email terkirim';
+    note = 'Setiap email membawa tabel di badan email dan lampiran Excel-nya.';
+  }
+  document.getElementById('ssTitle').textContent = title;
+  document.getElementById('ssNote').textContent = note;
+  btn.style.display = (err && !sendRunning) ? 'inline-flex' : 'none';
+  btn.textContent = `↻ Kirim ulang yang gagal (${err})`;
 }
 function confirmRetryFailed(){
   const groups = failedGroups();
@@ -3133,6 +3235,7 @@ function cancelHeldSendAll(){
   document.getElementById('btnCancelHold').style.display = 'none';
   document.getElementById('btnSendAll').disabled = false;
   document.getElementById('btnSendOne').disabled = false;
+  sendRunning = false;
   refreshRetryButton();
   logRow('— Dibatalkan —', 'err', `${remaining} penerima tersisa tidak diproses`);
   toast(`Dibatalkan. Berhasil: ${sendAllTotals.ok}, gagal: ${sendAllTotals.err}, tidak diproses: ${remaining}.`);
@@ -3148,7 +3251,8 @@ async function sendAllSequential(startIndex){
   sendAllPaused = false;
   document.getElementById('btnSendAll').disabled = true;
   document.getElementById('btnSendOne').disabled = true;
-  document.getElementById('btnRetryFailed').style.display = 'none';
+  sendRunning = true;
+  refreshRetryButton();
   const holdBtn = document.getElementById('btnHoldAll');
   holdBtn.style.display = 'inline-flex';
   holdBtn.disabled = false;
@@ -3169,6 +3273,11 @@ async function sendAllSequential(startIndex){
       holdBtn.classList.add('is-paused');
       holdBtn.disabled = false;
       document.getElementById('btnCancelHold').style.display = 'inline-flex';
+      sendRunning = false;
+      refreshRetryButton();
+      document.getElementById('ssTitle').textContent = 'Pengiriman dijeda';
+      document.getElementById('ssNote').textContent = `${remaining} penerima menunggu. Tekan "Lanjutkan" atau "Batalkan sisa".`;
+      document.getElementById('btnRetryFailed').style.display = 'none';
       updateArchiveBatch(currentArchiveBatchId, {
         successCount: sendAllTotals.ok, failCount: sendAllTotals.err, status: 'paused'
       });
@@ -3197,9 +3306,10 @@ async function sendAllSequential(startIndex){
   document.getElementById('btnCancelHold').style.display = 'none';
   document.getElementById('btnSendAll').disabled = false;
   document.getElementById('btnSendOne').disabled = false;
+  sendRunning = false;
   refreshRetryButton();
   toast(sendAllTotals.err
-    ? `Selesai. Berhasil: ${sendAllTotals.ok}, gagal: ${sendAllTotals.err}. Klik "🔁 Kirim ulang yang gagal" untuk mencoba lagi.`
+    ? `Selesai. Berhasil: ${sendAllTotals.ok}, gagal: ${sendAllTotals.err}. Klik "Kirim ulang yang gagal" untuk mencoba lagi.`
     : `Selesai. Berhasil: ${sendAllTotals.ok}, gagal: 0.`);
   updateArchiveBatch(currentArchiveBatchId, {
     successCount: sendAllTotals.ok, failCount: sendAllTotals.err, status: 'completed'
