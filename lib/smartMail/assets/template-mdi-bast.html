@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        @page { size: A4; margin: 0; }
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: 'Indosat', Arial, sans-serif; font-size: 13px; line-height: 1.45; color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+        .page { width: 210mm; height: 296mm; position: relative; overflow: hidden; padding: 38mm 22mm 40mm 22mm; }
+
+        .logo { position: absolute; top: 10mm; left: 18mm; height: 24mm; }
+        .footer { position: absolute; bottom: 12mm; left: 22mm; font-size: 8px; line-height: 1.35; z-index: 2; }
+        .footer b { font-size: 9px; }
+        .footer-web { position: absolute; bottom: 16mm; left: 54%; font-weight: bold; font-size: 13px; z-index: 2; }
+        .ornament { position: absolute; right: -38mm; bottom: -42mm; width: 95mm; height: 95mm; background-size: contain; background-repeat: no-repeat; background-position: center; z-index: 1; }
+
+        p { margin: 0 0 10px 0; }
+        .judul { text-align: center; font-weight: bold; margin-bottom: 14px; }
+        .pihak-label { font-weight: bold; margin-top: 8px; }
+        table.pihak { border-collapse: collapse; }
+        table.pihak td { padding: 0; vertical-align: top; }
+        ol { margin: 8px 0 14px 0; padding-left: 22px; }
+
+        table.rincian { width: 100%; border-collapse: collapse; margin: 10px 0 14px 0; font-size: 12px; }
+        table.rincian td, table.rincian th { border: 1px solid #000; padding: 4px 6px; }
+        table.rincian th { background: #595959; color: #fff; font-weight: bold; text-align: center; }
+        table.rincian td.nilai { text-align: right; white-space: nowrap; }
+
+        table.ttd { width: 100%; margin-top: 18px; text-align: center; }
+        table.ttd td { width: 50%; vertical-align: top; }
+        .ttd-box { height: 70px; margin: 6px auto; }
+        .ttd-box img { height: 70px !important; width: auto; display: block; margin: 0 auto !important; }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <img class="logo" src="{{logo_atas}}" alt="Logo Indosat">
+
+        <div class="judul">BERITA ACARA SERAH TERIMA<br>{{judul_bast}}</div>
+
+        <p>Pada hari ini, {{tanggal_bast}}, yang bertanda tangan di bawah ini:</p>
+
+        <div class="pihak-label">PIHAK PERTAMA</div>
+        <table class="pihak">
+            <tr><td style="width: 90px;">Nama</td><td>: {{nama_pihak1}}</td></tr>
+            <tr><td>Jabatan</td><td>: {{jabatan_pihak1}}</td></tr>
+            <tr><td>Perusahaan</td><td>: PT INDOSAT,tbk.</td></tr>
+        </table>
+        <div class="pihak-label">PIHAK KEDUA</div>
+        <table class="pihak" style="margin-bottom: 14px;">
+            <tr><td style="width: 90px;">Nama</td><td>: {{nama_pihak2}}</td></tr>
+            <tr><td>Jabatan</td><td>: {{jabatan_pihak2}}</td></tr>
+            <tr><td>Perusahaan</td><td>: {{nama_partner}}</td></tr>
+        </table>
+
+        <p>Dengan ini menyatakan bahwa:</p>
+        <ol>
+            <li>PIHAK KEDUA telah melaksanakan kegiatan distribusi produk IOH periode dengan baik dan sesuai kesepakatan.</li>
+            <li>PARA PIHAK telah melakukan serah terima atas pelaksanaan kegiatan distribusi produk IOH periode.</li>
+        </ol>
+
+        <p>Rincian perolehan:</p>
+        <table class="rincian">
+            <tr><th>{{label_wilayah}}</th><th>{{nama_program}} (DPP)</th><th>Ppn</th><th>Pph23</th><th>Total</th></tr>
+            {{baris_branch}}
+        </table>
+
+        <p>Demikian Berita Acara Serah Terima ini dibuat dan dipergunakan sebagai pernyataan penyelesaian pekerjaan.</p>
+
+        <table class="ttd">
+            <tr>
+                <td>PIHAK PERTAMA,<br>PT INDOSAT,tbk.</td>
+                <td>PIHAK KEDUA,<br>{{nama_partner}}</td>
+            </tr>
+            <tr>
+                <td><div id="ttd-box" class="ttd-box"></div></td>
+                <td><div class="ttd-box"></div></td>
+            </tr>
+            <tr>
+                <td>{{nama_pihak1}}<br>{{jabatan_pihak1}}</td>
+                <td>{{nama_pihak2}}<br>{{jabatan_pihak2}}</td>
+            </tr>
+        </table>
+
+        <div class="footer"><b>Head Office</b><br>Jalan Medan Merdeka Barat No. 21<br>Jakarta 10110, Indonesia<br>P: (62-21) 3000 3001</div>
+        <div class="footer-web">www.ioh.co.id</div>
+        <div class="ornament" style="background-image: url('{{logo_bawah}}');"></div>
+    </div>
+</body>
+</html>
