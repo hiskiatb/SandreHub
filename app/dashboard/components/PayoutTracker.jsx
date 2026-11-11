@@ -2432,7 +2432,7 @@ function DcTab({ rows, w, t, showToast }) {
   const phone = w<640;
   const th = (left) => ({ ...thS(t,left), padding:"8px 8px" });
   const td = (left) => ({ ...tdS(t,left), padding:"8px 8px" });
-  const pend = <span style={{display:"inline-block",padding:"1px 8px",borderRadius:99,background:t.warnBg,border:`1px solid ${t.warnBd}`,color:t.warnDark,fontSize:12,fontWeight:600}}>pending</span>;
+  const pend = <span style={{display:"inline-block",padding:"1px 6px",borderRadius:99,background:t.warnBg,border:`1px solid ${t.warnBd}`,color:t.warnDark,fontSize:12,fontWeight:600}}>pending</span>;
   const dt = (d) => d ? fmtDayMon(d) : pend;
   const sel = {fontFamily:"inherit",fontSize:13,fontWeight:700,color:t.ink,background:t.surf2,border:`1px solid ${t.line2}`,borderRadius:9,padding:"6px 10px",cursor:"pointer"};
   return (
@@ -2484,9 +2484,9 @@ function DcTab({ rows, w, t, showToast }) {
                   <td style={{...td(false),color:t.muted}}>{i+1}</td>
                   <td style={td(false)}>{dt(x.created)}</td>
                   <td style={{...td(true),maxWidth:120}} title={x.inv}>{x.inv || pend}</td>
-                  <td style={{...td(true),maxWidth:phone?160:170,color:t.ink2}} title={x.title}>{x.title}</td>
+                  <td style={{...td(true),maxWidth:phone?160:155,color:t.ink2}} title={x.title}>{x.title}</td>
                   <td style={{...td(false),color:t.ink,fontWeight:600}} title={fmtRpFull(x.total)}>{Math.round(x.total).toLocaleString("id-ID")}</td>
-                  <td style={{...td(true),maxWidth:150,color:t.ink}} title={x.supplier}>{x.supplier}</td>
+                  <td style={{...td(true),maxWidth:135,color:t.ink}} title={x.supplier}>{x.supplier}</td>
                   <td style={td(false)}>{dt(x.coupa)}</td>
                   <td style={td(false)}>{dt(x.clv)}</td>
                   <td style={td(false)}>{dt(x.clr)}</td>
