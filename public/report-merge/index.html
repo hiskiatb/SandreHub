@@ -853,6 +853,8 @@
     <div class="mode-switch" id="modeSwitch">
       <button class="mode-btn active" id="modeBtnEmail" type="button" title="Ubah satu file Excel jadi banyak email terpisah — tiap penerima dapat email berisi tabel rincian miliknya sendiri." onclick="switchAppMode('email')">📧 Blast Email Report</button>
       <button class="mode-btn" id="modeBtnSurat" type="button" title="Generate surat resmi jadi file PDF dari template di Excel, lalu kirim ke approver untuk disetujui." onclick="switchAppMode('surat')">📄 Buat Surat &amp; Blast Surat</button>
+      <!-- Alur ketiga di halaman terpisah (public/report-merge/mdi.html). Dibuka lewat ReportMerge_Module di dashboard; kalau halaman ini dibuka langsung, pindah URL. -->
+      <button class="mode-btn" type="button" title="Kirim Surat + BAST MDI (Partner MPC) yang sudah jadi, dicocokkan ke Excel dari nama file." onclick="if(window.parent!==window){window.parent.postMessage({rmOpen:'mdi'},location.origin)}else{location.href='/report-merge/mdi.html'}">📑 Surat MDI</button>
     </div>
     <span class="topbar-sep" aria-hidden="true"></span>
     <!-- Topbar cuma memuat tools yang berlaku GLOBAL. Dulu di sini berjejer
