@@ -142,6 +142,7 @@
   function tambah(daftar) {
     var baru = daftar.filter(function (f) { return /\.pdf$/i.test(f.name); });
     if (!baru.length) return;
+    // Mode 1 PDF untuk semua: file baru menggantikan yang lama (yang dipakai hanya file pertama).
     if (metode() === 'broadcast') pdfs = [baru[0]];
     else baru.forEach(function (f) { if (!pdfs.some(function (x) { return x.name === f.name && x.size === f.size; })) pdfs.push(f); });
     render();
@@ -158,7 +159,6 @@
       $('btnPickFolder').style.display = bc ? 'none' : '';
       $('pdfTitle').textContent = bc ? '1 PDF untuk semua mitra' : 'PDF surat per mitra';
       $('pdfHint').textContent = bc ? 'Klik atau drag & drop 1 file PDF di sini' : 'Klik atau drag & drop beberapa PDF (atau 1 folder) di sini';
-      if (bc && pdfs.length > 1) pdfs = pdfs.slice(0, 1);
       render();
     });
   });
