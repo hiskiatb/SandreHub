@@ -685,7 +685,7 @@ function MultiSel({ values, options, onChange, placeholder, t, labelOf=(v)=>v })
       <button type="button" onClick={()=>setOpen(o=>!o)} {...hE}
         style={{width:"100%",display:"flex",alignItems:"center",gap:7,padding:"7px 11px",fontSize:12.5,borderRadius:10,border:`1px solid ${active?C.teal:(hov||open)?C.tealD:t.line2}`,background:t.surf2,color:active?t.ink:t.muted,fontFamily:"inherit",cursor:"pointer",outline:"none",boxShadow:active||open?`0 0 0 3px ${C.teal}26`:"none",transition:"border-color .15s, box-shadow .15s",textAlign:"left",boxSizing:"border-box"}}>
         <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label}</span>
-        {active&&<span style={{fontFamily:MONO,fontSize:12,fontWeight:700,padding:"1px 7px",borderRadius:99,background:C.teal,color:"#fff",flexShrink:0}}>{values.length}</span>}
+        {active&&<span style={{fontVariantNumeric:"tabular-nums",fontSize:12,fontWeight:700,padding:"1px 7px",borderRadius:99,background:C.teal,color:"#fff",flexShrink:0}}>{values.length}</span>}
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{flexShrink:0,transform:open?"rotate(180deg)":"none",transition:"transform .15s",opacity:.7}}><path d="m6 9 6 6 6-6"/></svg>
       </button>
       {open&&(
@@ -1124,7 +1124,7 @@ export default function PayoutTracker({
   const isLeftCol     = k => { const kk=k.toLowerCase().replace(/\s+/g,""); return kk.includes("name")||kk.includes("title")||kk.includes("entity")||kk.includes("type")||kk.includes("project")||kk==="remarks"; };
 
   const fmtCellT = (val,key,t) => {
-    if (val==null||val==="") return <span style={{fontFamily:MONO,fontStyle:"italic",fontSize:12,color:t.muted2}}>—</span>;
+    if (val==null||val==="") return <span style={{fontVariantNumeric:"tabular-nums",fontStyle:"italic",fontSize:12,color:t.muted2}}>—</span>;
     if (isMonthKey(key)) return fmtMonthYear(val);
     if (isDateKey(key)) { const d=toDate(val); if(d) return fmtDate(d); }
     const kl=key.toLowerCase().replace(/\s+/g,"");
@@ -1182,7 +1182,7 @@ function ThemeWrapper(props) {
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:9998,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(8px)",padding:16}}>
           <div style={{background:t.surf,border:`1px solid ${t.line}`,borderRadius:20,padding:"24px 32px",display:"flex",alignItems:"center",gap:16,boxShadow:t.shadow3,maxWidth:"calc(100vw - 32px)"}}>
             <Spinner size={28} color={C.teal}/>
-            <span style={{fontFamily:MONO,fontSize:13,color:t.muted}}>{loadText}</span>
+            <span style={{fontVariantNumeric:"tabular-nums",fontSize:13,color:t.muted}}>{loadText}</span>
           </div>
         </div>
       )}
@@ -1190,7 +1190,7 @@ function ThemeWrapper(props) {
       <div style={{position:"fixed",bottom:20,right:16,left:"auto",zIndex:9997,padding:"13px 18px",borderRadius:14,background:toastBg,color:toastColor,border:`1px solid ${toastBd}`,boxShadow:t.shadow3,fontWeight:600,fontSize:13,transition:"opacity .25s, transform .25s",opacity:toast.show?1:0,transform:toast.show?"translateY(0)":"translateY(16px)",pointerEvents:"none",maxWidth:"min(360px, calc(100vw - 32px))"}}>
         {toast.msg}
       </div>
-      {screen==="loading"   && <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:300,gap:12,color:t.muted,flexDirection:"column"}}><Spinner size={32} color={C.teal}/><span style={{fontFamily:MONO,fontSize:13}}>Loading data…</span></div>}
+      {screen==="loading"   && <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:300,gap:12,color:t.muted,flexDirection:"column"}}><Spinner size={32} color={C.teal}/><span style={{fontVariantNumeric:"tabular-nums",fontSize:13}}>Loading data…</span></div>}
       {screen==="empty"     && <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:320,gap:16,textAlign:"center",padding:"0 24px"}}><div style={{fontSize:52}}>📭</div><div style={{fontWeight:800,fontSize:22,letterSpacing:"-0.03em",color:t.ink}}>No data available</div><div style={{color:t.muted,maxWidth:360,lineHeight:1.65,fontSize:14}}>No data has been published by Admin yet. This page updates automatically when data becomes available.</div></div>}
       {screen==="admin"     && <AdminScreen {...props} t={t}/>}
       {screen==="dashboard" && <DashScreen  {...props} t={t}/>}
@@ -1263,7 +1263,7 @@ function AdminScreen({ t, pubMeta, upload, setUpload, handleFile, publish, viewD
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
         </div>
         <div style={{fontWeight:700,fontSize:15,color:t.ink,marginBottom:5}}>Drop the payout workbook here</div>
-        <div style={{fontFamily:MONO,fontSize:12,color:t.muted}}>or click to browse · .xlsx · .xls · .csv</div>
+        <div style={{fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted}}>or click to browse · .xlsx · .xls · .csv</div>
         <input id="pt-f-upload" type="file" accept=".xlsx,.xls,.csv" onClick={e=>e.stopPropagation()} onChange={e=>{pick(e.target.files[0]);e.target.value="";}} style={{display:"none"}}/>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",gap:14,marginBottom:10}}>
@@ -1271,12 +1271,12 @@ function AdminScreen({ t, pubMeta, upload, setUpload, handleFile, publish, viewD
           <div key={x.k} style={{background:x.u?t.goodBg:t.surf,borderTop:`1px solid ${x.u?t.goodBd:t.line}`,borderRight:`1px solid ${x.u?t.goodBd:t.line}`,borderBottom:`1px solid ${x.u?t.goodBd:t.line}`,borderLeft:`3px solid ${x.ac}`,borderRadius:14,padding:"12px 16px",minWidth:0}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap"}}>
               <span style={{fontWeight:700,fontSize:13.5,color:t.ink}}>{x.label}</span>
-              <span style={{fontFamily:MONO,fontSize:12,fontWeight:600,color:x.u?t.goodDark:t.muted}}>{x.u?"✓ Found":"Not found"}</span>
+              <span style={{fontVariantNumeric:"tabular-nums",fontSize:12,fontWeight:600,color:x.u?t.goodDark:t.muted}}>{x.u?"✓ Found":"Not found"}</span>
             </div>
             {x.u
               ? <>
                   <div style={{fontWeight:800,fontSize:18,color:t.ink,marginTop:4}}>{plural(x.n,"row")} · {fmtRpWord(x.amt)}</div>
-                  <div style={{fontFamily:MONO,fontSize:12,color:t.muted,marginTop:2,wordBreak:"break-word"}}>{fmtRpFull(x.amt)} · sheet &ldquo;{x.u.sheet}&rdquo; · {x.u.file}</div>
+                  <div style={{fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted,marginTop:2,wordBreak:"break-word"}}>{fmtRpFull(x.amt)} · sheet &ldquo;{x.u.sheet}&rdquo; · {x.u.file}</div>
                   {x.u.dup>0&&<div style={{fontSize:12,color:t.badDark,fontWeight:600,marginTop:4}}>⚠ {x.u.dup} row{x.u.dup!==1?"s":""} from the &ldquo;… MDI&rdquo; sheet repeat an invoice number from the main sheet — check for double counting.</div>}
                 </>
               : <div style={{fontSize:12.5,color:t.muted,marginTop:4,lineHeight:1.5}}>{ready.length?"Live data for this side stays unchanged. You can also drop a second file for it.":"Waiting for a file."}</div>}
@@ -1305,7 +1305,7 @@ function AdminScreen({ t, pubMeta, upload, setUpload, handleFile, publish, viewD
 function SegBtn({s,active,disabled,count,label,onClick,t}) {
   const [hov,hE]=useHover();
   const ac=C.teal;
-  return <button {...hE} onClick={onClick} disabled={disabled} style={{fontWeight:600,fontSize:12.5,padding:"8px 18px",borderRadius:10,border:0,background:active?ac:hov?t.surf3:"transparent",color:active?"#fff":hov?t.ink:t.muted,cursor:disabled?"default":"pointer",display:"inline-flex",alignItems:"center",gap:8,transition:"all .15s",whiteSpace:"nowrap",opacity:disabled?.38:1,pointerEvents:disabled?"none":"auto"}}>{label}<span style={{fontFamily:MONO,fontSize:12,padding:"2px 7px",borderRadius:99,background:active?"rgba(255,255,255,.22)":t.surf4,color:active?"#fff":t.ink2}}>{count}</span></button>;
+  return <button {...hE} onClick={onClick} disabled={disabled} style={{fontWeight:600,fontSize:12.5,padding:"8px 18px",borderRadius:10,border:0,background:active?ac:hov?t.surf3:"transparent",color:active?"#fff":hov?t.ink:t.muted,cursor:disabled?"default":"pointer",display:"inline-flex",alignItems:"center",gap:8,transition:"all .15s",whiteSpace:"nowrap",opacity:disabled?.38:1,pointerEvents:disabled?"none":"auto"}}>{label}<span style={{fontVariantNumeric:"tabular-nums",fontSize:12,padding:"2px 7px",borderRadius:99,background:active?"rgba(255,255,255,.22)":t.surf4,color:active?"#fff":t.ink2}}>{count}</span></button>;
 }
 
 function TabBtn({label,count,active,onClick,t}) {
@@ -1314,14 +1314,14 @@ function TabBtn({label,count,active,onClick,t}) {
     <button {...hE} onClick={onClick} style={{background:"transparent",border:0,fontWeight:600,fontSize:13,padding:"10px 0 14px",color:active?t.ink:hov?t.ink2:t.muted,cursor:"pointer",position:"relative",display:"inline-flex",alignItems:"center",gap:8,whiteSpace:"nowrap",flexShrink:0,transition:"color .15s"}}>
       {label}
       {count!==undefined&&<span style={{fontSize:12,fontVariantNumeric:"tabular-nums",padding:"1px 8px",borderRadius:99,background:active?`${C.teal}1A`:t.surf3,color:active?t.goodDark:t.muted,border:`1px solid ${active?`${C.teal}40`:t.line}`}}>{count.toLocaleString()}</span>}
-      {active&&<span style={{position:"absolute",left:0,right:0,bottom:-1,height:"2.5px",background:C.teal,borderRadius:"2px 2px 0 0"}}/>}
+      {active&&<span style={{position:"absolute",left:0,right:0,bottom:0,height:"2.5px",background:C.teal,borderRadius:"2px 2px 0 0"}}/>}
     </button>
   );
 }
 
 function SugItem({s,active,iconLabel,accentColor,onPick,t}) {
   const [hov,hE]=useHover();
-  return <div {...hE} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 14px",cursor:"pointer",background:active||hov?t.surf3:"transparent",borderTop:`1px solid ${t.line}`,transition:"background .1s"}} onMouseDown={onPick}><span style={{width:22,height:22,borderRadius:7,background:accentColor,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontFamily:MONO,fontSize:12,fontWeight:700,color:"#fff"}}>{iconLabel}</span><span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontSize:12.5,fontWeight:500,color:t.ink}}>{s.label}</span><span style={{fontFamily:MONO,fontSize:12,flexShrink:0,color:t.muted}}>{s.count}</span></div>;
+  return <div {...hE} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 14px",cursor:"pointer",background:active||hov?t.surf3:"transparent",borderTop:`1px solid ${t.line}`,transition:"background .1s"}} onMouseDown={onPick}><span style={{width:22,height:22,borderRadius:7,background:accentColor,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontVariantNumeric:"tabular-nums",fontSize:12,fontWeight:700,color:"#fff"}}>{iconLabel}</span><span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontSize:12.5,fontWeight:500,color:t.ink}}>{s.label}</span><span style={{fontVariantNumeric:"tabular-nums",fontSize:12,flexShrink:0,color:t.muted}}>{s.count}</span></div>;
 }
 
 function BnDetailRow({d,t}) {
@@ -1365,7 +1365,7 @@ function FunnelRowItem({s,prevKey,drop,isExp,filtRaw,grand,onToggle,t}) {
           </div>
         </div>
         <div style={{textAlign:"right",flexShrink:0}}>
-          <div style={{fontWeight:700,fontSize:14,fontFamily:MONO,color:t.ink}}>{s.val.toLocaleString()}</div>
+          <div style={{fontWeight:700,fontSize:14,fontVariantNumeric:"tabular-nums",color:t.ink}}>{s.val.toLocaleString()}</div>
           <div style={{fontSize:12,color:t.muted}}>{pct(s.val,grand.n)}%</div>
         </div>
       </div>
@@ -1375,9 +1375,9 @@ function FunnelRowItem({s,prevKey,drop,isExp,filtRaw,grand,onToggle,t}) {
           <div style={{display:"flex",flexDirection:"column",gap:4,maxHeight:200,overflowY:"auto"}}>
             {pending.slice(0,30).map((r,j)=>(
               <div key={j} style={{display:"grid",gridTemplateColumns:"auto 1fr auto",gap:7,padding:"4px 6px",borderBottom:`1px solid ${t.badBd}`,fontSize:12,alignItems:"start"}}>
-                <span style={{fontFamily:MONO,fontSize:12,fontWeight:700,color:t.bad}}>{r.po||"No PO"}</span>
+                <span style={{fontVariantNumeric:"tabular-nums",fontSize:12,fontWeight:700,color:t.bad}}>{r.po||"—"}</span>
                 <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{r.name}</span>
-                <span style={{fontFamily:MONO,fontSize:12,color:t.muted,textAlign:"right",whiteSpace:"nowrap"}}>{r.month}{r.amt&&<><br/>{fmtMoney(r.amt)}</>}</span>
+                <span style={{fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted,textAlign:"right",whiteSpace:"nowrap"}}>{r.month}{r.amt&&<><br/>{fmtMoney(r.amt)}</>}</span>
               </div>
             ))}
           </div>
@@ -1520,7 +1520,7 @@ function DashScreen(props) {
 
       {!isYtd&&<div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:18}}>
       {segVisible.length>0&&(
-        <div style={{display:"inline-flex",gap:4,background:t.surf,border:`1px solid ${t.line}`,borderRadius:14,padding:4,boxShadow:t.shadow1,overflowX:"auto",maxWidth:"100%"}}>
+        <div style={{display:"inline-flex",gap:4,background:t.surf,border:`1px solid ${t.line}`,borderRadius:14,padding:4,boxShadow:t.shadow1,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"none",maxWidth:"100%"}}>
           {segVisible.map(s=>(
             <SegBtn key={s} s={s} active={src===s} disabled={false}
               count={(s==="partner"?segPartnerCount:segAgencyCount).toLocaleString()}
@@ -1538,7 +1538,7 @@ function DashScreen(props) {
       )}
       </div>}
 
-      <div style={{display:"flex",gap:24,borderBottom:`1px solid ${t.line}`,marginBottom:18,overflowX:"auto"}}>
+      <div style={{display:"flex",gap:24,borderBottom:`1px solid ${t.line}`,marginBottom:18,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"none"}}>
         {[{id:"dash",label:"Dashboard"},{id:"raw",label:"Raw Data",count:filtRaw.length},{id:"ytd",label:"YTD Summary"},...(showAccrual?[{id:"acc",label:"Accrual"}]:[]),...(showForecast?[{id:"fc",label:"Forecast"}]:[]),...(SHOW_DOCUMENT_TABS&&docs.enabled?[{id:"docs",label:"Document Upload & Merge",count:docPOsDone}]:[]),...(SHOW_DOCUMENT_TABS&&docs.enabled&&docs.canManageApprovals?[{id:"letters",label:"Partner Letters"}]:[])].map(tab=>(
           <TabBtn key={tab.id} label={tab.label} count={tab.count} active={activeTab===tab.id} onClick={()=>setActiveTab(tab.id)} t={t}/>
         ))}
@@ -1551,7 +1551,7 @@ function DashScreen(props) {
             {isMobile&&(
               <button onClick={()=>setShowFilters(v=>!v)} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:10,border:`1px solid ${activeFilterCount?C.teal:t.line2}`,background:t.surf2,color:t.ink,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>
                 {showFilters?"Hide filters":"Show filters"}
-                {activeFilterCount>0&&<span style={{fontFamily:MONO,fontSize:12,fontWeight:700,padding:"1px 7px",borderRadius:99,background:C.teal,color:"#fff"}}>{activeFilterCount}</span>}
+                {activeFilterCount>0&&<span style={{fontVariantNumeric:"tabular-nums",fontSize:12,fontWeight:700,padding:"1px 7px",borderRadius:99,background:C.teal,color:"#fff"}}>{activeFilterCount}</span>}
               </button>
             )}
           </div>
@@ -1584,7 +1584,7 @@ function DashScreen(props) {
                         {g.map((s,i)=><SugItem key={i} s={s} active={searchIdx===off+i} iconLabel={lbl} accentColor={ic} t={t} onPick={()=>{setSearchInput(s.label);setFilters(f=>({...f,q:s.label}));setSearchFocus(false);setSearchIdx(-1);}}/>)}
                       </div>
                     ))}
-                    <div style={{display:"flex",justifyContent:"space-between",padding:"5px 14px",fontFamily:MONO,fontSize:12,color:t.muted,background:t.surf2,borderTop:`1px solid ${t.line}`}}><span>↑↓ navigate</span><span>↵ select</span><span>Esc close</span></div>
+                    <div style={{display:"flex",justifyContent:"space-between",padding:"5px 14px",fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted,background:t.surf2,borderTop:`1px solid ${t.line}`}}><span>↑↓ navigate</span><span>↵ select</span><span>Esc close</span></div>
                   </div>
                 )}
               </div>
@@ -1694,7 +1694,7 @@ function computeAccrual(rows) {
 // Header sticky: background harus solid (bukan rgba) dan di atas sel body, supaya baris yang di-scroll tidak tembus
 const thS = (t, left) => ({position:"sticky",top:0,zIndex:3,fontSize:12,letterSpacing:"0.01em",color:t.muted,fontWeight:600,background:t.surf2,padding:"8px 9px",textAlign:left?"left":"right",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap"});
 const tdS = (t, left) => ({padding:"8px 10px",textAlign:left?"left":"right",borderBottom:`1px solid ${t.line}`,fontSize:12.5,fontVariantNumeric:"tabular-nums",color:t.ink2,whiteSpace:"nowrap",maxWidth:left?240:undefined,overflow:"hidden",textOverflow:"ellipsis"});
-const EmptyNote = ({ t, children }) => <div style={{textAlign:"center",color:t.muted,padding:"1.5rem",fontFamily:MONO,fontSize:12}}>{children}</div>;
+const EmptyNote = ({ t, children }) => <div style={{textAlign:"center",color:t.muted,padding:"1.5rem",fontVariantNumeric:"tabular-nums",fontSize:12}}>{children}</div>;
 
 // Rupiah: ringkas (juta/miliar) untuk kartu, penuh untuk tabel
 const fmtRpFull = (n) => "Rp "+Math.round(Number(n)||0).toLocaleString("id-ID");
@@ -1822,7 +1822,7 @@ function DashTab(props) {
               })()}
             </div>}
             <div style={{flex:1,minWidth:200}}>
-              <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:t.muted,padding:"0 8px 6px"}}><span>Total records</span><strong style={{fontFamily:MONO,color:t.ink}}>{grand.n.toLocaleString()}</strong></div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:t.muted,padding:"0 8px 6px"}}><span>Total records</span><strong style={{fontVariantNumeric:"tabular-nums",color:t.ink}}>{grand.n.toLocaleString()}</strong></div>
               {funnelStages.map((s,i)=>{ const prev=i>0?funnelStages[i-1]:null; const drop=(prev?prev.val:grand.n)-s.val; return <FunnelRowItem key={s.key} s={s} prevKey={prev?prev.key:null} drop={drop} isExp={funnelExp===s.key} filtRaw={filtRaw} grand={grand} onToggle={()=>setFunnelExp(k=>k===s.key?null:s.key)} t={t}/>; })}
             </div>
           </div>
@@ -1854,7 +1854,7 @@ function DetailsTabs(props) {
   const cur = tabs.some(x=>x.id===tab) ? tab : "out";
   return (
     <Card t={t} pad={false} style={{marginBottom:14}}>
-      <div style={{display:"flex",gap:22,padding:"0 20px",borderBottom:`1px solid ${t.line}`,background:t.surf2,overflowX:"auto"}} role="tablist">
+      <div style={{display:"flex",gap:22,padding:"0 20px",borderBottom:`1px solid ${t.line}`,background:t.surf2,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"none"}} role="tablist">
         {tabs.map(x=><TabBtn key={x.id} label={x.label} count={x.count} active={cur===x.id} onClick={()=>setTab(x.id)} t={t}/>)}
         {/* Ekspor ringkasan (per bulan × entity × tipe × program × flow, ikut filter) — tersedia di semua tab detail */}
         <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8,flexShrink:0,padding:"8px 0"}}>
@@ -1935,6 +1935,7 @@ function OutstandingTab({ ins, isAg, w, t }) {
   },[ins,view]);
   const amt = rows.reduce((a,r)=>a+r.amt,0);
   const phone = w<640;
+  const showInv = !phone && rows.some(a=>a.inv||a.invId); // kolom Invoice disembunyikan bila kosong semua
   const today = dayStart(new Date());
   const dayClr = (d) => d==null ? t.muted : d>30 ? t.bad : d>14 ? t.warnDark : t.ink2;
   const title = view==="this" ? "Due this week" : view==="next" ? "Due next week" : view==="notsub" ? "Invoice not submitted" : "Total outstanding";
@@ -1969,7 +1970,7 @@ function OutstandingTab({ ins, isAg, w, t }) {
               {!phone&&<th style={thS(t,true)}>Project Title</th>}
               <th style={estTh}>Est. Date</th>
               {!phone&&<th style={thS(t,true)}>Period</th>}
-              {!phone&&<th style={thS(t,true)}>Invoice</th>}
+              {showInv&&<th style={thS(t,true)}>Invoice</th>}
               <th style={thS(t)}>Outstanding</th>
               {!phone&&<th style={thS(t,true)}>Status / Stage</th>}
               {!phone&&<th style={thS(t)}>Days</th>}
@@ -1982,7 +1983,7 @@ function OutstandingTab({ ins, isAg, w, t }) {
                   {!phone&&<td style={{...tdS(t,true),maxWidth:w<1100?150:240}} title={a.title}>{a.title}</td>}
                   <td style={{...tdS(t,true),fontWeight:700,background:late?t.badBg:`${C.yellow}14`,color:late?t.bad:t.ink}} title={late?"Estimation date has passed":undefined}>{a.est?fmtDate(a.est):"—"}</td>
                   {!phone&&<td style={{...tdS(t,true)}}>{a.period}</td>}
-                  {!phone&&<td style={{...tdS(t,true),maxWidth:170,color:t.ink2}} title={invLabel(a.inv,a.invId)}>{invLabel(a.inv,a.invId)}</td>}
+                  {showInv&&<td style={{...tdS(t,true),maxWidth:170,color:t.ink2}} title={invLabel(a.inv,a.invId)}>{invLabel(a.inv,a.invId)}</td>}
                   <td style={{...tdS(t),color:t.ink}} title={fmtRpFull(a.amt)}>{fmtRpWord(a.amt)}</td>
                   {!phone&&<td style={{...tdS(t,true),maxWidth:170}} title={a.status}>{a.stage}</td>}
                   {!phone&&<td style={{...tdS(t),fontWeight:700,color:dayClr(a.days)}} title="Days since Invoice Submission">{a.days==null?"—":a.days}</td>}
@@ -1992,8 +1993,8 @@ function OutstandingTab({ ins, isAg, w, t }) {
           </table>
         </div>
       )}
-      {rows.length>300&&<div style={{fontFamily:MONO,fontSize:12,color:t.muted,marginTop:6}}>Showing 300 of {rows.length.toLocaleString()} — narrow the filters or use Raw Data for the rest.</div>}
-      <div style={{fontFamily:MONO,fontSize:12,color:t.muted,marginTop:8}}>Est. Date in red = already past today. Days = since Invoice Submission.</div>
+      {rows.length>300&&<div style={{fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted,marginTop:6}}>Showing 300 of {rows.length.toLocaleString()} — narrow the filters or use Raw Data for the rest.</div>}
+      <div style={{fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted,marginTop:8}}>Est. Date in red = already past today. Days = since Invoice Submission.</div>
     </div>
   );
 }
@@ -2074,7 +2075,7 @@ function PaidMini({ p, narrow, t }) {
   if (p==null) return "—";
   return (
     <span style={{display:"inline-flex",alignItems:"center",gap:8,justifyContent:"flex-end"}}>
-      {!narrow&&<span style={{width:44,height:5,borderRadius:3,background:t.surf3,overflow:"hidden",flexShrink:0}}><span style={{display:"block",height:"100%",width:`${p}%`,background:t.good}}/></span>}
+      {!narrow&&<span style={{width:36,height:5,borderRadius:3,background:t.surf3,overflow:"hidden",flexShrink:0}}><span style={{display:"block",height:"100%",width:`${p}%`,background:t.good}}/></span>}
       <span style={{minWidth:34,textAlign:"right"}}>{p}%</span>
     </span>
   );
@@ -2455,6 +2456,7 @@ function OpenBillsSection({ rows, w, t, showToast }) {
     const { col, dir } = dSort, m = dir==="asc" ? 1 : -1;
     return [...fc.items].sort((a,b)=>{ const va=a[col], vb=b[col]; if (va instanceof Date || vb instanceof Date) return m*((va||0)-(vb||0)); return typeof va==="number" ? m*((va??-1)-(vb??-1)) : m*String(va).localeCompare(String(vb)); });
   },[fc.items,dSort]);
+  const hasInv = detail.some(x=>x.inv||x.invId);
   const exportXlsx = async () => {
     const XLSX = await getXLSX();
     const wb = XLSX.utils.book_new();
@@ -2532,7 +2534,7 @@ function OpenBillsSection({ rows, w, t, showToast }) {
                 <thead><tr>
                   <SortTh col="name" left sort={dSort} setSort={setDSort} t={t}>Partner</SortTh>
                   {!phone&&<SortTh col="title" left sort={dSort} setSort={setDSort} t={t}>Project Title</SortTh>}
-                  {!phone&&<SortTh col="inv" left sort={dSort} setSort={setDSort} t={t}>Invoice</SortTh>}
+                  {!phone&&hasInv&&<SortTh col="inv" left sort={dSort} setSort={setDSort} t={t}>Invoice</SortTh>}
                   {!phone&&<SortTh col="period" left sort={dSort} setSort={setDSort} t={t}>Period</SortTh>}
                   <SortTh col="amt" sort={dSort} setSort={setDSort} t={t}>Amount</SortTh>
                   {!phone&&<SortTh col="status" left sort={dSort} setSort={setDSort} t={t}>Status</SortTh>}
@@ -2543,7 +2545,7 @@ function OpenBillsSection({ rows, w, t, showToast }) {
                   <tr key={i} style={{background:i%2===1?t.rowStripe:"transparent"}}>
                     <td style={{...tdS(t,true),fontWeight:600,color:t.ink,maxWidth:phone?130:170}} title={x.name}>{x.name}</td>
                     {!phone&&<td style={{...tdS(t,true),maxWidth:w<1150?140:200}} title={x.title}>{x.title}</td>}
-                    {!phone&&<td style={{...tdS(t,true),maxWidth:150,color:t.ink2}} title={invLabel(x.inv,x.invId)}>{invLabel(x.inv,x.invId)}</td>}
+                    {!phone&&hasInv&&<td style={{...tdS(t,true),maxWidth:150,color:t.ink2}} title={invLabel(x.inv,x.invId)}>{invLabel(x.inv,x.invId)}</td>}
                     {!phone&&<td style={tdS(t,true)}>{x.period}</td>}
                     <td style={{...tdS(t),color:t.ink}} title={fmtRpFull(x.amt)}>{fmtRpWord(x.amt)}</td>
                     {!phone&&<td style={tdS(t,true)}><StatusBadge val={x.status} t={t}/></td>}
@@ -2686,8 +2688,8 @@ function YtdTab({ partnerRows, agencyRows, showTeam, w, t, showToast }) {
   const paidPct = pct(tot.grand.p, tot.grand.a);
   const entLbl = (e) => String(e).toUpperCase()==="MPX" ? "MDI (MPX)" : e;
   const twoCol = w>=1000, narrow = w<640;
-  const thY = (left) => ({ ...thS(t,left), fontSize:12, letterSpacing:"0.01em", fontWeight:600, padding:"8px 12px" });
-  const tdY = (left) => ({ ...tdS(t,left), fontSize:13, lineHeight:"20px", padding:"8px 12px", fontVariantNumeric:"tabular-nums" });
+  const thY = (left) => ({ ...thS(t,left), fontSize:12, letterSpacing:"0.01em", fontWeight:600, padding:"8px 10px" });
+  const tdY = (left) => ({ ...tdS(t,left), fontSize:13, lineHeight:"20px", padding:"8px 10px", fontVariantNumeric:"tabular-nums" });
   const head = (
     <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",marginBottom:14}}>
       <div style={{minWidth:0,flex:"1 1 320px"}}>
@@ -2913,10 +2915,10 @@ function AccrualTab({ rows, w, t, showToast }) {
             <thead><tr><th style={thS(t,true)}>Agency · Program</th>{ck.months.map(m=><th key={m} style={{...thS(t),textAlign:"center"}}>{MONTHS_SHORT[m]}</th>)}</tr></thead>
             <tbody>{ck.list.map((g,i)=>(
               <tr key={g.agency+"\x00"+g.prog} style={{background:i%2===1?t.rowStripe:"transparent"}}>
-                <td style={{...tdS(t,true),maxWidth:260}} title={`${g.agency} · ${g.prog}`}><strong style={{color:t.ink}}>{g.agency}</strong><span style={{color:t.muted}}> · {g.prog}</span>{!g.scheduled&&<span style={{marginLeft:6,fontFamily:MONO,fontSize:12,color:t.muted}}>(no schedule)</span>}</td>
+                <td style={{...tdS(t,true),maxWidth:260}} title={`${g.agency} · ${g.prog}`}><strong style={{color:t.ink}}>{g.agency}</strong><span style={{color:t.muted}}> · {g.prog}</span>{!g.scheduled&&<span style={{marginLeft:6,fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted}}>(no schedule)</span>}</td>
                 {g.cells.map((c,j)=>{ const k=mark[c.s]; return (
                   <td key={j} style={{...tdS(t),textAlign:"center",background:k.bg,color:k.c,fontWeight:700,padding:"5px 4px"}} title={c.s==="ok"?fmtRpFull(c.amt):c.s==="miss"?"Expected but missing":"Not expected"}>
-                    <div>{k.s}</div>{c.s==="ok"&&<div style={{fontFamily:MONO,fontSize:12,fontWeight:500,color:t.muted}}>{fmtRpWord(c.amt).replace("Rp ","")}</div>}
+                    <div>{k.s}</div>{c.s==="ok"&&<div style={{fontVariantNumeric:"tabular-nums",fontSize:12,fontWeight:500,color:t.muted}}>{fmtRpWord(c.amt).replace("Rp ","")}</div>}
                   </td>
                 ); })}
               </tr>
@@ -2973,7 +2975,7 @@ function AccrualEstimate({ acc, year, w, t }) {
           </tr></thead>
           <tbody>{acc.list.map((g,i)=>(
             <tr key={g.agency+"\x00"+g.prog} style={{background:i%2===1?t.rowStripe:"transparent"}}>
-              <td style={{...tdS(t,true),maxWidth:280}} title={`${g.agency} · ${g.prog}`}><strong style={{color:t.ink}}>{g.agency}</strong><span style={{color:t.muted}}> · {g.prog}</span>{g.noAccrue&&<span style={{marginLeft:6,fontFamily:MONO,fontSize:12,color:t.muted}}>(no accrual)</span>}</td>
+              <td style={{...tdS(t,true),maxWidth:240}} title={`${g.agency} · ${g.prog}`}><strong style={{color:t.ink}}>{g.agency}</strong><span style={{color:t.muted}}> · {g.prog}</span>{g.noAccrue&&<span style={{marginLeft:6,fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted}}>(no accrual)</span>}</td>
               {months.map(m=>{ const c=g.cells[m]; return <td key={m} style={{...tdS(t),fontStyle:c?.est?"italic":"normal",color:c?.est?t.muted:t.ink2}}>{c?fmtRpFull(c.v):"—"}</td>; })}
               <td style={{...tdS(t),fontWeight:700,color:t.ink}}>{fmtRpFull(rowTotal(g))}</td>
             </tr>
@@ -3031,7 +3033,7 @@ function RawTab(props) {
         </div>
       )}
       {narrow&&(
-        <div style={{padding:"7px 16px",fontFamily:MONO,fontSize:12,color:t.muted,background:t.surf2,borderBottom:`1px solid ${t.line}`,display:"flex",alignItems:"center",gap:6}}>
+        <div style={{padding:"7px 16px",fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted,background:t.surf2,borderBottom:`1px solid ${t.line}`,display:"flex",alignItems:"center",gap:6}}>
           <span style={{fontSize:13}}>↔</span> Scroll horizontally to view all columns
         </div>
       )}
@@ -3041,7 +3043,7 @@ function RawTab(props) {
           <thead><tr>{rawKeys.map(k=><RawThCell key={k} k={k} rawSort={rawSort} setRawSort={setRawSort} setRawPage={setRawPage} isLeftCol={isLeftCol} t={t}/>)}{SHOW_DOCUMENT_TABS&&<th style={{position:"sticky",top:0,zIndex:2,fontSize:12,letterSpacing:"0.01em",color:t.muted,fontWeight:500,background:t.surf2,padding:"9px",textAlign:"center",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap"}}>Documents</th>}</tr></thead>
           <tbody>
             {pageRaw.length===0
-              ? <tr><td colSpan={rawKeys.length+(SHOW_DOCUMENT_TABS?1:0)} style={{padding:"28px",textAlign:"center",color:t.muted,fontFamily:MONO,fontSize:12}}>No records match the current filters</td></tr>
+              ? <tr><td colSpan={rawKeys.length+(SHOW_DOCUMENT_TABS?1:0)} style={{padding:"28px",textAlign:"center",color:t.muted,fontVariantNumeric:"tabular-nums",fontSize:12}}>No records match the current filters</td></tr>
               : pageRaw.map((r,i)=><RawDataRow key={i} r={r} i={i} rawKeys={rawKeys} isLeftCol={isLeftCol} fmtCellT={fmtCellT} t={t} docs={docs} segment={src}/>)}
           </tbody>
         </table>
@@ -3049,7 +3051,7 @@ function RawTab(props) {
 
       {totalRawPages>1&&(
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,padding:"12px 16px",borderTop:`1px solid ${t.line}`,background:t.surf2,flexWrap:"wrap"}}>
-          <span style={{fontFamily:MONO,fontSize:12,color:t.muted}}>
+          <span style={{fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted}}>
             Page {curRawPage} of {totalRawPages} · {plural(filtRaw.length,"record")}
           </span>
           <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
@@ -3074,7 +3076,7 @@ function RawPageBtn({ label, active, disabled, onClick, t }) {
   return (
     <button {...hE} onClick={onClick} disabled={disabled}
       style={{
-        fontFamily:MONO, fontSize:12, fontWeight:active?700:500,
+        fontVariantNumeric:"tabular-nums", fontSize:12, fontWeight:active?700:500,
         padding:"5px 11px", borderRadius:8,
         border:`1px solid ${active?C.teal:hov&&!disabled?C.tealD:t.line2}`,
         background:active?C.teal:hov&&!disabled?t.surf3:t.surf,
