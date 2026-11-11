@@ -362,3 +362,12 @@
   .mode-btn.active .rm-ico{ box-shadow:0 0 0 1.5px rgba(255,255,255,.55); }
   .menu-card .ico{ width:auto; height:auto; background:none; border:0; align-self:flex-start; }
   .menu-card .ico .rm-ico{ display:block; border-radius:14px; box-shadow:var(--shadow1); }
+  /* Layar sempit: tabel digeser ke samping (tidak dipadatkan), KPI 2 kolom, tombol menu tanpa scrollbar. */
+  table.match{ min-width:640px; }
+  .mode-switch{ scrollbar-width:none; }
+  .mode-switch::-webkit-scrollbar{ display:none; }
+  @media (max-width:640px){
+    .kpi{ flex:1 1 calc(50% - 10px); padding:10px 12px; }
+    .kpi .n{ font-size:19px; }
+    .guide-tools{ flex-direction:column; align-items:stretch; }
+  }
