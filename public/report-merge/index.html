@@ -853,8 +853,9 @@
     <div class="mode-switch" id="modeSwitch">
       <button class="mode-btn active" id="modeBtnEmail" type="button" title="Ubah satu file Excel jadi banyak email terpisah — tiap penerima dapat email berisi tabel rincian miliknya sendiri." onclick="switchAppMode('email')">📧 Blast Email Report</button>
       <!-- Tombol "📄 Buat Surat & Blast Surat" dihapus atas permintaan Saila (2026-11-11). Endpoint /api/report-merge/letters/* dan approve.html tetap ada supaya link approval yang sudah terkirim tidak rusak. -->
-      <!-- Alur ketiga di halaman terpisah (public/report-merge/mdi.html). Dibuka lewat ReportMerge_Module di dashboard; kalau halaman ini dibuka langsung, pindah URL. -->
-      <button class="mode-btn" type="button" title="Kirim Surat + BAST MDI (Partner MPC) yang sudah jadi, dicocokkan ke Excel dari nama file." onclick="if(window.parent!==window){window.parent.postMessage({rmOpen:'mdi'},location.origin)}else{location.href='/report-merge/mdi.html'}">📑 Surat MDI</button>
+      <!-- Alur Partner SDP & Partner MDI (port Smart Mail Sumatera) ada di halaman terpisah sdp.html / mdi.html. Dibuka lewat ReportMerge_Module di dashboard; kalau halaman ini dibuka langsung, pindah URL. -->
+      <button class="mode-btn" type="button" title="Kirim surat PDF Partner SDP yang sudah jadi, 1 email per ID mitra." onclick="if(window.parent!==window){window.parent.postMessage({rmOpen:'sdp'},location.origin)}else{location.href='/report-merge/sdp.html'}">📝 Partner SDP</button>
+      <button class="mode-btn" type="button" title="Kirim Surat + BAST Partner MDI (MPC) yang sudah jadi, 1 email per partner + type." onclick="if(window.parent!==window){window.parent.postMessage({rmOpen:'mdi'},location.origin)}else{location.href='/report-merge/mdi.html'}">📑 Partner MDI</button>
     </div>
     <span class="topbar-sep" aria-hidden="true"></span>
     <!-- Topbar cuma memuat tools yang berlaku GLOBAL. Dulu di sini berjejer

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Surat MDI — Sales &amp; Distribution Sumatera</title>
+<title>Partner MDI — Sales &amp; Distribution Sumatera</title>
 <!--
   Surat MDI (Partner MPC) — Blast Email Only.
   Port dari Smart Mail Sumatera (mdi.html). Tahap 3a: upload Excel partner +
@@ -355,7 +355,7 @@
       </svg></div>
     <div>
       <div class="title">Sales &amp; Distribution Sumatera</div>
-      <div class="subtitle">Surat MDI — 1 email per partner + type, lampiran Surat + BAST</div>
+      <div class="subtitle">Partner MDI — 1 email per partner + type, lampiran Surat + BAST</div>
     </div>
   </div>
   <div class="topbar-right">
@@ -363,7 +363,8 @@
          halaman Report Merge (lewat ReportMerge_Module di dashboard). -->
     <div class="mode-switch">
       <button class="mode-btn" type="button" data-goto="email" title="Ubah satu file Excel jadi banyak email terpisah per penerima.">📧 Blast Email Report</button>
-      <button class="mode-btn active" type="button" title="Kirim Surat + BAST MDI (Partner MPC) yang sudah jadi, dicocokkan ke Excel dari nama file.">📑 Surat MDI</button>
+      <button class="mode-btn" type="button" data-goto="sdp" title="Kirim surat PDF Partner SDP yang sudah jadi, 1 email per ID mitra.">📝 Partner SDP</button>
+      <button class="mode-btn active" type="button" data-goto="mdi" title="Kirim Surat + BAST Partner MDI (MPC) yang sudah jadi, 1 email per partner + type.">📑 Partner MDI</button>
     </div>
     <span class="topbar-sep" aria-hidden="true"></span>
     <div class="topbar-tools">
@@ -442,12 +443,17 @@
   var files = { surat: [], bast: [] };
   var jenisAktif = 'surat';
 
-  // ---------- Pindah alur (kembali ke Report Merge) ----------
+  // ---------- Pindah alur (Blast Email Report / Partner SDP / Partner MDI) ----------
+  // Di dashboard, ReportMerge_Module yang menukar iframe; kalau halaman ini
+  // dibuka langsung (tanpa dashboard), pindah URL biasa.
+  var URL_ALUR = { email: '/report-merge/index.html', sdp: '/report-merge/sdp.html', mdi: '/report-merge/mdi.html' };
   document.querySelectorAll('[data-goto]').forEach(function (b) {
+    if (b.classList.contains('active')) return;
     b.addEventListener('click', function () {
-      var mode = b.dataset.goto;
-      if (window.parent !== window) window.parent.postMessage({ rmOpen: 'report', mode: mode }, location.origin);
-      else location.href = '/report-merge/index.html';
+      var tujuan = b.dataset.goto;
+      if (window.parent !== window) {
+        window.parent.postMessage(tujuan === 'email' ? { rmOpen: 'report', mode: 'email' } : { rmOpen: tujuan }, location.origin);
+      } else location.href = URL_ALUR[tujuan];
     });
   });
 

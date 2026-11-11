@@ -12,10 +12,10 @@ import { useEffect, useRef, useState } from "react";
  *      memverifikasi role & menolak Finance MPX.
  * Lihat public/report-merge/index.html untuk isi shim-nya.
  *
- * Alur ketiga "Surat MDI (Partner MPC)" (port dari Smart Mail Sumatera)
- * ada di halaman terpisah public/report-merge/mdi.html. Tombol alurnya
+ * Alur "Partner SDP" dan "Partner MDI" (port dari Smart Mail Sumatera)
+ * ada di halaman terpisah public/report-merge/sdp.html dan mdi.html. Tombol alurnya
  * tetap satu deret di topbar masing-masing halaman; perpindahan halaman
- * dikirim lewat postMessage { rmOpen: 'mdi' | 'report', mode } dan
+ * dikirim lewat postMessage { rmOpen: 'report' | 'sdp' | 'mdi', mode } dan
  * ditangani di sini. Iframe yang pernah dibuka tetap terpasang (cuma
  * disembunyikan) supaya pekerjaan yang belum selesai tidak hilang.
  *
@@ -28,7 +28,8 @@ import { useEffect, useRef, useState } from "react";
  */
 const PAGES = [
   { id: "report", title: "Report Merge", src: "/report-merge/index.html" },
-  { id: "mdi", title: "Surat MDI (Partner MPC)", src: "/report-merge/mdi.html" },
+  { id: "sdp", title: "Partner SDP", src: "/report-merge/sdp.html" },
+  { id: "mdi", title: "Partner MDI", src: "/report-merge/mdi.html" },
 ];
 
 function syncTheme(frame) {
@@ -52,7 +53,7 @@ export default function ReportMerge_Module({ t }) {
   useEffect(() => {
     const onMessage = (e) => {
       if (e.origin !== window.location.origin || !e.data || !e.data.rmOpen) return;
-      const id = e.data.rmOpen === "mdi" ? "mdi" : "report";
+      const id = PAGES.some((p) => p.id === e.data.rmOpen) ? e.data.rmOpen : "report";
       setOpened((prev) => (prev.includes(id) ? prev : [...prev, id]));
       setPage(id);
       const frame = frames.current[id];
