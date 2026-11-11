@@ -36,6 +36,9 @@ const kbd = (fn) => ({
 
 // Hint kolom. Prefix "=" → hanya exact match (hindari "invoice" ikut cocok ke "Invoice Number").
 const H_REVA  = ["reva date","=reva","req date","=req"];
+// Agency: BAST dikirim agency → disetujui penuh IOH → invoice (via OneDrive) disubmit ke Coupa
+const H_BAST_RCV = ["bast received date","bast date","=bast received","=bast"];
+const H_BAST_APP = ["bast approved date","bast approval date","=bast approved","approval date","=approval date"];
 const H_INV   = ["invoice submission","invoice submission date","inv submission","invoice date","=invoice"];
 const H_CLV   = ["clv date","=clv"];
 const H_CLR   = ["clearing date","clearing bank date","=clearing","clearing bank"];
@@ -52,7 +55,7 @@ const FLOW_PO = "PO", FLOW_DI = "Direct Invoice";
 const SHOW_DOCUMENT_TABS = false;
 
 // SLA per step (hari kerja), satu alur tanpa PO. Reva → Surat = Reva→PO (2) + PO→Surat (1) lama;
-// Agency (tanpa Surat): Req → Invoice = Req→PO (2) + PO→Invoice (2) lama.
+// Agency: BAST Received → BAST Approved (IOH) → Invoice Submission (Coupa) → CLV → Bank Clearing.
 const SLA_STEPS = {
   partner: [
     { key:"reva_surat", label:"Reva → Surat Pemberitahuan",    sla:3, from:H_REVA,  to:H_SURAT },
@@ -61,7 +64,8 @@ const SLA_STEPS = {
     { key:"clv_clr",    label:"CLV → Bank Clearing",           sla:3, from:H_CLV,   to:H_CLR },
   ],
   agency: [
-    { key:"req_inv",    label:"Req → Invoice",                 sla:4, from:H_REVA,  to:H_INV },
+    { key:"bast_app",   label:"BAST Received → BAST Approved",       sla:2, from:H_BAST_RCV, to:H_BAST_APP },
+    { key:"app_inv",    label:"BAST Approved → Invoice Submission",  sla:2, from:H_BAST_APP, to:H_INV },
     { key:"inv_clv",    label:"Invoice → CLV",                 sla:2, from:H_INV,   to:H_CLV },
     { key:"clv_clr",    label:"CLV → Bank Clearing",           sla:3, from:H_CLV,   to:H_CLR },
   ],
@@ -266,9 +270,9 @@ const rowFlow   = (r) => r._flow || FLOW_PO;
 
 function sumRows(rows) {
   return rows.reduce((acc,r)=>({
-    n:acc.n+(r.n||0), reva:acc.reva+(r.reva||0), surat:acc.surat+(r.surat||0),
+    n:acc.n+(r.n||0), reva:acc.reva+(r.reva||0), bastR:acc.bastR+(r.bastR||0), bastA:acc.bastA+(r.bastA||0), surat:acc.surat+(r.surat||0),
     inv:acc.inv+(r.inv||0), clv:acc.clv+(r.clv||0), clr:acc.clr+(r.clr||0), amt:acc.amt+(r.amt||0),
-  }), {n:0,reva:0,surat:0,inv:0,clv:0,clr:0,amt:0});
+  }), {n:0,reva:0,bastR:0,bastA:0,surat:0,inv:0,clv:0,clr:0,amt:0});
 }
 
 const DATE_COLS = ["clv date","clv","clearing date","clearing","invoice submission","invoice","surat pemberitahuan date","po date","reva date","req date","estimation date"];
@@ -306,10 +310,12 @@ function buildAgg(rows, src) {
     const flow  = rowFlow(r);
     if (!month) return;
     const key = [month,entity,ptype,prog,flow].join("\x00");
-    if (!groups[key]) groups[key]={ month,entity,ptype,prog,flow,src,n:0,reva:0,surat:0,inv:0,clv:0,clr:0,amt:0 };
+    if (!groups[key]) groups[key]={ month,entity,ptype,prog,flow,src,n:0,reva:0,bastR:0,bastA:0,surat:0,inv:0,clv:0,clr:0,amt:0 };
     const g = groups[key];
     g.n++;
     if (gcell(r,H_REVA)) g.reva++;
+    if (ag && gcell(r,H_BAST_RCV)) g.bastR++;
+    if (ag && gcell(r,H_BAST_APP)) g.bastA++;
     if (!ag && gcell(r,H_SURAT)) g.surat++;
     if (gcell(r,H_INV)) g.inv++;
     if (gcell(r,H_CLV)) g.clv++;
@@ -446,7 +452,7 @@ function mdiSheet(names, src) {
 function sheetRows(XLSX, ws, src, forceFlow) {
   const arr = XLSX.utils.sheet_to_json(ws,{header:1,defval:""});
   const hints = src==="agency"
-    ? ["agency name","program type","amount","status","invoice date","clv date","clearing","#req","po number","invoice number","flow"]
+    ? ["agency name","program type","amount","status","bast","invoice date","invoice submission","clv date","clearing","#req","po number","invoice number","flow"]
     : ["partner name","program type","amount","status","reva date","surat pemberitahuan","invoice date","clv date","clearing","#req","po number","invoice number","flow"];
   let hdr = 0;
   for (let i=0;i<Math.min(arr.length,12);i++) {
@@ -952,16 +958,28 @@ export default function PayoutTracker({
     return unique(filtRaw.map(r=>gstr(r,["partner name","agency name"]))).length;
   },[filtRaw]);
 
+  // Kolom BAST ada di data Agency yang di-upload?
+  const bastCols = useMemo(()=>{
+    const r0 = isAg ? curRaw[0] : null;
+    return { rcv: !!(r0 && findCol(r0,H_BAST_RCV)), app: !!(r0 && findCol(r0,H_BAST_APP)) };
+  },[isAg,curRaw]);
   const funnelStagesRaw = useMemo(()=>{
     const g = grand;
+    if (isAg) return [
+      ...(bastCols.rcv?[{key:"bastR",label:"BAST Received",val:g.bastR}]:[]),
+      ...(bastCols.app?[{key:"bastA",label:"BAST Approved",val:g.bastA}]:[]),
+      {key:"inv",label:"Invoice Submission",val:g.inv},
+      {key:"clv",label:"CLV",val:g.clv},
+      {key:"clr",label:"Bank Clearing",val:g.clr},
+    ];
     return [
-      {key:"reva",label:isAg?"Req":"Reva",val:g.reva},
-      ...(isAg?[]:[{key:"surat",label:"Surat Pemberitahuan",val:g.surat}]),
+      {key:"reva",label:"Reva",val:g.reva},
+      {key:"surat",label:"Surat Pemberitahuan",val:g.surat},
       {key:"inv",label:"Invoice",val:g.inv},
       {key:"clv",label:"CLV",val:g.clv},
       {key:"clr",label:"Bank Clearing",val:g.clr},
     ];
-  },[grand,isAg]);
+  },[grand,isAg,bastCols]);
   // Satu ramp teal (gelap → terang) mengikuti urutan tahap
   const funnelStages = useMemo(()=>funnelStagesRaw.map((st,i)=>({...st,color:FUNNEL_RAMP[i],darkText:i>=3})),[funnelStagesRaw]);
 
@@ -1048,6 +1066,8 @@ export default function PayoutTracker({
     req:["#Req ID","#req id","req id"],
     po:["PO Number","po number","PO #","po #","No PO","no po"],
     reqDate:["Reva Date","reva date","Req Date","req date"],
+    bastR:["BAST Received Date","bast received date","BAST Date","bast date"],
+    bastA:["BAST Approved Date","bast approved date","BAST Approval Date","Approval Date","approval date"],
     poDate:["PO Date","po date"],
     surat:["Surat Pemberitahuan Date","surat pemberitahuan date","surat pemberitahuan"],
     inv:["Invoice Number","invoice number","Inv Number","inv number","Invoice No"],
@@ -1063,7 +1083,9 @@ export default function PayoutTracker({
     ? [G.month,G.name,G.title,G.req,G.amount,G.po,G.reqDate,G.poDate,...(isAg?[]:[G.surat]),G.invSub,G.clr,G.status]
     : flowSel===FLOW_DI
     ? [G.month,G.entity,G.name,G.title,G.amount,G.inv,G.invDate,G.invSub,G.clv,G.clr,G.est,G.status]
-    : [G.month,G.ptype,G.title,G.name,G.amount,G.reqDate,...(isAg?[]:[G.surat]),G.invSub,G.clv,G.clr,G.est,G.status];
+    : isAg
+    ? [G.month,G.ptype,G.title,G.amount,G.bastR,G.bastA,G.invSub,G.clv,G.clr,G.est,G.status]
+    : [G.month,G.ptype,G.title,G.name,G.amount,G.reqDate,G.surat,G.invSub,G.clv,G.clr,G.est,G.status];
 
   const RAW_COL_ORDER = ["Program Date","program date","Entity","entity","Partner Type","partner type","partnertype","partner_type","Project Title","project title","#Req ID","#req id","req id","Partner Name","partner name","partner_name","Amount","amount","Flow","PO Number","po number","PO #","po #","Invoice Number","Reva Date","reva date","PO Date","po date","Surat Pemberitahuan Date","surat pemberitahuan date","surat pemberitahuan","Invoice Submission","invoice submission","invoice","CLV Date","clv date","clv","Estimation Date","estimation date","Status","status","Payment Status","payment status"];
 
@@ -1131,7 +1153,7 @@ export default function PayoutTracker({
     funnelExp,setFunnelExp,bnExp,setBnExp,
     src,setSrc,flowSel,activeTab,setActiveTab,
     curRaw,curAgg,filtAgg,filtRaw,grand,grandPartnerCount,
-    funnelStages,bnResults,
+    funnelStages,bnResults,bastCols,
     rawKeys,rawKeysAll,rawKeysMain,showAllCols,setShowAllCols,
     pageRaw,curRawPage,totalRawPages,fmtCellT,isLeftCol,
     handleFile,publish,viewDash,clearData,exportSummary,exportRaw,showToast,
@@ -1205,7 +1227,7 @@ function AdminScreen({ t, pubMeta, upload, setUpload, handleFile, publish, viewD
         <h1 style={{fontWeight:800,fontSize:"clamp(1.8rem,4vw,2.8rem)",letterSpacing:"-0.03em",color:t.ink,margin:"0 0 8px",lineHeight:1.05}}>Upload &amp; Publish Data</h1>
         <p style={{color:t.muted,fontSize:14,maxWidth:"60ch",lineHeight:1.65,margin:0}}>Upload one workbook. The &ldquo;Partner Prepaid&rdquo; and &ldquo;Agency Prepaid&rdquo; sheets are read together; other sheets are ignored. All viewers update automatically after you publish.</p>
         <div style={{display:"flex",gap:8,marginTop:14,flexWrap:"wrap"}}>
-          {[{l:`Partner SLA ${slaText(false)} working days (Reva → Surat → Invoice → CLV → Bank)`},{l:`Agency SLA ${slaText(true)} working days (Req → Invoice → CLV → Bank)`}].map((b,i)=>(
+          {[{l:`Partner SLA ${slaText(false)} working days (Reva → Surat → Invoice → CLV → Bank)`},{l:`Agency SLA ${slaText(true)} working days (BAST received → BAST approved → Invoice submission → CLV → Bank)`}].map((b,i)=>(
             <span key={i} style={{display:"inline-flex",alignItems:"center",padding:"4px 11px",borderRadius:99,background:t.surf2,color:t.ink2,border:`1px solid ${t.line}`,fontSize:12,fontWeight:600}}>{b.l}</span>
           ))}
         </div>
@@ -1338,7 +1360,7 @@ function RawDataRow({r,i,rawKeys,isLeftCol,fmtCellT,t,docs,segment}) {
 }
 
 // Milestone tercapai? (tanggal tahap terisi)
-const STAGE_HINTS = { reva:H_REVA, surat:H_SURAT, inv:H_INV, clv:H_CLV, clr:H_CLR };
+const STAGE_HINTS = { reva:H_REVA, bastR:H_BAST_RCV, bastA:H_BAST_APP, surat:H_SURAT, inv:H_INV, clv:H_CLV, clr:H_CLR };
 function stageDone(r, key) {
   return !!gcell(r, STAGE_HINTS[key]||[]);
 }
@@ -1727,8 +1749,9 @@ function computeInsights(rows) {
     if (!proc && (paid || clrV)) return;
     const invD = toDate(invV), estD = toDate(gcell(r,H_EST));
     const days = invD ? Math.max(0, Math.round((today - dayStart(invD))/DAY)) : null;
-    const stage = isNotSubStatus(st) || !invV ? "Waiting for invoice"
-      : !gcell(r,H_CLV) ? (flow===FLOW_DI ? "AP verification" : "CLV verification")
+    const isAgRow = r._source==="agency";
+    const stage = (isNotSubStatus(st) || !invV) ? (isAgRow ? (gcell(r,H_BAST_APP) ? "Waiting invoice submission" : gcell(r,H_BAST_RCV) ? "Waiting BAST approval" : "Waiting for BAST") : "Waiting for invoice")
+      : !gcell(r,H_CLV) ? "CLV verification"
       : !clrV ? "Waiting for bank" : (st || "—");
     const mk = rowMonthKey(r);
     const item = { name, title:gstr(r,["project title"])||"—", ref:refNo(r), flow, amt, days, est:estD?dayStart(estD):null, status:st, stage, period:mk?ymLabel(mk):"—" };
@@ -1804,7 +1827,8 @@ function DashTab(props) {
   const isAg = src==="agency";
   const ins = useMemo(()=>computeInsights(filtRaw),[filtRaw]);
   const monthsCount = useMemo(()=>unique(filtAgg.map(r=>r.month)).length,[filtAgg]);
-  const flowLbl = isAg ? "Req → Invoice → CLV → Bank Clearing" : "Reva → Surat Pemberitahuan → Invoice → CLV → Bank Clearing";
+  const flowLbl = isAg ? "BAST Received → BAST Approved → Invoice Submission → CLV → Bank Clearing" : "Reva → Surat Pemberitahuan → Invoice → CLV → Bank Clearing";
+  const bastMissing = isAg && props.bastCols && (!props.bastCols.rcv || !props.bastCols.app);
   return (
     <>
       <KpiCards ins={ins} partnerCount={grandPartnerCount} monthsCount={monthsCount} isAg={isAg} w={w} t={t}/>
@@ -1826,6 +1850,7 @@ function DashTab(props) {
         </Card>
         <Card t={t} pad={false}>
           <CardHead title="SLA by Step" accent={C.red} sub="Avg working days vs target · % on time · click a step for the longest cases" t={t}/>
+          {bastMissing&&<div style={{margin:"12px 18px 0",padding:"8px 12px",borderRadius:10,background:t.infoBg,border:`1px solid ${t.infoBd}`,fontSize:12.5,color:t.ink2,lineHeight:1.5}}>BAST steps need <strong>BAST Received Date</strong> and <strong>BAST Approved Date</strong> columns in the Agency sheet. They are not in the uploaded data yet, so those steps show &ldquo;no data&rdquo; and are left out of the funnel.</div>}
           <div style={{padding:18}}>
             {filtRaw.length===0?<EmptyNote t={t}>No data available</EmptyNote>:<SlaStrip steps={bnResults} bnExp={bnExp} setBnExp={setBnExp} t={t}/>}
             <div style={{display:"flex",gap:12,marginTop:10,flexWrap:"wrap",fontSize:12,color:t.muted}}>
