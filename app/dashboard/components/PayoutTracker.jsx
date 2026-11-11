@@ -103,23 +103,27 @@ function fmtMoney(n, short=true) {
   return "IDR "+n.toFixed(0);
 }
 
+// Tanggal Excel yang dibaca SheetJS di zona WIB bergeser ~12 detik ke belakang (offset historis LMT +7:07:12),
+// mis. 1 Jan 2026 00:00 terbaca 31 Des 2025 23:59:48 → bulan/tanggal mundur satu. Bulatkan ke menit terdekat.
+const snapMin = (d) => { const ms = d.getTime(); if (isNaN(ms)) return d; const r = Math.round(ms/60000)*60000; return r===ms ? d : new Date(r); };
+
 function fmtDate(x) {
   if (!x) return "—";
-  const d = x instanceof Date ? x : new Date(x);
+  const d = snapMin(x instanceof Date ? x : new Date(x));
   if (isNaN(d)) return String(x);
   return d.toLocaleDateString("en-GB", { day:"2-digit", month:"short", year:"2-digit" });
 }
 
 function toDate(x) {
   if (!x && x!==0) return null;
-  if (x instanceof Date) return isNaN(x)?null:x;
+  if (x instanceof Date) return isNaN(x)?null:snapMin(x);
   if (typeof x==="number" && x>1000 && x<200000) {
     const d = new Date(new Date(1899,11,30).getTime()+x*86400000);
     return isNaN(d)?null:d;
   }
   if (typeof x==="string") {
     if (!x.trim()) return null;
-    const d = new Date(x); if (!isNaN(d)) return d;
+    const d = new Date(x); if (!isNaN(d)) return snapMin(d);
     const p = x.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
     if (p) { let y=+p[3]; if(y<100)y+=2000; const d2=new Date(y,+p[2]-1,+p[1]); return isNaN(d2)?null:d2; }
   }
@@ -129,11 +133,11 @@ function toDate(x) {
 // hanya parse nilai yang JELAS tanggal (Date / serial Excel / ISO / dd-mm-yyyy 4 digit).
 // Teks ambigu seperti "Jun-25" sengaja TIDAK diubah agar tak salah tafsir tahun.
 function toRealDate(x) {
-  if (x instanceof Date) return isNaN(x) ? null : x;
+  if (x instanceof Date) return isNaN(x) ? null : snapMin(x);
   if (typeof x==="number" && x>1000 && x<200000) { const d=new Date(new Date(1899,11,30).getTime()+x*86400000); return isNaN(d)?null:d; }
   if (typeof x==="string") {
     const s=x.trim();
-    if (/^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2})?/.test(s)) { const d=new Date(s); return isNaN(d)?null:d; }
+    if (/^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2})?/.test(s)) { const d=new Date(s); return isNaN(d)?null:snapMin(d); }
     const p=s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/); if (p) { const d=new Date(+p[3],+p[2]-1,+p[1]); return isNaN(d)?null:d; }
   }
   return null;
@@ -466,7 +470,7 @@ function sheetRows(XLSX, ws, src, forceFlow) {
     const clean={};
     Object.keys(row).forEach(k=>{
       const v=row[k];
-      clean[k.trim()] = v instanceof Date ? (isNaN(v)?null:v.toISOString()) : v;
+      clean[k.trim()] = v instanceof Date ? (isNaN(v)?null:snapMin(v).toISOString()) : v;
     });
     if (forceFlow) clean.Flow = forceFlow; // semua baris sheet MDI = Direct Invoice
     clean._source=src;
@@ -1405,12 +1409,13 @@ function DashScreen(props) {
   const canAgency = isSPM || isIOHAny;
   const showAccrual = isAg && canAgency && (viewAgencyRaw||[]).length>0;
   const showForecast = !isAg && (viewPartnerRaw||[]).length>0;
+  const showDc = !isAg && (viewPartnerRaw||[]).some(isDcRow);
   // Tab yang sedang dibuka tapi tidak tersedia untuk pilihan ini → kembali ke Dashboard
-  const tabKey = (activeTab==="acc" && !showAccrual) || (activeTab==="fc" && !showForecast) ? "dash" : activeTab;
-  const isAcc = tabKey==="acc", isFc = tabKey==="fc";
+  const tabKey = (activeTab==="acc" && !showAccrual) || (activeTab==="fc" && !showForecast) || (activeTab==="dc" && !showDc) ? "dash" : activeTab;
+  const isAcc = tabKey==="acc", isFc = tabKey==="fc", isDc = tabKey==="dc";
   // YTD/Accrual/Forecast punya pilihan sendiri → filter dashboard disembunyikan; toggle Partner/Agency
   // tetap tampil kecuali di YTD (gabungan Partner + Agency)
-  const isYtd = tabKey==="ytd" || isAcc || isFc;
+  const isYtd = tabKey==="ytd" || isAcc || isFc || isDc;
 
   // Dokumen per PO (Partner & Agency): dipakai kolom Dokumen di Raw Data & tab Upload & Merge Dokumen
   // profile null → hook tidak aktif (docs.enabled=false), tidak ada fetch dokumen/approval
@@ -1545,7 +1550,7 @@ function DashScreen(props) {
       </div>}
 
       <div style={{display:"flex",gap:24,borderBottom:`1px solid ${t.line}`,marginBottom:18,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"none"}}>
-        {[{id:"dash",label:"Dashboard"},{id:"raw",label:"Raw Data",count:filtRaw.length},{id:"ytd",label:"YTD Summary"},...(showAccrual?[{id:"acc",label:"Accrual"}]:[]),...(showForecast?[{id:"fc",label:"Forecast"}]:[]),...(SHOW_DOCUMENT_TABS&&docs.enabled?[{id:"docs",label:"Document Upload & Merge",count:docPOsDone}]:[]),...(SHOW_DOCUMENT_TABS&&docs.enabled&&docs.canManageApprovals?[{id:"letters",label:"Partner Letters"}]:[])].map(tab=>(
+        {[{id:"dash",label:"Dashboard"},...(showDc?[{id:"dc",label:"Distribution Fee & Champions"}]:[]),{id:"raw",label:"Raw Data",count:filtRaw.length},{id:"ytd",label:"YTD Summary"},...(showAccrual?[{id:"acc",label:"Accrual"}]:[]),...(showForecast?[{id:"fc",label:"Forecast"}]:[]),...(SHOW_DOCUMENT_TABS&&docs.enabled?[{id:"docs",label:"Document Upload & Merge",count:docPOsDone}]:[]),...(SHOW_DOCUMENT_TABS&&docs.enabled&&docs.canManageApprovals?[{id:"letters",label:"Partner Letters"}]:[])].map(tab=>(
           <TabBtn key={tab.id} label={tab.label} count={tab.count} active={tabKey===tab.id} onClick={()=>setActiveTab(tab.id)} t={t}/>
         ))}
       </div>
@@ -1614,7 +1619,9 @@ function DashScreen(props) {
         </div>
       )}
 
-      {isFc ? (
+      {isDc ? (
+        <DcTab rows={viewPartnerRaw||[]} w={w} t={t} showToast={showToast}/>
+      ) : isFc ? (
         <ForecastTab rows={viewPartnerRaw||[]} w={w} t={t} showToast={showToast}/>
       ) : isAcc ? (
         <Card t={t} pad={false} style={{marginBottom:14}}>
@@ -1817,8 +1824,9 @@ function DashTab(props) {
   return (
     <>
       <KpiCards ins={ins} partnerCount={grandPartnerCount} monthsCount={monthsCount} isAg={isAg} w={w} t={t}/>
-      <div style={{display:"grid",gridTemplateColumns:w>=1000?"1fr 1fr":"1fr",gap:14,marginBottom:14}}>
-        <Card t={t} pad={false}>
+      <div style={{display:"grid",gridTemplateColumns:w>=1000&&isAg?"1fr 1fr":"1fr",gap:14,marginBottom:14}}>
+        {/* Funnel hanya untuk Agency; Partner memakai Success Rate di tab Distribution Fee & Champions */}
+        {isAg&&<Card t={t} pad={false}>
           <CardHead title="Payment Progress" accent={C.teal} sub={`${flowLbl} · click "pending" to see records`} t={t}/>
           <div style={{padding:18,display:"flex",gap:18,alignItems:"flex-start",flexWrap:"wrap"}}>
             {w>=480&&<div style={{flexShrink:0}}>
@@ -1832,7 +1840,7 @@ function DashTab(props) {
               {funnelStages.map((s,i)=>{ const prev=i>0?funnelStages[i-1]:null; const drop=(prev?prev.val:grand.n)-s.val; return <FunnelRowItem key={s.key} s={s} prevKey={prev?prev.key:null} drop={drop} isExp={funnelExp===s.key} filtRaw={filtRaw} grand={grand} onToggle={()=>setFunnelExp(k=>k===s.key?null:s.key)} t={t}/>; })}
             </div>
           </div>
-        </Card>
+        </Card>}
         <Card t={t} pad={false}>
           <CardHead title="SLA by Step" accent={C.red} sub="Avg working days vs target · % on time · click a step for the longest cases" t={t}/>
           {bastMissing&&<div style={{margin:"12px 18px 0",padding:"8px 12px",borderRadius:10,background:t.infoBg,border:`1px solid ${t.infoBd}`,fontSize:12.5,color:t.ink2,lineHeight:1.5}}>BAST steps need <strong>BAST Received Date</strong> and <strong>BAST Approved Date</strong> columns in the Agency sheet. They are not in the uploaded data yet, so those steps show &ldquo;no data&rdquo; and are left out of the funnel.</div>}
@@ -2341,6 +2349,158 @@ function RollingChart({ months, refText, t }) {
             : <><strong style={{color:t.ink,fontVariantNumeric:"tabular-nums"}}>{h.actual!=null?fmtRpWord(h.actual):"—"}</strong><span style={{color:t.muted}}>{plural(h.n,"row")}{h.kind==="partial"?" · too few rows, not used as reference":""}</span></>}
         </div>
       ); })()}
+    </div>
+  );
+}
+
+/* ── Distribution Fee & Champions (Partner): success rate + daftar invoice per bulan program ── */
+// Cocok bila Program Type (atau Project Title bila Program Type kosong) memuat "DISTRIBUTION FEE" atau "CHAMPION"
+// (termasuk FEEBATCH/HYBRID/(BATCH 2), CHAMPIONSANNUALREWARDS, dan salah ketik "GHAMPIONS"/"DIŞTRIBUTION").
+// "Kompensasi Distribusi Voucher" sengaja tidak termasuk.
+const dcText = (s) => String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toUpperCase();
+const DC_RE = /DISTRIBUTION\s*FEE|[CG]HAMPION/;
+const isDcRow = (r) => DC_RE.test(dcText(gstr(r,["program type","programtype"]) || gstr(r,["project title","=project"])));
+const H_INV_CREATED = ["=invoice date","=created invoice","created invoice date","=invoice created","=tanggal invoice"];
+const H_INV_COUPA   = ["=invoice submission","invoice submission date","=invoicing","invoicing date","=inv submission"];
+const DC_STEPS = [
+  { k:"up",   label:"Invoice Uploading",  done:(x)=>!!(x.created || x.inv) },
+  { k:"coupa",label:"Invoicing on Coupa", done:(x)=>!!x.coupa },
+  { k:"clv",  label:"CLV",                done:(x)=>!!x.clv },
+  { k:"clr",  label:"Clearing Bank",      done:(x)=>!!x.clr },
+];
+const fmtDayMon = (d) => d ? d.toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}) : "";
+const MONTHS_LONG = ["","January","February","March","April","May","June","July","August","September","October","November","December"];
+const ymLong = (mk) => mk ? `${MONTHS_LONG[mk%100]} ${Math.floor(mk/100)}` : "";
+const dcEnt = (r) => String(entLabel(gstr(r,["=entity"]))||"").toUpperCase();
+
+function DcTab({ rows, w, t, showToast }) {
+  const all = useMemo(()=>rows.filter(isDcRow).map(r=>({
+    mk: rowMonthKey(r), ent: dcEnt(r),
+    created: toDate(gcell(r,H_INV_CREATED,null)), inv: refNo(r), title: gstr(r,["project title","=project"]),
+    total: gnum(r,["=invoice amount"]) || gnum(r,["=amount","total amount","=total"]),
+    supplier: ownerName(r),
+    coupa: toDate(gcell(r,H_INV_COUPA,null)), clv: toDate(gcell(r,H_CLV,null)), clr: toDate(gcell(r,H_CLR,null)),
+  })),[rows]);
+  const ents = useMemo(()=>[...new Set(all.map(x=>x.ent).filter(Boolean))].sort(),[all]);
+  const [entSel, setEnt] = useState("MDI");
+  const ent = entSel==="ALL" || ents.includes(entSel) ? entSel : (ents[0] || "ALL");
+  const byEnt = useMemo(()=>all.filter(x=>ent==="ALL"||x.ent===ent),[all,ent]);
+  const months = useMemo(()=>[...new Set(byEnt.map(x=>x.mk).filter(Boolean))].sort((a,b)=>b-a),[byEnt]);
+  const [mkSel, setMk] = useState(null);
+  const mk = mkSel && months.includes(mkSel) ? mkSel : months[0];
+  const [sort, setSort] = useState({ col:"no", dir:"asc" });
+  const list = useMemo(()=>byEnt.filter(x=>x.mk===mk).map((x,i)=>({...x,no:i+1})),[byEnt,mk]);
+  const shown = useMemo(()=>{
+    if (sort.col==="no") return list;
+    const m = sort.dir==="asc" ? 1 : -1;
+    return [...list].sort((a,b)=> sort.col==="total" ? m*(a.total-b.total) : m*a.supplier.localeCompare(b.supplier) || a.no-b.no);
+  },[list,sort]);
+  const rates = DC_STEPS.map(s=>{ const n = list.filter(s.done).length; return { ...s, n, p: list.length ? Math.round(n/list.length*100) : 0 }; });
+  const total = list.reduce((s,x)=>s+x.total,0);
+  const entName = ent==="ALL" ? "MDI & SDP" : ent;
+  const title = `Distribution Fee & Champions ${entName} · ${ymLong(mk)} · ICM`;
+  const fileTitle = `DISTRIBUTION FEE & CHAMPIONS ${entName} ${ymLong(mk).toUpperCase()} - ICM`;
+  const rateTxt = (r) => `${r.p}% (${r.n} of ${list.length})`;
+  const head = ["No","Created Invoice","No Invoice","Project Title","Total","Supplier","Invoicing","CLV","Bank Clearing Date"];
+
+  const exportXlsx = async () => {
+    const XLSX = await getXLSX();
+    const aoa = [[fileTitle],[],["SUCCESS RATE"],...rates.map(r=>[r.label,"",rateTxt(r).toUpperCase()]),[],head,
+      ...shown.map((x,i)=>[i+1, fmtDayMon(x.created)||"pending", x.inv||"pending", x.title, Math.round(x.total), x.supplier, fmtDayMon(x.coupa)||"pending", fmtDayMon(x.clv)||"pending", fmtDayMon(x.clr)||"pending"]),
+      ["TOTAL","","","",total,"","","",""]];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const r0 = 4 + rates.length + 1; // baris header tabel (0-based)
+    for (let r=r0+1; r<aoa.length; r++) {
+      const tc = ws[XLSX.utils.encode_cell({r,c:4})]; if (tc && tc.t==="n") tc.z = "#,##0";
+    }
+    ws["!merges"] = [{ s:{r:0,c:0}, e:{r:0,c:8} }, ...rates.map((_,i)=>({ s:{r:3+i,c:0}, e:{r:3+i,c:1} }))];
+    ws["!cols"] = [6,15,20,48,16,32,15,15,18].map(wch=>({wch}));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, `${entName} ${MONTHS_SHORT[mk%100]} ${Math.floor(mk/100)}`.replace(/[^\w &-]/g,"").slice(0,31));
+    XLSX.writeFile(wb, `distribution_fee_champions_${entName.replace(/\W+/g,"_").toLowerCase()}_${mk}.xlsx`);
+    showToast("Distribution Fee & Champions report downloaded — Excel","success");
+  };
+  const copyTable = async () => {
+    const lines = [fileTitle,"","SUCCESS RATE",...rates.map(r=>`${r.label}\t${rateTxt(r).toUpperCase()}`),"",head.join("\t"),
+      ...shown.map((x,i)=>[i+1, fmtDayMon(x.created), x.inv, x.title, Math.round(x.total), x.supplier, fmtDayMon(x.coupa), fmtDayMon(x.clv), fmtDayMon(x.clr)].join("\t")),
+      ["TOTAL","","","",Math.round(total),"","","",""].join("\t")];
+    try { await navigator.clipboard.writeText(lines.join("\n")); showToast("Table copied — paste into Excel or email","success"); }
+    catch { showToast("Copy failed — use Export Excel instead","error"); }
+  };
+
+  if (!all.length) return <Card t={t} style={{marginBottom:14}}><EmptyNote t={t}>No Distribution Fee or Champions rows in the partner data</EmptyNote></Card>;
+  const phone = w<640;
+  const th = (left) => ({ ...thS(t,left), padding:"8px 8px" });
+  const td = (left) => ({ ...tdS(t,left), padding:"8px 8px" });
+  const pend = <span style={{display:"inline-block",padding:"1px 8px",borderRadius:99,background:t.warnBg,border:`1px solid ${t.warnBd}`,color:t.warnDark,fontSize:12,fontWeight:600}}>pending</span>;
+  const dt = (d) => d ? fmtDayMon(d) : pend;
+  const sel = {fontFamily:"inherit",fontSize:13,fontWeight:700,color:t.ink,background:t.surf2,border:`1px solid ${t.line2}`,borderRadius:9,padding:"6px 10px",cursor:"pointer"};
+  return (
+    <div style={{marginBottom:14}}>
+      <div style={{display:"flex",alignItems:"flex-start",gap:12,flexWrap:"wrap",marginBottom:14}}>
+        <div style={{flex:"1 1 420px",minWidth:0}}>
+          <div style={{fontWeight:800,fontSize:20,letterSpacing:"-0.02em",color:t.ink}}>{title}</div>
+          <div style={{fontSize:13,color:t.ink2,marginTop:6,lineHeight:1.5}}>{plural(list.length,"invoice")} · total <strong style={{color:t.ink}} title={fmtRpFull(total)}>{fmtRpWord(total)}</strong> · by program month</div>
+        </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+          <select aria-label="Period" value={mk||""} onChange={e=>setMk(+e.target.value)} style={sel}>{months.map(m=><option key={m} value={m}>{ymLong(m)}</option>)}</select>
+          <select aria-label="Entity" value={ent} onChange={e=>{ setEnt(e.target.value); setMk(null); }} style={sel}>{ents.map(e=><option key={e} value={e}>{e}</option>)}<option value="ALL">All entities</option></select>
+          <Btn t={t} sm onClick={copyTable}>Copy table</Btn>
+          <Btn t={t} variant="primary" sm onClick={exportXlsx}>Export Excel</Btn>
+        </div>
+      </div>
+      <Card t={t} pad={false} style={{marginBottom:14}}>
+        <CardHead title="Success Rate" sub={`${ymLong(mk)} · ${entName} · share of ${plural(list.length,"invoice")} that reached each step`} t={t}/>
+        <div style={{padding:"14px 20px",display:"grid",gridTemplateColumns:w>=900?"repeat(4,minmax(0,1fr))":phone?"1fr":"repeat(2,minmax(0,1fr))",gap:14}}>
+          {rates.map(r=>{ const c = pctClr(r.p,t); return (
+            <div key={r.k} style={{minWidth:0}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8}}>
+                <span style={{fontSize:12.5,fontWeight:600,color:t.ink2}}>{r.label}</span>
+                <span style={{fontSize:12.5,color:t.muted,fontVariantNumeric:"tabular-nums"}}>{r.n} of {list.length}</span>
+              </div>
+              <div style={{fontSize:22,fontWeight:800,color:c.c,fontVariantNumeric:"tabular-nums",margin:"2px 0 6px"}}>{r.p}%</div>
+              <div style={{height:8,borderRadius:99,background:t.surf3,overflow:"hidden"}} role="img" aria-label={`${r.label} ${r.p}%`}><div style={{width:`${r.p}%`,height:"100%",borderRadius:99,background:c.dot}}/></div>
+            </div>
+          ); })}
+        </div>
+      </Card>
+      <Card t={t} pad={false}>
+        <div style={{maxHeight:560,overflow:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse"}}>
+            <thead><tr>
+              <SortTh col="no" sort={sort} setSort={setSort} t={t}>No</SortTh>
+              <th style={th(false)}>Created Invoice</th>
+              <th style={th(true)}>No Invoice</th>
+              <th style={th(true)}>Project Title</th>
+              <SortTh col="total" sort={sort} setSort={setSort} t={t}>Total</SortTh>
+              <SortTh col="supplier" left sort={sort} setSort={setSort} t={t}>Supplier</SortTh>
+              <th style={th(false)}>Invoicing</th>
+              <th style={th(false)}>CLV</th>
+              <th style={th(false)}>Bank Clearing Date</th>
+            </tr></thead>
+            <tbody>
+              {shown.map((x,i)=>(
+                <tr key={i} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+                  <td style={{...td(false),color:t.muted}}>{i+1}</td>
+                  <td style={td(false)}>{dt(x.created)}</td>
+                  <td style={{...td(true),maxWidth:120}} title={x.inv}>{x.inv || pend}</td>
+                  <td style={{...td(true),maxWidth:phone?160:170,color:t.ink2}} title={x.title}>{x.title}</td>
+                  <td style={{...td(false),color:t.ink,fontWeight:600}} title={fmtRpFull(x.total)}>{Math.round(x.total).toLocaleString("id-ID")}</td>
+                  <td style={{...td(true),maxWidth:150,color:t.ink}} title={x.supplier}>{x.supplier}</td>
+                  <td style={td(false)}>{dt(x.coupa)}</td>
+                  <td style={td(false)}>{dt(x.clv)}</td>
+                  <td style={td(false)}>{dt(x.clr)}</td>
+                </tr>
+              ))}
+              <tr style={{background:t.surf2}}>
+                <td colSpan={4} style={{...td(true),fontWeight:700,color:t.ink,borderTop:`1.5px solid ${t.line2}`}}>TOTAL</td>
+                <td style={{...td(false),fontWeight:800,color:t.ink,borderTop:`1.5px solid ${t.line2}`}} title={fmtRpFull(total)}>{Math.round(total).toLocaleString("id-ID")}</td>
+                <td colSpan={4} style={{...td(true),borderTop:`1.5px solid ${t.line2}`}}/>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </Card>
     </div>
   );
 }
