@@ -34,7 +34,7 @@
     return '<svg class="rm-ico" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'
       + '<defs><linearGradient id="' + g + '" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="' + c[0] + '"/><stop offset="1" stop-color="' + c[1] + '"/></linearGradient></defs>'
       + '<rect width="24" height="24" rx="6.5" fill="url(#' + g + ')"/>'
-      + '<g transform="translate(4.2 4.2) scale(.65)" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">' + ICON_PATH[id] + '</g></svg>';
+      + '<g transform="translate(3 3) scale(.75)" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' + ICON_PATH[id] + '</g></svg>';
   }
 
   var esc = function (s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
