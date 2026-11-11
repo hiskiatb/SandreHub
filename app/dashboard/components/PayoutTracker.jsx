@@ -1400,14 +1400,17 @@ function DashScreen(props) {
     searchRef, searchSuggestions, allSuggestions, searchInput, setSearchInput,
     setRawPage, showToast, exportSummary, profile } = props;
   const isAg = src === "agency";
-  // Accrual (Agency) tampil di level atas untuk role yang boleh melihat Agency, apa pun pilihan Partner/Agency
-  const showAccrual = (isSPM||isIOHAny) && (viewAgencyRaw||[]).length>0;
-  const isAcc = activeTab==="acc" && showAccrual;
-  // Forecast pembayaran Partner Prepaid (tab level atas)
-  const showForecast = (viewPartnerRaw||[]).length>0;
-  const isFc = activeTab==="fc" && showForecast;
-  // Tab YTD & Accrual punya pilihan tahun sendiri: switch PO/MDI, Partner/Agency & filter disembunyikan
-  const isYtd = activeTab==="ytd" || isAcc || isFc;
+  // Tab level atas mengikuti pilihan Partner/Agency: Accrual hanya Agency (role yang boleh melihat Agency),
+  // Forecast hanya Partner. YTD Summary gabungan keduanya.
+  const canAgency = isSPM || isIOHAny;
+  const showAccrual = isAg && canAgency && (viewAgencyRaw||[]).length>0;
+  const showForecast = !isAg && (viewPartnerRaw||[]).length>0;
+  // Tab yang sedang dibuka tapi tidak tersedia untuk pilihan ini → kembali ke Dashboard
+  const tabKey = (activeTab==="acc" && !showAccrual) || (activeTab==="fc" && !showForecast) ? "dash" : activeTab;
+  const isAcc = tabKey==="acc", isFc = tabKey==="fc";
+  // YTD/Accrual/Forecast punya pilihan sendiri → filter dashboard disembunyikan; toggle Partner/Agency
+  // tetap tampil kecuali di YTD (gabungan Partner + Agency)
+  const isYtd = tabKey==="ytd" || isAcc || isFc;
 
   // Dokumen per PO (Partner & Agency): dipakai kolom Dokumen di Raw Data & tab Upload & Merge Dokumen
   // profile null → hook tidak aktif (docs.enabled=false), tidak ada fetch dokumen/approval
@@ -1518,7 +1521,7 @@ function DashScreen(props) {
         </div>
       )}
 
-      {!isYtd&&<div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:18}}>
+      {tabKey!=="ytd"&&<div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:18}}>
       {segVisible.length>0&&(
         <div style={{display:"inline-flex",gap:4,background:t.surf,border:`1px solid ${t.line}`,borderRadius:14,padding:4,boxShadow:t.shadow1,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"none",maxWidth:"100%"}}>
           {segVisible.map(s=>(
@@ -1528,6 +1531,9 @@ function DashScreen(props) {
               onClick={()=>{
                 if (s===src) return;
                 setSrc(s);
+                // pindah ke tab padanannya: Accrual (Agency) ↔ Forecast (Partner)
+                if (activeTab==="acc" && s==="partner") setActiveTab((viewPartnerRaw||[]).length ? "fc" : "dash");
+                else if (activeTab==="fc" && s==="agency") setActiveTab(canAgency && (viewAgencyRaw||[]).length ? "acc" : "dash");
                 resetFilters();
                 setSearchIdx(-1); setRawPage(1);
                 showToast(`Switched to ${s==="partner"?"Partner":"Agency"} Prepaid — filters reset`);
@@ -1540,7 +1546,7 @@ function DashScreen(props) {
 
       <div style={{display:"flex",gap:24,borderBottom:`1px solid ${t.line}`,marginBottom:18,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"none"}}>
         {[{id:"dash",label:"Dashboard"},{id:"raw",label:"Raw Data",count:filtRaw.length},{id:"ytd",label:"YTD Summary"},...(showAccrual?[{id:"acc",label:"Accrual"}]:[]),...(showForecast?[{id:"fc",label:"Forecast"}]:[]),...(SHOW_DOCUMENT_TABS&&docs.enabled?[{id:"docs",label:"Document Upload & Merge",count:docPOsDone}]:[]),...(SHOW_DOCUMENT_TABS&&docs.enabled&&docs.canManageApprovals?[{id:"letters",label:"Partner Letters"}]:[])].map(tab=>(
-          <TabBtn key={tab.id} label={tab.label} count={tab.count} active={activeTab===tab.id} onClick={()=>setActiveTab(tab.id)} t={t}/>
+          <TabBtn key={tab.id} label={tab.label} count={tab.count} active={tabKey===tab.id} onClick={()=>setActiveTab(tab.id)} t={t}/>
         ))}
       </div>
 
@@ -1612,7 +1618,7 @@ function DashScreen(props) {
         <ForecastTab rows={viewPartnerRaw||[]} w={w} t={t} showToast={showToast}/>
       ) : isAcc ? (
         <Card t={t} pad={false} style={{marginBottom:14}}>
-          <CardHead title="Accrual · Agency Prepaid" accent={C.yellow} sub="Submission checklist, missing list & accrual estimate · always uses Agency data" t={t}/>
+          <CardHead title="Accrual · Agency Prepaid" accent={C.yellow} sub="Submission checklist, missing list & accrual estimate · all Agency rows for the selected year" t={t}/>
           <AccrualTab rows={viewAgencyRaw||[]} w={w} t={t} showToast={showToast}/>
         </Card>
       ) : isYtd ? (
@@ -1628,8 +1634,8 @@ function DashScreen(props) {
         </Card>
       ) : (
         <>
-          {activeTab==="dash" && <DashTab {...props} t={t} w={w}/>}
-          {activeTab==="raw"  && <RawTab  {...props} t={t} w={w} docs={docs}/>}
+          {tabKey==="dash" && <DashTab {...props} t={t} w={w}/>}
+          {tabKey==="raw"  && <RawTab  {...props} t={t} w={w} docs={docs}/>}
           {SHOW_DOCUMENT_TABS && activeTab==="letters" && docs.enabled && docs.canManageApprovals && <PartnerLettersTab docs={docs} partnerNames={src==="partner"?[...new Set(docPOsAll.map(p=>p.partner).filter(Boolean))].sort():[]} t={t}/>}
           {SHOW_DOCUMENT_TABS && activeTab==="docs" && docs.enabled && <PoDocsTab pos={docPOs} allPos={docPOsAll} segment={src} docs={docs} noRefCount={docNoRef} fmtAmount={n=>fmtMoney(n)} onGoLetters={docs.canManageApprovals?()=>setActiveTab("letters"):undefined} t={t}/>}
         </>
