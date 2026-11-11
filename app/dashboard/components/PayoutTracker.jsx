@@ -236,7 +236,8 @@ function enrichRow(r) {
   const refK   = findCol(r,["=ref type","=reference type"]);
   const combK  = ks.find(k=>{ const n=normKey(k); return n.includes("po") && n.includes("inv") && (n.includes("/")||n.includes("number")) && !n.includes("date") && !n.includes("submission"); }) || null;
   const poK    = findCol(r,["=po number","=po #","=no po","=po no","=po"]);
-  const invK   = findCol(r,["=invoice number","=inv number","=invoice no","=invoice #","=no invoice","=inv no"]);
+  const invK   = findCol(r,["=invoice number","=inv number","=invoice no","=invoice no.","=invoice #","=no invoice","=no. invoice","=nomor invoice","=inv no"]);
+  const invIdK = findCol(r,["=invoice id","=inv id","=id invoice","=invoice_id","=invoiceid"]);
   const statK  = findCol(r,H_STAT);
   // Placeholder "0" / "-" = belum ada nomor
   const num = (v) => { const s = String(v ?? "").trim(); return /^(0|-+|—|n\/?a)$/i.test(s) ? "" : s; };
@@ -255,16 +256,18 @@ function enrichRow(r) {
   if (!flow) flow = refFlow || (po ? FLOW_PO : inv ? FLOW_DI : FLOW_PO);
   const status = statK ? normalizeStatus(r[statK]) : "";
   if (statK) o[statK] = status;
-  if (flowK) o[flowK] = flow; else o["Flow"] = flow;
+  if (flowK) o[flowK] = flow;
   if (!invK) o["Invoice Number"] = inv || null;
-  o._flow = flow; o._po = po; o._inv = inv; o._status = status;
+  o._flow = flow; o._po = po; o._inv = inv; o._invId = invIdK ? num(r[invIdK]) : ""; o._status = status;
   return o;
 }
-const refNo = (r) => r._po || r._inv || "";
-// Tampilan MDI: entity "MPX" ditampilkan sebagai "MDI" (nilai data tidak diubah)
-const entLabel = (v, flowSel) => (flowSel===FLOW_DI && String(v??"").trim().toUpperCase()==="MPX") ? "MDI" : v;
-// Kolom khusus alur PO/Requisition — disembunyikan di tampilan MDI
-const isPoOnlyCol = (k) => /^(#?\s*req\b|req id|req date|requisition|reva\b|reva date|po\b|po #|po number|po date|no po|surat|ref type)/.test(normKey(k));
+// Identitas tagihan: Invoice Number + Invoice ID (tanpa PO)
+const refNo = (r) => r._inv || r._invId || "";
+const invLabel = (inv, id) => [inv, id && id!==inv ? `ID ${id}` : ""].filter(Boolean).join(" · ") || "—";
+// Entity "MPX" ditampilkan sebagai "MDI" (nilai data tidak diubah)
+const entLabel = (v) => String(v??"").trim().toUpperCase()==="MPX" ? "MDI" : v;
+// Kolom PO/Requisition & Flow dari file lama: tetap dibaca, tapi tidak ditampilkan/diekspor
+const isPoOnlyCol = (k) => /^(#?\s*req\b|req id|req date|requisition|po\b|po #|po number|po date|no po|ref type|flow$)/.test(normKey(k));
 const rowStatus = (r) => r._status ?? normalizeStatus(gstr(r,H_STAT));
 const rowFlow   = (r) => r._flow || FLOW_PO;
 
@@ -307,10 +310,9 @@ function buildAgg(rows, src) {
     const entity= gstr(r,["entity"]);
     const ptype = ag ? gstr(r,["agency name"]) : gstr(r,["partner type","partnertype","partner_type"]);
     const prog  = gstr(r,["program type","programtype"]);
-    const flow  = rowFlow(r);
     if (!month) return;
-    const key = [month,entity,ptype,prog,flow].join("\x00");
-    if (!groups[key]) groups[key]={ month,entity,ptype,prog,flow,src,n:0,reva:0,bastR:0,bastA:0,surat:0,inv:0,clv:0,clr:0,amt:0 };
+    const key = [month,entity,ptype,prog].join("\x00");
+    if (!groups[key]) groups[key]={ month,entity,ptype,prog,src,n:0,reva:0,bastR:0,bastA:0,surat:0,inv:0,clv:0,clr:0,amt:0 };
     const g = groups[key];
     g.n++;
     if (gcell(r,H_REVA)) g.reva++;
@@ -786,7 +788,7 @@ export default function PayoutTracker({
     return { partnerAgg: pAgg, agencyAgg: aAgg };
   }, [partnerRaw, agencyRaw]);
 
-  const [filters, setFilters]         = useState({ month:[], entity:[], ptype:[], prog:[], status:[], flow:"all", q:"" });
+  const [filters, setFilters]         = useState({ month:[], entity:[], ptype:[], prog:[], status:[], q:"" });
   const [searchInput, setSearchInput] = useState("");
   const [rawSort, setRawSort]         = useState({ col:null, dir:"asc" });
   const [rawPage, setRawPage]         = useState(1);
@@ -802,7 +804,6 @@ export default function PayoutTracker({
   const isAg   = src === "agency";
   const curRaw = isAg ? agencyRaw  : partnerRaw;
   const curAgg = isAg ? agencyAgg  : partnerAgg;
-  const flowSel = filters.flow==="PO" ? FLOW_PO : filters.flow==="DI" ? FLOW_DI : "all";
   const slaSet = isAg ? SLA_STEPS.agency : SLA_STEPS.partner;
 
   const showToast = useCallback((msg,type="")=>{
@@ -927,7 +928,6 @@ export default function PayoutTracker({
 
   const { filtAgg, filtRaw } = useMemo(()=>{
     const { month,entity,ptype,prog,status,q } = filters;
-    const flow = filters.flow==="PO" ? FLOW_PO : filters.flow==="DI" ? FLOW_DI : null;
     const ql = q.toLowerCase().trim();
     const toArr = v => Array.isArray(v) ? v : (v ? [v] : []);
     const monthSel=toArr(month), entSel=toArr(entity), ptypeSel=toArr(ptype), progSel=toArr(prog), statusSel=toArr(status);
@@ -935,17 +935,15 @@ export default function PayoutTracker({
       (monthSel.length===0||monthSel.includes(r.month))&&
       (entSel.length===0||entSel.includes(r.entity))&&
       (ptypeSel.length===0||ptypeSel.includes(r.ptype))&&
-      (progSel.length===0||progSel.includes(r.prog))&&
-      (!flow||r.flow===flow)
+      (progSel.length===0||progSel.includes(r.prog))
     );
     let raw = curRaw.filter(r=>{
-      if (flow && rowFlow(r)!==flow) return false;
       if (monthSel.length>0 && !monthSel.includes(gstr(r,["program date","month"]))) return false;
       if (entSel.length>0   && !entSel.includes(gstr(r,["entity"]))) return false;
       if (ptypeSel.length>0 && !ptypeSel.includes(gstr(r,["partner type","agency name"]))) return false;
       if (progSel.length>0  && !progSel.includes(gstr(r,["program type"]))) return false;
       if (statusSel.length>0 && !statusSel.includes(rowStatus(r))) return false;
-      if (ql) { const blob=[gstr(r,["partner name","agency name"]),gstr(r,["project title"]),r._po,r._inv,gstr(r,["#req id"])].join(" ").toLowerCase(); if (!blob.includes(ql)) return false; }
+      if (ql) { const blob=[gstr(r,["partner name","agency name"]),gstr(r,["project title"]),r._inv,r._invId].join(" ").toLowerCase(); if (!blob.includes(ql)) return false; }
       return true;
     });
     if (statusSel.length>0||ql) agg = buildAgg(raw, src);
@@ -1000,13 +998,13 @@ export default function PayoutTracker({
     if (fmt==="xlsx") {
       const XLSX=await getXLSX();
       const wb=XLSX.utils.book_new();
-      const ws=XLSX.utils.json_to_sheet(filtAgg.map(r=>({"Program Date":fmtMonthYear(r.month),"Entity":r.entity,"Partner/Agency Type":r.ptype,"Program Type":r.prog,"Flow":r.flow,"#Records":r.n,"Reva":r.reva,"Surat Pemberitahuan":r.surat,"Invoice":r.inv,"CLV":r.clv,"Clearing":r.clr,"% Invoice":r.n?+(r.inv/r.n*100).toFixed(1):0,"% CLV":r.n?+(r.clv/r.n*100).toFixed(1):0,"% Clearing":r.n?+(r.clr/r.n*100).toFixed(1):0})));
+      const ws=XLSX.utils.json_to_sheet(filtAgg.map(r=>({"Program Date":fmtMonthYear(r.month),"Entity":r.entity,"Partner/Agency Type":r.ptype,"Program Type":r.prog,"#Records":r.n,"Reva":r.reva,"Surat Pemberitahuan":r.surat,"Invoice":r.inv,"CLV":r.clv,"Clearing":r.clr,"% Invoice":r.n?+(r.inv/r.n*100).toFixed(1):0,"% CLV":r.n?+(r.clv/r.n*100).toFixed(1):0,"% Clearing":r.n?+(r.clr/r.n*100).toFixed(1):0})));
       XLSX.utils.book_append_sheet(wb,ws,"Summary"); XLSX.writeFile(wb,`${pref}_summary_${stamp}.xlsx`);
       showToast("Filtered summary downloaded — Excel","success");
     } else {
-      const hdr="Program Date,Entity,Partner Type,Program Type,Flow,#Rec,Reva,Surat Pemberitahuan,Invoice,CLV,Clearing,% Invoice,% CLV,% Clearing";
+      const hdr="Program Date,Entity,Partner Type,Program Type,#Rec,Reva,Surat Pemberitahuan,Invoice,CLV,Clearing,% Invoice,% CLV,% Clearing";
       const csv=v=>{ const s=String(v??""); return /[",\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s; };
-      const body=filtAgg.map(r=>[fmtMonthYear(r.month),r.entity,r.ptype,r.prog,r.flow,r.n,r.reva,r.surat,r.inv,r.clv,r.clr,r.n?+(r.inv/r.n*100).toFixed(1):0,r.n?+(r.clv/r.n*100).toFixed(1):0,r.n?+(r.clr/r.n*100).toFixed(1):0].map(csv).join(",")).join("\n");
+      const body=filtAgg.map(r=>[fmtMonthYear(r.month),r.entity,r.ptype,r.prog,r.n,r.reva,r.surat,r.inv,r.clv,r.clr,r.n?+(r.inv/r.n*100).toFixed(1):0,r.n?+(r.clv/r.n*100).toFixed(1):0,r.n?+(r.clr/r.n*100).toFixed(1):0].map(csv).join(",")).join("\n");
       const a=document.createElement("a"); a.href="data:text/csv;charset=utf-8,\uFEFF"+encodeURIComponent(hdr+"\n"+body); a.download=`${pref}_${stamp}.csv`; a.click();
       showToast("Filtered summary downloaded — CSV","success");
     }
@@ -1015,7 +1013,7 @@ export default function PayoutTracker({
   async function exportRaw() {
     if (!filtRaw.length) { showToast("No data available","error"); return; }
     const XLSX=await getXLSX();
-    const allKeys=Object.keys(filtRaw[0]).filter(k=>!k.startsWith("_"));
+    const allKeys=Object.keys(filtRaw[0]).filter(k=>!k.startsWith("_")&&!isPoOnlyCol(k));
     // urutan kolom mengikuti tampilan front-end (rawKeys), sisanya menyusul di belakang
     const seen=new Set(), keys=[];
     for (const k of rawKeys) if (allKeys.includes(k) && !seen.has(k)) { keys.push(k); seen.add(k); }
@@ -1043,7 +1041,7 @@ export default function PayoutTracker({
     const q=(searchInput||"").toLowerCase().trim();
     if (!q||q.length<2||!curRaw.length) return {partners:[],pos:[],projects:[]};
     const pCnt={},poCnt={},prCnt={};
-    curRaw.forEach(r=>{ const n=gstr(r,["partner name","agency name"]); if(n)pCnt[n]=(pCnt[n]||0)+1; [r._po,r._inv].forEach(po=>{ if(po)poCnt[po]=(poCnt[po]||0)+1; }); const pr=gstr(r,["project title"]); if(pr)prCnt[pr]=(prCnt[pr]||0)+1; });
+    curRaw.forEach(r=>{ const n=gstr(r,["partner name","agency name"]); if(n)pCnt[n]=(pCnt[n]||0)+1; [r._inv,r._invId].forEach(po=>{ if(po)poCnt[po]=(poCnt[po]||0)+1; }); const pr=gstr(r,["project title"]); if(pr)prCnt[pr]=(prCnt[pr]||0)+1; });
     return {
       partners:Object.entries(pCnt).filter(([k])=>k.toLowerCase().includes(q)).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([k,v])=>({label:k,count:v,type:"partner"})),
       pos:     Object.entries(poCnt).filter(([k])=>k.toLowerCase().includes(q)).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,v])=>({label:k,count:v,type:"po"})),
@@ -1066,6 +1064,8 @@ export default function PayoutTracker({
     req:["#Req ID","#req id","req id"],
     po:["PO Number","po number","PO #","po #","No PO","no po"],
     reqDate:["Reva Date","reva date","Req Date","req date"],
+    reva:["Reva Date","reva date"],
+    invId:["Invoice ID","invoice id","Inv ID","ID Invoice"],
     bastR:["BAST Received Date","bast received date","BAST Date","bast date"],
     bastA:["BAST Approved Date","bast approved date","BAST Approval Date","Approval Date","approval date"],
     poDate:["PO Date","po date"],
@@ -1078,16 +1078,12 @@ export default function PayoutTracker({
     est:["Estimation Date","estimation date","Estimasi","estimasi"],
     status:["Status","status","Payment Status","payment status"],
   };
-  // Kolom utama per tampilan: All / PO (lama) / MDI (Direct Invoice)
-  const MAIN_RAW_GROUPS = flowSel===FLOW_PO
-    ? [G.month,G.name,G.title,G.req,G.amount,G.po,G.reqDate,G.poDate,...(isAg?[]:[G.surat]),G.invSub,G.clr,G.status]
-    : flowSel===FLOW_DI
-    ? [G.month,G.entity,G.name,G.title,G.amount,G.inv,G.invDate,G.invSub,G.clv,G.clr,G.est,G.status]
-    : isAg
-    ? [G.month,G.ptype,G.title,G.amount,G.bastR,G.bastA,G.invSub,G.clv,G.clr,G.est,G.status]
-    : [G.month,G.ptype,G.title,G.name,G.amount,G.reqDate,G.surat,G.invSub,G.clv,G.clr,G.est,G.status];
+  // Kolom utama: identitas invoice + tanggal tahap
+  const MAIN_RAW_GROUPS = isAg
+    ? [G.month,G.ptype,G.title,G.amount,G.invId,G.inv,G.bastR,G.bastA,G.invSub,G.clv,G.clr,G.est,G.status]
+    : [G.month,G.ptype,G.title,G.name,G.amount,G.invId,G.inv,G.reva,G.surat,G.invSub,G.clv,G.clr,G.est,G.status];
 
-  const RAW_COL_ORDER = ["Program Date","program date","Entity","entity","Partner Type","partner type","partnertype","partner_type","Project Title","project title","#Req ID","#req id","req id","Partner Name","partner name","partner_name","Amount","amount","Flow","PO Number","po number","PO #","po #","Invoice Number","Reva Date","reva date","PO Date","po date","Surat Pemberitahuan Date","surat pemberitahuan date","surat pemberitahuan","Invoice Submission","invoice submission","invoice","CLV Date","clv date","clv","Estimation Date","estimation date","Status","status","Payment Status","payment status"];
+  const RAW_COL_ORDER = ["Program Date","program date","Entity","entity","Partner Type","partner type","partnertype","partner_type","Project Title","project title","#Req ID","#req id","req id","Partner Name","partner name","partner_name","Amount","amount","Invoice ID","invoice id","Invoice Number","invoice number","Reva Date","reva date","PO Date","po date","Surat Pemberitahuan Date","surat pemberitahuan date","surat pemberitahuan","Invoice Submission","invoice submission","invoice","CLV Date","clv date","clv","Estimation Date","estimation date","Status","status","Payment Status","payment status"];
 
   const rawKeysAll = useMemo(()=>{
     if (!curRaw.length) return [];
@@ -1095,9 +1091,9 @@ export default function PayoutTracker({
     const seen=new Set(), ordered=[];
     for (const p of RAW_COL_ORDER) { const f=allKeys.find(k=>k.toLowerCase().trim()===p.toLowerCase().trim()); if(f&&!seen.has(f)){ordered.push(f);seen.add(f);} }
     for (const k of allKeys) { if(!seen.has(k))ordered.push(k); }
-    return flowSel===FLOW_DI ? ordered.filter(k=>!isPoOnlyCol(k)) : ordered;
+    return ordered.filter(k=>!isPoOnlyCol(k));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[curRaw,flowSel]);
+  },[curRaw]);
 
   const rawKeysMain = useMemo(()=>{
     if (!curRaw.length) return [];
@@ -1110,9 +1106,9 @@ export default function PayoutTracker({
       if(!found) for (const cand of group) { const f=allKeys.find(k=>norm(k).includes(norm(cand))); if(f){found=f;break;} }
       if(found && !seen.has(found)){ ordered.push(found); seen.add(found); }
     }
-    return flowSel===FLOW_DI ? ordered.filter(k=>!isPoOnlyCol(k)) : ordered;
+    return ordered.filter(k=>!isPoOnlyCol(k));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[curRaw,flowSel,isAg]);
+  },[curRaw,isAg]);
 
   const rawKeys = showAllCols ? rawKeysAll : (rawKeysMain.length ? rawKeysMain : rawKeysAll);
 
@@ -1132,7 +1128,7 @@ export default function PayoutTracker({
     if (isMonthKey(key)) return fmtMonthYear(val);
     if (isDateKey(key)) { const d=toDate(val); if(d) return fmtDate(d); }
     const kl=key.toLowerCase().replace(/\s+/g,"");
-    if (kl==="entity") return String(entLabel(val,flowSel));
+    if (kl==="entity") return String(entLabel(val));
     if (kl==="status"||kl==="paymentstatus") return <StatusBadge val={String(val)} t={t}/>;
     if (kl==="amount"||kl.includes("amount")) { const n=typeof val==="number"?val:parseFloat(String(val).replace(/[^\d.-]/g,"")); if(!isNaN(n)&&n!==0)return <span style={{fontVariantNumeric:"tabular-nums",textAlign:"right",display:"block",color:t.ink}}>{fmtMoney(n,false)}</span>; }
     return String(val);
@@ -1151,7 +1147,7 @@ export default function PayoutTracker({
     searchFocus,setSearchFocus,searchIdx,setSearchIdx,
     searchRef,searchSuggestions,allSuggestions,searchInput,setSearchInput,
     funnelExp,setFunnelExp,bnExp,setBnExp,
-    src,setSrc,flowSel,activeTab,setActiveTab,
+    src,setSrc,activeTab,setActiveTab,
     curRaw,curAgg,filtAgg,filtRaw,grand,grandPartnerCount,
     funnelStages,bnResults,bastCols,
     rawKeys,rawKeysAll,rawKeysMain,showAllCols,setShowAllCols,
@@ -1210,8 +1206,7 @@ function AdminScreen({ t, pubMeta, upload, setUpload, handleFile, publish, viewD
   const [drag, setDrag] = useState(false);
   const sides = useMemo(()=>[["partner","Partner Prepaid",C.teal],["agency","Agency Prepaid",C.teal]].map(([k,label,ac])=>{
     const u = upload[k];
-    const di = u ? u.rows.filter(r=>rowFlow(enrichRow(r))===FLOW_DI).length : 0;
-    return { k, label, ac, u, n:u?u.rows.length:0, di, amt:u?u.rows.reduce((a,r)=>a+gnum(r,["amount","nilai"]),0):0 };
+    return { k, label, ac, u, n:u?u.rows.length:0, amt:u?u.rows.reduce((a,r)=>a+gnum(r,["amount","nilai"]),0):0 };
   }),[upload]);
   const ready = sides.filter(x=>x.u), missing = sides.filter(x=>!x.u);
   const confirmText = `This will replace ${ready.map(x=>`${x.label} (${plural(x.n,"row")})`).join(" and ")} for everyone.${missing.length&&ready.length?` ${missing[0].label} stays as it is.`:""}`;
@@ -1282,8 +1277,7 @@ function AdminScreen({ t, pubMeta, upload, setUpload, handleFile, publish, viewD
               ? <>
                   <div style={{fontWeight:800,fontSize:18,color:t.ink,marginTop:4}}>{plural(x.n,"row")} · {fmtRpWord(x.amt)}</div>
                   <div style={{fontFamily:MONO,fontSize:12,color:t.muted,marginTop:2,wordBreak:"break-word"}}>{fmtRpFull(x.amt)} · sheet &ldquo;{x.u.sheet}&rdquo; · {x.u.file}</div>
-                  <div style={{fontSize:12,color:t.ink2,marginTop:4}}>PO (lama) {(x.n-x.di).toLocaleString()} · MDI (Direct Invoice) {x.di.toLocaleString()}</div>
-                  {x.u.dup>0&&<div style={{fontSize:12,color:t.badDark,fontWeight:600,marginTop:4}}>⚠ {x.u.dup} MDI row{x.u.dup!==1?"s":""} also appear in the old sheet (same invoice number) — check for double counting.</div>}
+                  {x.u.dup>0&&<div style={{fontSize:12,color:t.badDark,fontWeight:600,marginTop:4}}>⚠ {x.u.dup} row{x.u.dup!==1?"s":""} from the &ldquo;… MDI&rdquo; sheet repeat an invoice number from the main sheet — check for double counting.</div>}
                 </>
               : <div style={{fontSize:12.5,color:t.muted,marginTop:4,lineHeight:1.5}}>{ready.length?"Live data for this side stays unchanged. You can also drop a second file for it.":"Waiting for a file."}</div>}
           </div>
@@ -1301,7 +1295,7 @@ function AdminScreen({ t, pubMeta, upload, setUpload, handleFile, publish, viewD
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
           Publish to Cloud
         </Btn>
-        <Btn t={t} variant="outline" onClick={viewDash}>View Live Dashboard</Btn>
+        {!pubMeta&&<Btn t={t} variant="outline" onClick={viewDash}>View Live Dashboard</Btn>}
         <Btn t={t} variant="ghost" onClick={()=>{setConfirmPub(false);setUpload({partner:null,agency:null});}}>Reset Upload</Btn>
       </div>
     </div>
@@ -1312,19 +1306,6 @@ function SegBtn({s,active,disabled,count,label,onClick,t}) {
   const [hov,hE]=useHover();
   const ac=C.teal;
   return <button {...hE} onClick={onClick} disabled={disabled} style={{fontWeight:600,fontSize:12.5,padding:"8px 18px",borderRadius:10,border:0,background:active?ac:hov?t.surf3:"transparent",color:active?"#fff":hov?t.ink:t.muted,cursor:disabled?"default":"pointer",display:"inline-flex",alignItems:"center",gap:8,transition:"all .15s",whiteSpace:"nowrap",opacity:disabled?.38:1,pointerEvents:disabled?"none":"auto"}}>{label}<span style={{fontFamily:MONO,fontSize:12,padding:"2px 7px",borderRadius:99,background:active?"rgba(255,255,255,.22)":t.surf4,color:active?"#fff":t.ink2}}>{count}</span></button>;
-}
-
-// Switch utama sebelum/sesudah Coupa: PO (lama) vs MDI (Direct Invoice). "All" = gabungan.
-function FlowSwitch({value,onChange,t}) {
-  const items=[{v:"all",l:"All",sub:"PO + MDI"},{v:"PO",l:"PO (lama)",sub:"Req → PO → Invoice"},{v:"DI",l:"MDI",sub:"Direct Invoice (since Coupa, 11 Oct 2026)"}];
-  return (
-    <div role="group" aria-label="Payment flow" style={{display:"inline-flex",gap:4,background:t.surf,border:`1px solid ${t.line}`,borderRadius:14,padding:4,boxShadow:t.shadow1,maxWidth:"100%",overflowX:"auto"}}>
-      {items.map(it=>{ const on=value===it.v; return (
-        <button key={it.v} type="button" aria-pressed={on} onClick={()=>onChange(it.v)} title={it.sub}
-          style={{fontFamily:"inherit",fontWeight:600,fontSize:12.5,padding:"8px 18px",borderRadius:10,border:0,cursor:"pointer",whiteSpace:"nowrap",transition:"all .15s",background:on?C.teal:"transparent",color:on?"#fff":t.muted}}>{it.l}</button>
-      ); })}
-    </div>
-  );
 }
 
 function TabBtn({label,count,active,onClick,t}) {
@@ -1417,7 +1398,7 @@ function DashScreen(props) {
     filters, setFilters, opts, curAgg, curRaw, filtAgg, filtRaw,
     searchFocus, setSearchFocus, searchIdx, setSearchIdx,
     searchRef, searchSuggestions, allSuggestions, searchInput, setSearchInput,
-    setRawPage, showToast, exportSummary, profile, flowSel } = props;
+    setRawPage, showToast, exportSummary, profile } = props;
   const isAg = src === "agency";
   // Accrual (Agency) tampil di level atas untuk role yang boleh melihat Agency, apa pun pilihan Partner/Agency
   const showAccrual = (isSPM||isIOHAny) && (viewAgencyRaw||[]).length>0;
@@ -1462,7 +1443,7 @@ function DashScreen(props) {
   const segVisible = ((isSPM||isIOHAny)?["partner","agency"]:["partner"])
     .filter(s=>(s==="partner"?segPartnerCount:segAgencyCount)>0);
 
-  const resetFilters = () => { setFilters(f=>({month:[],entity:[],ptype:[],prog:[],status:[],flow:f.flow||"all",q:""})); setSearchInput(""); };
+  const resetFilters = () => { setFilters({month:[],entity:[],ptype:[],prog:[],status:[],q:""}); setSearchInput(""); };
 
   const chipDefs = [["month","Month"],["entity","Entity"],["ptype",isAg?"Agency":"Partner"],["prog","Program"],["status","Status"]];
   const chips = [];
@@ -1491,7 +1472,7 @@ function DashScreen(props) {
           <h1 style={{fontWeight:800,fontSize:"clamp(1.6rem,3.5vw,2.4rem)",letterSpacing:"-0.03em",color:t.ink,margin:"0 0 8px",lineHeight:1.04}}>
             Payout Tracker <em style={{fontStyle:"italic",color:C.magenta}}>Sumatera</em>
           </h1>
-          <p style={{color:t.muted,fontSize:14,margin:0,lineHeight:1.6}}>PO &amp; Direct Invoice payouts · Partner &amp; Agency Prepaid</p>
+          <p style={{color:t.muted,fontSize:14,margin:0,lineHeight:1.6}}>Partner &amp; Agency Prepaid payouts · tracked by invoice</p>
           {(regionFilter || filterMpxType) && (
             <div style={{display:"inline-flex",alignItems:"center",gap:8,marginTop:10,padding:"5px 12px",borderRadius:8,background:t.surf2,border:`1px solid ${t.line}`,fontSize:12,color:t.muted,flexWrap:"wrap"}}>
               <span style={{width:7,height:7,borderRadius:"50%",background:C.teal,flexShrink:0}}/>
@@ -1555,7 +1536,6 @@ function DashScreen(props) {
           ))}
         </div>
       )}
-        <FlowSwitch value={filters.flow||"all"} onChange={v=>{ setFilters(f=>({...f,flow:v})); setRawPage(1); }} t={t}/>
       </div>}
 
       <div style={{display:"flex",gap:24,borderBottom:`1px solid ${t.line}`,marginBottom:18,overflowX:"auto"}}>
@@ -1578,13 +1558,13 @@ function DashScreen(props) {
           {(!isMobile||showFilters)&&(
             <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginTop:10}}>
               <MultiSel t={t} values={Array.isArray(filters.month)?filters.month:[]} options={opts.months.filter(Boolean)} placeholder="All Months" onChange={vals=>setFilters(f=>({...f,month:vals}))}/>
-              <MultiSel t={t} values={Array.isArray(filters.entity)?filters.entity:[]} options={opts.entities.filter(Boolean)} labelOf={v=>entLabel(v,flowSel)} placeholder="All Entities" onChange={vals=>setFilters(f=>({...f,entity:vals}))}/>
+              <MultiSel t={t} values={Array.isArray(filters.entity)?filters.entity:[]} options={opts.entities.filter(Boolean)} labelOf={v=>entLabel(v)} placeholder="All Entities" onChange={vals=>setFilters(f=>({...f,entity:vals}))}/>
               <MultiSel t={t} values={Array.isArray(filters.ptype)?filters.ptype:[]} options={opts.ptypes.filter(Boolean)} placeholder={isAg?"All Agencies":"All Partners"} onChange={vals=>setFilters(f=>({...f,ptype:vals}))}/>
               <MultiSel t={t} values={Array.isArray(filters.prog)?filters.prog:[]} options={opts.progs.filter(Boolean)} placeholder="All Programs" onChange={vals=>setFilters(f=>({...f,prog:vals}))}/>
               {curRaw.length>0&&<MultiSel t={t} values={Array.isArray(filters.status)?filters.status:[]} options={opts.statuses.filter(Boolean)} placeholder="All Statuses" onChange={vals=>setFilters(f=>({...f,status:vals}))}/>}
               <div ref={searchRef} style={{position:"relative",flex:"1 1 200px",minWidth:160}}>
                 <svg style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",pointerEvents:"none",color:t.muted}} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-                <input type="text" placeholder="Search partner, PO / invoice no., or project…" value={searchInput}
+                <input type="text" placeholder="Search partner, invoice no. / ID, or project…" value={searchInput}
                   onChange={e=>{setSearchInput(e.target.value);setSearchIdx(-1);}}
                   onFocus={()=>setSearchFocus(true)} onBlur={()=>setTimeout(()=>setSearchFocus(false),160)}
                   onKeyDown={e=>{
@@ -1598,7 +1578,7 @@ function DashScreen(props) {
                 {searchInput&&<button onClick={()=>{setSearchInput("");setFilters(f=>({...f,q:""}));}} aria-label="Clear search" style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",width:18,height:18,borderRadius:"50%",border:"none",background:t.surf4,color:t.muted,cursor:"pointer",fontSize:12,padding:0}}>✕</button>}
                 {searchFocus&&allSuggestions.length>0&&(
                   <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,right:0,zIndex:300,background:t.surf,border:`1px solid ${t.line2}`,borderRadius:14,boxShadow:t.shadow3,overflow:"hidden"}}>
-                    {[{g:searchSuggestions.partners,l:isAg?"Agency":"Partner",ic:C.teal,lbl:"P",off:0},{g:searchSuggestions.pos,l:"PO / Invoice Number",ic:C.magenta,lbl:"PO",off:searchSuggestions.partners.length},{g:searchSuggestions.projects,l:"Project",ic:C.pink,lbl:"Pr",off:searchSuggestions.partners.length+searchSuggestions.pos.length}].filter(x=>x.g.length>0).map(({g,l,ic,lbl,off})=>(
+                    {[{g:searchSuggestions.partners,l:isAg?"Agency":"Partner",ic:C.teal,lbl:"P",off:0},{g:searchSuggestions.pos,l:"Invoice No / ID",ic:C.magenta,lbl:"PO",off:searchSuggestions.partners.length},{g:searchSuggestions.projects,l:"Project",ic:C.pink,lbl:"Pr",off:searchSuggestions.partners.length+searchSuggestions.pos.length}].filter(x=>x.g.length>0).map(({g,l,ic,lbl,off})=>(
                       <div key={l}>
                         <div style={{padding:"5px 14px 4px",fontSize:12,letterSpacing:"0.01em",color:t.muted,background:t.surf2,display:"flex",justifyContent:"space-between"}}><span>{l}</span><span style={{color:C.teal}}>{g.length}</span></div>
                         {g.map((s,i)=><SugItem key={i} s={s} active={searchIdx===off+i} iconLabel={lbl} accentColor={ic} t={t} onPick={()=>{setSearchInput(s.label);setFilters(f=>({...f,q:s.label}));setSearchFocus(false);setSearchIdx(-1);}}/>)}
@@ -1620,7 +1600,7 @@ function DashScreen(props) {
           {chips.map((c,i)=>(
             <span key={i} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"3px 6px 3px 10px",borderRadius:99,background:`${C.teal}14`,border:`1px solid ${C.teal}40`,fontSize:12,color:t.ink}}>
               <span style={{color:t.muted,fontSize:12}}>{c.lbl}:</span>
-              <span style={{fontWeight:600,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.k==="entity"?entLabel(c.v,flowSel):c.v}</span>
+              <span style={{fontWeight:600,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.k==="entity"?entLabel(c.v):c.v}</span>
               <button onClick={()=>removeChip(c)} aria-label={`Remove filter ${c.lbl} ${c.v}`} style={{width:16,height:16,borderRadius:"50%",border:"none",background:`${C.teal}30`,color:t.ink,cursor:"pointer",fontSize:12,padding:0,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>✕</button>
             </span>
           ))}
@@ -1711,12 +1691,6 @@ function computeAccrual(rows) {
   return { months, list, tot };
 }
 
-function FlowBadge({ flow, t }) {
-  if (!flow) return null;
-  const di = flow===FLOW_DI;
-  return <span style={{display:"inline-flex",padding:"2px 7px",borderRadius:6,fontFamily:MONO,fontSize:12,fontWeight:600,letterSpacing:"0.04em",whiteSpace:"nowrap",background:di?`${C.yellow}22`:`${C.teal}18`,color:di?t.warnDark:t.goodDark,border:`1px solid ${di?`${C.yellow}55`:`${C.teal}40`}`}}>{di?"Direct Inv":"PO"}</span>;
-}
-
 // Header sticky: background harus solid (bukan rgba) dan di atas sel body, supaya baris yang di-scroll tidak tembus
 const thS = (t, left) => ({position:"sticky",top:0,zIndex:3,fontSize:12,letterSpacing:"0.01em",color:t.muted,fontWeight:600,background:t.surf2,padding:"8px 9px",textAlign:left?"left":"right",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap"});
 const tdS = (t, left) => ({padding:"8px 10px",textAlign:left?"left":"right",borderBottom:`1px solid ${t.line}`,fontSize:12.5,fontVariantNumeric:"tabular-nums",color:t.ink2,whiteSpace:"nowrap",maxWidth:left?240:undefined,overflow:"hidden",textOverflow:"ellipsis"});
@@ -1754,7 +1728,7 @@ function computeInsights(rows) {
       : !gcell(r,H_CLV) ? "CLV verification"
       : !clrV ? "Waiting for bank" : (st || "—");
     const mk = rowMonthKey(r);
-    const item = { name, title:gstr(r,["project title"])||"—", ref:refNo(r), flow, amt, days, est:estD?dayStart(estD):null, status:st, stage, period:mk?ymLabel(mk):"—" };
+    const item = { name, title:gstr(r,["project title"])||"—", ref:refNo(r), inv:r._inv, invId:r._invId, flow, amt, days, est:estD?dayStart(estD):null, status:st, stage, period:mk?ymLabel(mk):"—" };
     if (isNotSubStatus(st)) notSub.push(item);
     if (proc) { item.bucket = days==null ? "nod" : days<=14 ? "b0" : days<=30 ? "b15" : "b30"; out.push(item); }
     if (item.est && !paid && !clrV) { if (item.est>=wk0 && item.est<wk1) due.this.push(item); else if (item.est>=wk1 && item.est<wk2) due.next.push(item); }
@@ -1762,18 +1736,23 @@ function computeInsights(rows) {
   out.sort((a,b)=>(b.days??-1)-(a.days??-1));
   due.this.sort((a,b)=>a.est-b.est); due.next.sort((a,b)=>a.est-b.est);
   notSub.sort((a,b)=>(a.est||Infinity)-(b.est||Infinity));
-  return { k, out, due, notSub, owners:Object.values(owners), wk0, wk1, wk2 };
+  // rentang bulan program di data (untuk menjelaskan cakupan KPI)
+  const mks = rows.map(rowMonthKey).filter(Boolean);
+  const lo = mks.length ? Math.min(...mks) : 0, hi = mks.length ? Math.max(...mks) : 0;
+  const monthSpan = lo ? (lo===hi ? ymLabel(lo) : `${ymLabel(lo)} – ${ymLabel(hi)}`) : "";
+  return { k, out, due, notSub, owners:Object.values(owners), wk0, wk1, wk2, monthSpan };
 }
 
 /* ── KPI: 4 kartu (nominal besar + jumlah kecil) ── */
 function KpiCards({ ins, partnerCount, monthsCount, isAg, w, t }) {
   const { k } = ins;
+  const span = ins.monthSpan;
   const dot = (c) => <span style={{width:10,height:10,borderRadius:3,background:c,flexShrink:0}}/>;
   const lbl = (c, txt) => <span style={{display:"inline-flex",alignItems:"center",gap:6}}>{c&&dot(c)}{txt}</span>;
   const cards = [
     { l:lbl(null,"Total payout"),               v:k.total,     sub:plural(k.n,"record") },
     { l:lbl(t.good,"Paid"),                     v:k.paid,      sub:`${plural(k.paidN,"record")} · ${pct(k.paid,k.total)}% of amount` },
-    { l:lbl(t.warn,"Outstanding"),              v:k.out,       sub:`${plural(k.outN,"record")} in Payment Process` },
+    { l:lbl(t.warn,"In process"),               v:k.out,       sub:`${plural(k.outN,"record")} invoiced, waiting for payment` },
     { l:lbl(t.bad,"Invoice not submitted"),     v:k.notSubAmt, sub:`${plural(k.notSub,"record")} waiting for an invoice` },
   ];
   return (
@@ -1783,7 +1762,7 @@ function KpiCards({ ins, partnerCount, monthsCount, isAg, w, t }) {
       </div>
       <div style={{fontSize:12.5,color:t.muted,marginTop:8,display:"flex",gap:14,flexWrap:"wrap"}}>
         <span>Average time to clear: <strong style={{color:t.ink}}>{k.cycN?`${(k.cycSum/k.cycN).toFixed(1)} working days`:"—"}</strong> (Invoice → Bank Cleared)</span>
-        <span>{plural(partnerCount,isAg?"agency":"partner",isAg?"agencies":"partners")} · {plural(monthsCount,"month")}</span>
+        <span>{plural(partnerCount,isAg?"agency":"partner",isAg?"agencies":"partners")} · {plural(monthsCount,"program month")}{span?` (${span})`:""} · all years in the data; YTD Summary covers one year</span>
       </div>
     </div>
   );
@@ -1823,7 +1802,7 @@ function SlaStrip({ steps, bnExp, setBnExp, t }) {
 }
 
 function DashTab(props) {
-  const { t, w, grand, grandPartnerCount, filtAgg, filtRaw, src, flowSel, funnelStages, bnResults, funnelExp, setFunnelExp, bnExp, setBnExp } = props;
+  const { t, w, grand, grandPartnerCount, filtAgg, filtRaw, src, funnelStages, bnResults, funnelExp, setFunnelExp, bnExp, setBnExp } = props;
   const isAg = src==="agency";
   const ins = useMemo(()=>computeInsights(filtRaw),[filtRaw]);
   const monthsCount = useMemo(()=>unique(filtAgg.map(r=>r.month)).length,[filtAgg]);
@@ -1990,6 +1969,7 @@ function OutstandingTab({ ins, isAg, w, t }) {
               {!phone&&<th style={thS(t,true)}>Project Title</th>}
               <th style={estTh}>Est. Date</th>
               {!phone&&<th style={thS(t,true)}>Period</th>}
+              {!phone&&<th style={thS(t,true)}>Invoice</th>}
               <th style={thS(t)}>Outstanding</th>
               {!phone&&<th style={thS(t,true)}>Status / Stage</th>}
               {!phone&&<th style={thS(t)}>Days</th>}
@@ -1998,10 +1978,11 @@ function OutstandingTab({ ins, isAg, w, t }) {
               const late = a.est && a.est < today;
               return (
                 <tr key={i} style={{background:i%2===1?t.rowStripe:"transparent"}}>
-                  <td style={{...tdS(t,true),maxWidth:phone?130:180,color:t.ink,fontWeight:600}} title={`${a.name} · ${a.ref||"no ref"} · ${a.flow}`}>{a.name}</td>
-                  {!phone&&<td style={{...tdS(t,true),maxWidth:w<1100?170:260}} title={a.title}>{a.title}</td>}
+                  <td style={{...tdS(t,true),maxWidth:phone?130:180,color:t.ink,fontWeight:600}} title={a.name}>{a.name}</td>
+                  {!phone&&<td style={{...tdS(t,true),maxWidth:w<1100?150:240}} title={a.title}>{a.title}</td>}
                   <td style={{...tdS(t,true),fontWeight:700,background:late?t.badBg:`${C.yellow}14`,color:late?t.bad:t.ink}} title={late?"Estimation date has passed":undefined}>{a.est?fmtDate(a.est):"—"}</td>
                   {!phone&&<td style={{...tdS(t,true)}}>{a.period}</td>}
+                  {!phone&&<td style={{...tdS(t,true),maxWidth:170,color:t.ink2}} title={invLabel(a.inv,a.invId)}>{invLabel(a.inv,a.invId)}</td>}
                   <td style={{...tdS(t),color:t.ink}} title={fmtRpFull(a.amt)}>{fmtRpWord(a.amt)}</td>
                   {!phone&&<td style={{...tdS(t,true),maxWidth:170}} title={a.status}>{a.stage}</td>}
                   {!phone&&<td style={{...tdS(t),fontWeight:700,color:dayClr(a.days)}} title="Days since Invoice Submission">{a.days==null?"—":a.days}</td>}
@@ -2158,7 +2139,7 @@ function computeForecast(rows) {
       const own = lagBy[name] && lagBy[name].length>=3 ? median(lagBy[name]) : null;
       due = addDays(monthEndOf(mk), own ?? lag); basis = own!=null ? `Program month + ${own}d (partner)` : `Program month + ${lag}d`;
     }
-    items.push({ name, title:gstr(r,["project title"])||"—", period:mk?ymLabel(mk):"—", amt, status:st, pp, due, basis,
+    items.push({ name, title:gstr(r,["project title"])||"—", inv:r._inv||"", invId:r._invId||"", period:mk?ymLabel(mk):"—", amt, status:st, pp, due, basis,
       overdue: !!due && due < today, days: mk ? Math.max(0, Math.round((today - monthEndOf(mk))/DAY)) : null });
   });
   const sum = (f) => items.filter(f).reduce((a,x)=>a+x.amt,0);
@@ -2477,7 +2458,7 @@ function OpenBillsSection({ rows, w, t, showToast }) {
   const exportXlsx = async () => {
     const XLSX = await getXLSX();
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detail.map(x=>({ Partner:x.name, "Project Title":x.title, Period:x.period, Amount:x.amt, Status:x.status, "Expected payment":x.due?fmtShortDate(x.due):"", Basis:x.basis, Overdue:x.overdue?"Yes":"", "Days since program month end":x.days??"" }))), "Forecast detail");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detail.map(x=>({ Partner:x.name, "Project Title":x.title, "Invoice Number":x.inv, "Invoice ID":x.invId, Period:x.period, Amount:x.amt, Status:x.status, "Expected payment":x.due?fmtShortDate(x.due):"", Basis:x.basis, Overdue:x.overdue?"Yes":"", "Days since program month end":x.days??"" }))), "Forecast detail");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(fc.buckets.map(b=>({ Month:b.key==="over"?"Overdue":b.label, "In process":b.pp, "Not submitted":b.ns, Total:b.pp+b.ns }))), "By month");
     XLSX.writeFile(wb, `partner_payment_forecast_${new Date().toISOString().slice(0,10)}.xlsx`);
     showToast("Partner forecast downloaded — Excel","success");
@@ -2489,7 +2470,7 @@ function OpenBillsSection({ rows, w, t, showToast }) {
   return (
     <div style={{marginBottom:14}}>
       <div style={{marginBottom:14}}>
-        <div style={{fontWeight:800,fontSize:17,letterSpacing:"-0.02em",color:t.ink,paddingTop:14,borderTop:`1px solid ${t.line2}`}}>Open bills to pay <span style={{fontWeight:500,fontSize:13,color:t.muted}}>· tagihan terbuka yang perlu dibayar</span></div>
+        <div style={{fontWeight:800,fontSize:17,letterSpacing:"-0.02em",color:t.ink,paddingTop:14,borderTop:`1px solid ${t.line2}`}}>Open bills to pay <span style={{fontWeight:500,fontSize:13,color:t.muted}}>· invoices not paid yet, by expected payment date</span></div>
         <div style={{fontSize:14,color:t.ink2,marginTop:6,lineHeight:1.5}}>
           <strong style={{color:t.ink}}>{fmtRpWord(fc.total)}</strong> still to be paid to partners. <strong style={{color:t.ink}}>{fmtRpWord(fc.next3)}</strong> is expected in {fc.next3Label}{fc.over.amt?<>, and <strong style={{color:t.badDark}}>{fmtRpWord(fc.over.amt)}</strong> is already past its expected date</>:null}.
         </div>
@@ -2551,6 +2532,7 @@ function OpenBillsSection({ rows, w, t, showToast }) {
                 <thead><tr>
                   <SortTh col="name" left sort={dSort} setSort={setDSort} t={t}>Partner</SortTh>
                   {!phone&&<SortTh col="title" left sort={dSort} setSort={setDSort} t={t}>Project Title</SortTh>}
+                  {!phone&&<SortTh col="inv" left sort={dSort} setSort={setDSort} t={t}>Invoice</SortTh>}
                   {!phone&&<SortTh col="period" left sort={dSort} setSort={setDSort} t={t}>Period</SortTh>}
                   <SortTh col="amt" sort={dSort} setSort={setDSort} t={t}>Amount</SortTh>
                   {!phone&&<SortTh col="status" left sort={dSort} setSort={setDSort} t={t}>Status</SortTh>}
@@ -2560,7 +2542,8 @@ function OpenBillsSection({ rows, w, t, showToast }) {
                 <tbody>{detail.slice(0,400).map((x,i)=>(
                   <tr key={i} style={{background:i%2===1?t.rowStripe:"transparent"}}>
                     <td style={{...tdS(t,true),fontWeight:600,color:t.ink,maxWidth:phone?130:170}} title={x.name}>{x.name}</td>
-                    {!phone&&<td style={{...tdS(t,true),maxWidth:w<1150?150:220}} title={x.title}>{x.title}</td>}
+                    {!phone&&<td style={{...tdS(t,true),maxWidth:w<1150?140:200}} title={x.title}>{x.title}</td>}
+                    {!phone&&<td style={{...tdS(t,true),maxWidth:150,color:t.ink2}} title={invLabel(x.inv,x.invId)}>{invLabel(x.inv,x.invId)}</td>}
                     {!phone&&<td style={tdS(t,true)}>{x.period}</td>}
                     <td style={{...tdS(t),color:t.ink}} title={fmtRpFull(x.amt)}>{fmtRpWord(x.amt)}</td>
                     {!phone&&<td style={tdS(t,true)}><StatusBadge val={x.status} t={t}/></td>}
