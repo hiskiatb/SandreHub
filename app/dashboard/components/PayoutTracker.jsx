@@ -1626,7 +1626,7 @@ function DashScreen(props) {
       ) : isAcc ? (
         <Card t={t} pad={false} style={{marginBottom:14}}>
           <CardHead title="Accrual · Agency Prepaid" accent={C.yellow} sub="Submission checklist, missing list & accrual estimate · all Agency rows for the selected year" t={t}/>
-          <AccrualTab rows={viewAgencyRaw||[]} w={w} t={t} showToast={showToast}/>
+          <AccrualTab rows={viewAgencyRaw||[]} region={canPickRegion ? (regionView||"") : (regionFilter||"")} w={w} t={t} showToast={showToast}/>
         </Card>
       ) : isYtd ? (
         <YtdTab partnerRows={viewPartnerRaw||[]} agencyRows={(isSPM||isIOHAny)?(viewAgencyRaw||[]):[]} showTeam={isSPM||isIOHAny} w={w} t={t} showToast={showToast}/>
@@ -3045,7 +3045,7 @@ function computeChecklist(rows, year) {
   return { months, list, missing, last };
 }
 
-function AccrualTab({ rows, w, t, showToast }) {
+function AccrualTab({ rows, region, w, t, showToast }) {
   const years = useMemo(()=>yearsOf(rows),[rows]);
   const [year, setYear] = useYear(years);
   const yearRows = useMemo(()=>rows.filter(r=>rowYear(r)===year),[rows,year]);
@@ -3114,20 +3114,50 @@ function AccrualTab({ rows, w, t, showToast }) {
           </table>
         </div>
       )}
-      <AccrualEstimate acc={acc} year={year} w={w} t={t}/>
+      <AccrualEstimate acc={acc} year={year} region={region||"All Sumatera"} w={w} t={t} showToast={showToast}/>
     </div>
   );
 }
 
-function AccrualEstimate({ acc, year, w, t }) {
+function AccrualEstimate({ acc, year, region, w, t, showToast }) {
   const [allMonths, setAllMonths] = useState(false);
   if (!acc || !acc.list.length || !acc.months.length) return <EmptyNote t={t}>No agency data for {year}</EmptyNote>;
   const months = allMonths ? acc.months : acc.months.slice(-4);
   const rowTotal = (g) => months.reduce((a,m)=>a+(g.cells[m]?.v||0),0);
   const phone = w<640;
+  // Unduh persis isi tabel (bulan yang sedang tampil), angka sebagai angka dengan format Rp
+  const download = async (kind) => {
+    const XLSX = await getXLSX();
+    const today = new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"});
+    const head = ["Agency","Program Type",...months.map(ymLabel),"Total","Estimated months"];
+    const body = acc.list.map(g=>[g.agency, g.prog+(g.noAccrue?" (no accrual)":""), ...months.map(m=>g.cells[m]?Math.round(g.cells[m].v):null), Math.round(rowTotal(g)), months.filter(m=>g.cells[m]?.est).map(ymLabel).join(", ")]);
+    const foot = ["TOTAL","",...months.map(m=>Math.round(acc.tot[m].act+acc.tot[m].est)), Math.round(months.reduce((a,m)=>a+acc.tot[m].act+acc.tot[m].est,0)),""];
+    const pre = [[`Accrual Estimate · Agency Prepaid · ${year} · ${region}`],[`Generated ${today} · empty months estimated with the average of filled months (listed in "Estimated months") · excludes ADHITAMA MITRA NUSANTARA`],[]];
+    const ws = XLSX.utils.aoa_to_sheet([...pre, head, ...body, foot]);
+    const nr = pre.length + 1 + body.length + 1;
+    for (let r=pre.length+1; r<nr; r++) for (let c=2; c<=months.length+2; c++) { const cell = ws[XLSX.utils.encode_cell({r,c})]; if (cell && cell.t==="n") cell.z = '"Rp "#,##0'; }
+    const fname = `Accrual_Estimate_Agency_${year}${region && region!=="All Sumatera" ? "_"+region.replace(/\W+/g,"_") : ""}`;
+    if (kind==="csv") {
+      const csv = XLSX.utils.sheet_to_csv(XLSX.utils.aoa_to_sheet([head, ...body, foot]));
+      const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8"})); a.download = fname+".csv"; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+    } else {
+      ws["!merges"] = [{s:{r:0,c:0},e:{r:0,c:head.length-1}},{s:{r:1,c:0},e:{r:1,c:head.length-1}}];
+      ws["!cols"] = [{wch:34},{wch:26},...months.map(()=>({wch:17})),{wch:19},{wch:24}];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, `Accrual ${year}`);
+      XLSX.writeFile(wb, fname+".xlsx");
+    }
+    showToast?.(`Accrual estimate ${year} downloaded — ${kind==="csv"?"CSV":"Excel"}`,"success");
+  };
   return (
     <div>
-      <div style={{fontWeight:700,fontSize:14,color:t.ink,marginBottom:6}}>Accrual estimate {year}</div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:6}}>
+        <div style={{fontWeight:700,fontSize:14,color:t.ink}}>Accrual estimate {year}</div>
+        <div style={{display:"flex",gap:8}}>
+          <Btn t={t} sm onClick={()=>download("csv")}>CSV</Btn>
+          <Btn t={t} variant="primary" sm onClick={()=>download("xlsx")}>Download Excel</Btn>
+        </div>
+      </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:10}}>
         <div style={{fontSize:12,color:t.muted,maxWidth:"70ch",lineHeight:1.5}}>Actual amount per agency and program type. Empty months are <em>estimated</em> (italic) with the average of filled months. Not accrued: SALARYUUCK, THR, INCENTIVE MEUGANG. Excludes ADHITAMA MITRA NUSANTARA.</div>
         {acc.months.length>4&&<Chip t={t} active={allMonths} onClick={()=>setAllMonths(v=>!v)}>{allMonths?"Last 4 months":`All ${acc.months.length} months`}</Chip>}
