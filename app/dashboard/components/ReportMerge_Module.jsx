@@ -12,10 +12,11 @@ import { useEffect, useRef, useState } from "react";
  *      memverifikasi role & menolak Finance MPX.
  * Lihat public/report-merge/index.html untuk isi shim-nya.
  *
- * Alur "Partner SDP" dan "Partner MDI" (port dari Smart Mail Sumatera)
+ * Saat menu dibuka, yang tampil pertama adalah public/report-merge/home.html
+ * (kartu pilih menu). Alur "Partner SDP" dan "Partner MDI" (port dari Smart Mail Sumatera)
  * ada di halaman terpisah public/report-merge/sdp.html dan mdi.html. Tombol alurnya
  * tetap satu deret di topbar masing-masing halaman; perpindahan halaman
- * dikirim lewat postMessage { rmOpen: 'report' | 'sdp' | 'mdi', mode } dan
+ * dikirim lewat postMessage { rmOpen: 'home' | 'report' | 'sdp' | 'mdi', mode } dan
  * ditangani di sini. Iframe yang pernah dibuka tetap terpasang (cuma
  * disembunyikan) supaya pekerjaan yang belum selesai tidak hilang.
  *
@@ -27,6 +28,7 @@ import { useEffect, useRef, useState } from "react";
  * diizinkan.
  */
 const PAGES = [
+  { id: "home", title: "Report Merge — pilih menu", src: "/report-merge/home.html" },
   { id: "report", title: "Report Merge", src: "/report-merge/index.html" },
   { id: "sdp", title: "Partner SDP", src: "/report-merge/sdp.html" },
   { id: "mdi", title: "Partner MDI", src: "/report-merge/mdi.html" },
@@ -46,8 +48,9 @@ function syncTheme(frame) {
 }
 
 export default function ReportMerge_Module({ t }) {
-  const [page, setPage] = useState("report");
-  const [opened, setOpened] = useState(["report"]);
+  // Selalu mulai dari halaman pilih menu (Blast Email Report / Partner SDP / Partner MDI).
+  const [page, setPage] = useState("home");
+  const [opened, setOpened] = useState(["home"]);
   const frames = useRef({});
 
   useEffect(() => {

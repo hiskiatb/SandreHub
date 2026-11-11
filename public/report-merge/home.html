@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Report Merge — Sales &amp; Distribution Sumatera</title>
+<!-- Halaman pertama saat menu Report Merge dibuka: pilih Blast Email Report, Partner SDP, atau Partner MDI. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script>try { document.documentElement.setAttribute('data-theme', localStorage.getItem('rm-theme') || 'dark'); } catch (e) {}</script>
+<link rel="stylesheet" href="/report-merge/rm-pages.css">
+<script src="/report-merge/rm-shell.js"></script>
+</head>
+<body>
+<div id="rmTopbar"></div>
+
+<div class="wrap">
+  <div class="home-hero">
+    <h1>Mau kirim apa hari ini?</h1>
+    <p>Pilih salah satu menu. Kamu bisa pindah menu kapan saja lewat tombol di bagian atas.</p>
+  </div>
+
+  <div class="home-grid">
+    <button class="menu-card" type="button" data-open="email" style="--accent:var(--ioh-teal)">
+      <div class="ico" data-icon="email"></div>
+      <h3>Blast Email Report</h3>
+      <p>Ubah satu file Excel laporan jadi banyak email terpisah. Tiap penerima dapat email berisi tabel rincian miliknya sendiri.</p>
+      <ul>
+        <li>Upload 1 Excel laporan</li>
+        <li>Atur pengelompokan &amp; narasi email</li>
+        <li>Preview, lalu kirim</li>
+      </ul>
+      <div class="tags"><span class="badge">LAPORAN</span><span class="badge">TABEL DI BADAN EMAIL</span></div>
+      <div class="go">Buka Blast Email Report →</div>
+    </button>
+
+    <button class="menu-card" type="button" data-open="sdp" style="--accent:var(--ioh-red)">
+      <div class="ico" data-icon="sdp"></div>
+      <h3>Partner SDP</h3>
+      <p>Kirim surat PDF untuk SDP &amp; 3KIOSK (Sales Support, Target KPI, OTF, Champions, Addition/Deduction, dll). Satu email per ID mitra.</p>
+      <ul>
+        <li>Upload Excel data mitra</li>
+        <li>Upload PDF surat (per mitra, atau 1 PDF untuk semua)</li>
+        <li>Cek pencocokan, lalu kirim</li>
+      </ul>
+      <div class="tags"><span class="badge">SDP / KIOSK</span><span class="badge">1 EMAIL PER ID</span></div>
+      <div class="go">Buka Partner SDP →</div>
+    </button>
+
+    <button class="menu-card" type="button" data-open="mdi" style="--accent:var(--ioh-pink)">
+      <div class="ico" data-icon="mdi"></div>
+      <h3>Partner MDI</h3>
+      <p>Kirim Surat Pemberitahuan Imbalan Jasa + BAST untuk Mitra Pengelola Cluster. Satu email per partner + type, berisi 2 lampiran.</p>
+      <ul>
+        <li>Upload Excel data partner</li>
+        <li>Upload PDF Surat dan PDF BAST</li>
+        <li>Cek pencocokan, lalu kirim</li>
+      </ul>
+      <div class="tags"><span class="badge">MDI / MPC</span><span class="badge">SURAT + BAST</span></div>
+      <div class="go">Buka Partner MDI →</div>
+    </button>
+  </div>
+
+  <div class="home-foot">Partner SDP dan Partner MDI dipindahkan dari aplikasi Smart Mail Sumatera.</div>
+</div>
+
+<script>
+  document.querySelectorAll('[data-icon]').forEach(function (el) { el.innerHTML = RmShell.icon(el.dataset.icon, 52); });
+  RmShell.topbar('home', 'Report Merge — pilih menu', false);
+  document.querySelectorAll('[data-open]').forEach(function (b) {
+    b.addEventListener('click', function () { RmShell.buka(b.dataset.open); });
+  });
+</script>
+</body>
+</html>
