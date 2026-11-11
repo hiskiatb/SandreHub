@@ -852,7 +852,7 @@
   <div class="topbar-right">
     <div class="mode-switch" id="modeSwitch">
       <button class="mode-btn active" id="modeBtnEmail" type="button" title="Ubah satu file Excel jadi banyak email terpisah — tiap penerima dapat email berisi tabel rincian miliknya sendiri." onclick="switchAppMode('email')">📧 Blast Email Report</button>
-      <button class="mode-btn" id="modeBtnSurat" type="button" title="Generate surat resmi jadi file PDF dari template di Excel, lalu kirim ke approver untuk disetujui." onclick="switchAppMode('surat')">📄 Buat Surat &amp; Blast Surat</button>
+      <!-- Tombol "📄 Buat Surat & Blast Surat" dihapus atas permintaan Saila (2026-11-11). Endpoint /api/report-merge/letters/* dan approve.html tetap ada supaya link approval yang sudah terkirim tidak rusak. -->
       <!-- Alur ketiga di halaman terpisah (public/report-merge/mdi.html). Dibuka lewat ReportMerge_Module di dashboard; kalau halaman ini dibuka langsung, pindah URL. -->
       <button class="mode-btn" type="button" title="Kirim Surat + BAST MDI (Partner MPC) yang sudah jadi, dicocokkan ke Excel dari nama file." onclick="if(window.parent!==window){window.parent.postMessage({rmOpen:'mdi'},location.origin)}else{location.href='/report-merge/mdi.html'}">📑 Surat MDI</button>
     </div>
@@ -3183,7 +3183,7 @@ function switchAppMode(mode){
   document.getElementById('emailFlowWrap').classList.toggle('step-hidden', mode !== 'email');
   document.getElementById('suratFlowWrap').classList.toggle('step-hidden', mode !== 'surat');
   document.getElementById('modeBtnEmail').classList.toggle('active', mode === 'email');
-  document.getElementById('modeBtnSurat').classList.toggle('active', mode === 'surat');
+  document.getElementById('modeBtnSurat')?.classList.toggle('active', mode === 'surat');
   document.getElementById('btnOpenSuratSettings').style.display = mode === 'surat' ? 'flex' : 'none';
   // Subjudul & judul tab browser ikut alur yang lagi aktif — biar pas lagi
   // buka beberapa tab kelihatan bedanya, gak dua-duanya "Blast Email".
