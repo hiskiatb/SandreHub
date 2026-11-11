@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Surat MDI — Sales &amp; Distribution Sumatera</title>
+<!--
+  Surat MDI (Partner MPC) — Blast Email Only.
+  Port dari Smart Mail Sumatera (mdi.html). Tahap 3a: upload Excel partner +
+  PDF Surat & BAST, lalu tampilkan hasil pencocokan per partner + type.
+  Belum mengirim email dan belum memakai database. Logika pencocokan ada di
+  mdi-match.js.
+-->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="/report-merge/mdi-match.js"></script>
+<script>
+  try { document.documentElement.setAttribute('data-theme', localStorage.getItem('rm-theme') || 'dark'); } catch (e) {}
+</script>
+<style>
+  @font-face{ font-family:'Indosat'; src:url('/report-merge/fonts/IndosatMedium.ttf') format('truetype'); font-weight:500; font-display:swap; }
+  @font-face{ font-family:'Indosat'; src:url('/report-merge/fonts/IndosatBold.ttf') format('truetype'); font-weight:700; font-display:swap; }
+  :root{
+    --ioh-teal:#32BCAD; --ioh-pink:#EC008C; --ioh-red:#ED1C24; --ioh-yellow:#FFCB05;
+    --teal:var(--ioh-teal); --teal-d:#27A093;
+    --font-brand:'Indosat','Poppins',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    --font-data:'JetBrains Mono','SF Mono',ui-monospace,monospace;
+    --bg:#0D0D0E; --surf:#13161F; --surf2:#1A1D28; --surf3:#222535;
+    --ink:#F1F5F9; --ink2:#CBD5E1; --muted:#94A3B8; --line:rgba(255,255,255,0.08); --line2:#2E3347;
+    --good-bg:rgba(50,188,173,.14); --good-bd:rgba(50,188,173,.32); --good-ink:#7EE8E0;
+    --bad-bg:rgba(237,28,36,.16);   --bad-bd:rgba(237,28,36,.34);   --bad-ink:#F58287;
+    --warn-bg:rgba(255,203,5,.14);  --warn-bd:rgba(255,203,5,.32);  --warn-ink:#FFE066;
+    --radius-sm:8px; --radius:12px;
+  }
+  [data-theme="light"]{
+    --bg:#F0F0F3; --surf:#FFFFFF; --surf2:#F2F2F6; --surf3:#E8E8EE;
+    --ink:#111113; --ink2:#2A2A30; --muted:#5A5A68; --line:rgba(0,0,0,.09); --line2:rgba(0,0,0,.14);
+    --good-bg:rgba(50,188,173,.10); --good-bd:rgba(50,188,173,.25); --good-ink:#1D8078;
+    --bad-bg:rgba(237,28,36,.08);   --bad-bd:rgba(237,28,36,.22);   --bad-ink:#AA1018;
+    --warn-bg:rgba(255,203,5,.16);  --warn-bd:rgba(255,203,5,.35);  --warn-ink:#8A6A00;
+  }
+  *{ box-sizing:border-box; }
+  html{ color-scheme:dark; } [data-theme="light"]{ color-scheme:light; }
+  body{ margin:0; background:var(--bg); color:var(--ink); font-family:var(--font-brand); font-size:14px; }
+  .wrap{ max-width:1180px; margin:0 auto; padding:20px 28px 60px; }
+  .topbar{ background:var(--surf); border-bottom:1px solid var(--line); padding:14px 28px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .topbar .title{ font-size:15px; font-weight:700; }
+  .topbar .subtitle{ font-size:11.5px; color:var(--muted); }
+  .card{ background:var(--surf); border:1px solid var(--line); border-radius:var(--radius); padding:18px 20px; margin-top:16px; }
+  h2{ font-size:15px; margin:0 0 4px; letter-spacing:-0.01em; }
+  .hint{ color:var(--muted); font-size:12.5px; margin:0 0 12px; line-height:1.5; }
+  .row{ display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+  .drop{ flex:1 1 280px; border:1.5px dashed var(--line2); border-radius:var(--radius); padding:16px; background:var(--surf2); transition:border-color .15s, background .15s; }
+  .drop.over{ border-color:var(--teal); background:var(--good-bg); }
+  .drop b{ display:block; margin-bottom:4px; }
+  .drop .count{ color:var(--muted); font-size:12.5px; margin:6px 0 10px; }
+  .btn{ font:inherit; font-size:12.5px; font-weight:700; border-radius:var(--radius-sm); padding:7px 12px; cursor:pointer; border:1px solid var(--line2); background:var(--surf3); color:var(--ink2); }
+  .btn:hover{ border-color:var(--teal); color:var(--ink); }
+  .btn.primary{ background:var(--teal); border-color:var(--teal); color:#fff; }
+  .btn:disabled{ opacity:.5; cursor:not-allowed; }
+  select{ font:inherit; padding:6px 10px; border-radius:var(--radius-sm); border:1px solid var(--line2); background:var(--surf2); color:var(--ink); }
+  .pill{ display:inline-block; font-size:11.5px; font-weight:700; padding:2px 8px; border-radius:99px; border:1px solid; }
+  .pill.ok{ background:var(--good-bg); border-color:var(--good-bd); color:var(--good-ink); }
+  .pill.warn{ background:var(--warn-bg); border-color:var(--warn-bd); color:var(--warn-ink); }
+  .pill.bad{ background:var(--bad-bg); border-color:var(--bad-bd); color:var(--bad-ink); }
+  .summary{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+  .tablewrap{ overflow-x:auto; border:1px solid var(--line); border-radius:var(--radius-sm); }
+  table{ width:100%; border-collapse:collapse; font-size:12.5px; }
+  th, td{ text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th{ background:var(--surf2); color:var(--muted); font-weight:700; font-size:11.5px; text-transform:uppercase; letter-spacing:.03em; }
+  tr:last-child td{ border-bottom:0; }
+  .mono{ font-family:var(--font-data); font-size:12px; word-break:break-all; }
+  .files{ color:var(--muted); }
+  .note{ color:var(--warn-ink); font-size:12px; margin-top:4px; }
+  .err{ color:var(--bad-ink); }
+  .type{ color:var(--ioh-pink); font-weight:700; }
+  .empty{ color:var(--muted); font-size:13px; }
+  @media (max-width:640px){ .wrap{ padding:16px; } .topbar{ padding:12px 16px; } }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div>
+    <div class="title">📑 Surat MDI (Partner MPC)</div>
+    <div class="subtitle">Blast Email Only: 1 email per partner + type, lampiran Surat + BAST</div>
+  </div>
+  <span class="pill warn" title="Tahap 3a: pencocokan saja. Pengiriman email menyusul.">Pratinjau pencocokan, belum mengirim</span>
+</div>
+
+<div class="wrap">
+  <div class="card">
+    <h2>1. Upload Excel data partner</h2>
+    <p class="hint">Kolom dibaca otomatis dari judul: <span class="mono">PARTNER_NAME</span> (atau "Nama Partner"), <span class="mono">PARTNER_ID</span>, <span class="mono">TYPE</span>, <span class="mono">EMAIL_TO</span>, <span class="mono">EMAIL_CC</span>. Semua sheet dibaca; type yang tidak ada di sheet terpilih dilengkapi dari sheet lain.</p>
+    <div class="row">
+      <input type="file" id="excelInput" accept=".xlsx,.xls,.xlsb,.csv">
+      <label id="sheetWrap" style="display:none">Sheet utama <select id="sheetSelect"></select></label>
+    </div>
+    <div id="excelStatus" class="hint" style="margin:10px 0 0"></div>
+  </div>
+
+  <div class="card">
+    <h2>2. Upload PDF Surat dan BAST</h2>
+    <p class="hint">Nama file harus memuat nama partner (atau PARTNER_ID) dan type, contoh <span class="mono">Surat Pemberitahuan ADI CIPTA SURYA TEKNIK, PT_DF.pdf</span> dan <span class="mono">BAST ADI CIPTA SURYA TEKNIK, PT_DF.pdf</span>. Bisa pilih banyak file, satu folder, atau drag &amp; drop.</p>
+    <div class="row">
+      <div class="drop" data-jenis="surat">
+        <b>📝 File Surat</b>
+        <div class="count" id="countSurat">Belum ada file</div>
+        <div class="row">
+          <button class="btn" type="button" data-pick="surat">Pilih file</button>
+          <button class="btn" type="button" data-pick-folder="surat">Pilih folder</button>
+        </div>
+      </div>
+      <div class="drop" data-jenis="bast">
+        <b>📑 File BAST</b>
+        <div class="count" id="countBast">Belum ada file</div>
+        <div class="row">
+          <button class="btn" type="button" data-pick="bast">Pilih file</button>
+          <button class="btn" type="button" data-pick-folder="bast">Pilih folder</button>
+        </div>
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px"><button class="btn" type="button" id="btnReset">Hapus semua PDF</button></div>
+  </div>
+
+  <div class="card">
+    <h2>3. Hasil pencocokan</h2>
+    <p class="hint">Satu baris = satu email. Baris bertanda kuning tetap bisa dikirim, tapi cek dulu catatannya. File yang tidak cocok tidak akan dikirim.</p>
+    <div id="result"><div class="empty">Upload Excel dan PDF untuk melihat hasil pencocokan.</div></div>
+    <div class="row" style="margin-top:14px">
+      <button class="btn primary" type="button" disabled title="Pengiriman email dikerjakan di tahap berikutnya.">Kirim email (segera)</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="pickFiles" accept="application/pdf,.pdf" multiple hidden>
+<input type="file" id="pickFolder" webkitdirectory multiple hidden>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var esc = function (s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
+  var sheets = {};
+  var files = { surat: [], bast: [] };
+  var jenisAktif = 'surat';
+
+  // ---------- Excel ----------
+  $('excelInput').addEventListener('change', function (e) {
+    var f = e.target.files[0];
+    if (!f) return;
+    var reader = new FileReader();
+    reader.onload = function (ev) {
+      try {
+        var wb = XLSX.read(new Uint8Array(ev.target.result), { type: 'array' });
+        sheets = {};
+        wb.SheetNames.forEach(function (n) { sheets[n] = XLSX.utils.sheet_to_json(wb.Sheets[n], { defval: '' }); });
+        var sel = $('sheetSelect');
+        sel.innerHTML = wb.SheetNames.map(function (n) { return '<option>' + esc(n) + '</option>'; }).join('');
+        // Pilih sheet pertama yang punya kolom nama partner.
+        var awal = wb.SheetNames.find(function (n) { return MdiMatch.petaKolom(sheets[n]).partner; }) || wb.SheetNames[0];
+        sel.value = awal;
+        $('sheetWrap').style.display = wb.SheetNames.length > 1 ? '' : 'none';
+        render();
+      } catch (err) {
+        $('excelStatus').innerHTML = '<span class="err">Excel tidak bisa dibaca: ' + esc(err.message) + '</span>';
+      }
+    };
+    reader.readAsArrayBuffer(f);
+  });
+  $('sheetSelect').addEventListener('change', render);
+
+  // ---------- PDF ----------
+  function tambah(jenis, daftar) {
+    Array.from(daftar || []).filter(function (f) { return /\.pdf$/i.test(f.name); }).forEach(function (f) {
+      if (!files[jenis].some(function (x) { return x.name === f.name && x.size === f.size; })) files[jenis].push(f);
+    });
+    render();
+  }
+  document.querySelectorAll('[data-pick]').forEach(function (b) {
+    b.addEventListener('click', function () { jenisAktif = b.dataset.pick; $('pickFiles').value = ''; $('pickFiles').click(); });
+  });
+  document.querySelectorAll('[data-pick-folder]').forEach(function (b) {
+    b.addEventListener('click', function () { jenisAktif = b.dataset.pickFolder; $('pickFolder').value = ''; $('pickFolder').click(); });
+  });
+  $('pickFiles').addEventListener('change', function (e) { tambah(jenisAktif, e.target.files); });
+  $('pickFolder').addEventListener('change', function (e) { tambah(jenisAktif, e.target.files); });
+  document.querySelectorAll('.drop').forEach(function (d) {
+    d.addEventListener('dragover', function (e) { e.preventDefault(); d.classList.add('over'); });
+    d.addEventListener('dragleave', function () { d.classList.remove('over'); });
+    d.addEventListener('drop', function (e) { e.preventDefault(); d.classList.remove('over'); tambah(d.dataset.jenis, e.dataTransfer.files); });
+  });
+  $('btnReset').addEventListener('click', function () { files = { surat: [], bast: [] }; render(); });
+
+  // ---------- Render ----------
+  function render() {
+    $('countSurat').textContent = files.surat.length ? '✅ ' + files.surat.length + ' file Surat' : 'Belum ada file';
+    $('countBast').textContent = files.bast.length ? '✅ ' + files.bast.length + ' file BAST' : 'Belum ada file';
+
+    var namaSheet = Object.keys(sheets);
+    var targets = namaSheet.length ? MdiMatch.buildTargets(sheets, $('sheetSelect').value) : [];
+    if (namaSheet.length) {
+      $('excelStatus').innerHTML = targets.length
+        ? '✅ ' + targets.length + ' kombinasi partner + type terbaca dari ' + namaSheet.length + ' sheet.'
+        : '<span class="err">⚠️ Kolom nama partner tidak ditemukan (beri judul "PARTNER_NAME" atau "Nama Partner").</span>';
+    }
+
+    var semua = files.surat.map(function (f) { return { name: f.name, jenis: 'surat', file: f }; })
+      .concat(files.bast.map(function (f) { return { name: f.name, jenis: 'bast', file: f }; }));
+    if (!semua.length || !targets.length) {
+      $('result').innerHTML = '<div class="empty">' + (!targets.length ? 'Upload Excel data partner dulu.' : 'Upload PDF Surat dan BAST.') + '</div>';
+      return;
+    }
+
+    var hasil = MdiMatch.cocokkan(targets, semua);
+    var siap = hasil.emails.filter(function (h) { return !h.peringatan.length; }).length;
+    var html = '<div class="summary">'
+      + '<span class="pill ok">' + siap + ' email siap</span>'
+      + (hasil.emails.length - siap ? '<span class="pill warn">' + (hasil.emails.length - siap) + ' email perlu dicek</span>' : '')
+      + (hasil.tidakCocok.length ? '<span class="pill bad">' + hasil.tidakCocok.length + ' file tidak cocok</span>' : '')
+      + '<span class="pill" style="border-color:var(--line2);color:var(--muted)">' + semua.length + ' file PDF</span>'
+      + '</div>';
+
+    html += '<div class="tablewrap"><table><thead><tr><th>Partner · Type</th><th>Email To / CC</th><th>Lampiran</th></tr></thead><tbody>'
+      + hasil.emails.map(function (h) {
+        var t = h.target;
+        var ikon = h.peringatan.length ? '⚠️' : '✅';
+        return '<tr>'
+          + '<td>' + ikon + ' <b>' + esc(t.partner_name) + '</b>' + (t.type ? ' · <span class="type">' + esc(t.type) + '</span>' : '')
+          + (t.partner_id ? '<div class="files mono">ID ' + esc(t.partner_id) + '</div>' : '')
+          + h.peringatan.map(function (p) { return '<div class="note">' + esc(p) + '</div>'; }).join('') + '</td>'
+          + '<td class="mono">' + (t.email_to.length ? esc(t.email_to.join('; ')) : '<span class="err">Email To kosong</span>')
+          + (t.email_cc.length ? '<div class="files">CC: ' + esc(t.email_cc.join('; ')) + '</div>' : '') + '</td>'
+          + '<td class="files">📝 ' + (h.surat.map(function (f) { return esc(f.name); }).join('<br>📝 ') || '-')
+          + '<br>📑 ' + (h.bast.map(function (f) { return esc(f.name); }).join('<br>📑 ') || '-') + '</td>'
+          + '</tr>';
+      }).join('')
+      + '</tbody></table></div>';
+
+    if (hasil.tidakCocok.length) {
+      html += '<p class="hint err" style="margin:14px 0 6px"><b>❌ File tidak cocok (tidak akan dikirim):</b></p><div class="tablewrap"><table><tbody>'
+        + hasil.tidakCocok.map(function (x) {
+          return '<tr><td>' + (x.file.jenis === 'bast' ? '📑' : '📝') + ' ' + esc(x.file.name) + '</td><td class="err">' + esc(x.alasan) + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+    }
+    $('result').innerHTML = html;
+  }
+})();
+</script>
+</body>
+</html>
