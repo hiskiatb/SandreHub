@@ -2642,17 +2642,36 @@
             let htmlLogGagal = "";
 
             try {
-                const response = await fetch("/api/send-emails", {
-                    method: "POST", headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ 
-                        data_email: emailGroupPayload.recipients, 
-                        periode: periodeSurat, 
-                        subject: emailGroupPayload.subject, 
-                        pesan: emailGroupPayload.pesan 
-                    })
-                });
-                
-                const resData = await response.json();
+                // [SandraHub] Dikirim bertahap 10 email per request (berurutan, jeda 1 detik antar request).
+                // Server juga memberi jeda 1 detik antar email + coba ulang otomatis kalau kena limit Resend,
+                // dan 1 request tetap di bawah batas waktu 60 detik Vercel. Hasilnya digabung seperti 1 request.
+                const UKURAN_TAHAP = 10;
+                const semuaPenerima = emailGroupPayload.recipients;
+                const btnKirimTahap = document.getElementById("btnConfirmSendEmail");
+                const teksAwalBtn = btnKirimTahap ? btnKirimTahap.innerHTML : "";
+                const resData = { success: true, results: [] };
+                for (let iTahap = 0; iTahap < semuaPenerima.length; iTahap += UKURAN_TAHAP) {
+                    const tahap = semuaPenerima.slice(iTahap, iTahap + UKURAN_TAHAP);
+                    if (btnKirimTahap) btnKirimTahap.innerHTML = "⏳ Mengirim " + Math.min(iTahap + UKURAN_TAHAP, semuaPenerima.length) + " / " + semuaPenerima.length + "...";
+                    try {
+                        const response = await fetch("/api/send-emails", {
+                            method: "POST", headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ 
+                                data_email: tahap, 
+                                periode: periodeSurat, 
+                                subject: emailGroupPayload.subject, 
+                                pesan: emailGroupPayload.pesan 
+                            })
+                        });
+                        const dataTahap = await response.json();
+                        if (dataTahap.success) resData.results.push(...dataTahap.results);
+                        else tahap.forEach(rec => resData.results.push({ sdp_id: rec.sdp_id, partner_name: rec.partner_name, status: "Terjadi kendala API: " + (dataTahap.error || response.status), is_success: false }));
+                    } catch (errTahap) {
+                        tahap.forEach(rec => resData.results.push({ sdp_id: rec.sdp_id, partner_name: rec.partner_name, status: "Gagal terhubung ke server (koneksi terputus atau timeout).", is_success: false }));
+                    }
+                    if (iTahap + UKURAN_TAHAP < semuaPenerima.length) await new Promise(r => setTimeout(r, 1000));
+                }
+                if (btnKirimTahap) btnKirimTahap.innerHTML = teksAwalBtn;
                 
                 if (resData.success) {
                     resData.results.forEach(r => { 
