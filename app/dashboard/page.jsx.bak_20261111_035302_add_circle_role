@@ -1,0 +1,1937 @@
+"use client";
+/**
+ * page.jsx
+ *
+ * CHANGES:
+ * - Tambah SDP Status Form
+ * - Role lapangan: cse_rse (akses per cluster, aplikasi mobile)
+ * - Tambah userRole prop ke FormPendapatan
+ * - Tambah Import Data Otomatis (PNL_ImportWizard) untuk role spm_sumatera
+ */
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
+import supabase from "../../lib/supabase";
+import { useRouter } from "next/navigation";
+import { HubLogo } from "../../components/HubLogo";
+import { HubLogoLoader, HubLogoLoaderDark } from "../../components/HubLogoLoader";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  ArrowUpRight, ArrowDownLeft, LayoutGrid, PieChart, Sun, Moon,
+  Menu, X, ChevronLeft, AlertTriangle, MapPin, ChevronDown,
+  LogOut, ChevronRight, Calendar, Box, Layers,
+  Shield, Globe, Building2, Store, SlidersHorizontal,
+  Table2, Wallet, PanelLeftClose, PanelLeftOpen,
+  FileSpreadsheet, Users, Key, Briefcase, Wrench, Mail, Sparkles, Archive,
+  Database, TrendingUp, UserRoundCog, Landmark,
+  Pencil, Check, Loader2,
+} from "lucide-react";
+
+import FormPendapatan   from "./components/PNL_FormPendapatan";
+import FormPengeluaran  from "./components/PNL_FormPengeluaran";
+import FormPendapatanV2  from "./components/PNL_FormPendapatanV2";
+import FormPengeluaranV2 from "./components/PNL_FormPengeluaranV2";
+import FormSummary      from "./components/PNL_MPX_Summary";
+import PNLControlCenter from "./components/PNL_ControlCenter.jsx";
+import PNLPivotSummary  from "./components/PNL_PivotSummary";
+import PayoutTracker    from "./components/PayoutTracker";
+import NotificationBell from "./components/NotificationBell";
+import AdminPanel       from "./components/PNL_AdminPanel";
+import PNL_ImportWizard from "./components/PNL_ImportWizard";
+import SDP_StatusForm   from "./components/SDP_StatusForm";
+import SDP2_StatusForm  from "./components/SDP2_StatusForm";
+import MC_ClusterMapping from "./components/MC_ClusterMapping";
+import KodeOtoritas     from "./components/KodeOtoritas";
+import MFTS_Module      from "./components/MFTS_Module";
+import MenuAccessManager from "./components/MenuAccessManager";
+import PTS_Module        from "./components/PTS_Module";
+import ReportMerge_Module from "./components/ReportMerge_Module";
+import PNL_MPX_Menu       from "./components/PNL_MPX_Menu";
+import SDP_DseDatabase    from "./components/SDP_DseDatabase";
+import AdminMcMapping     from "./components/AdminMcMapping";
+import AdminAreaMapping   from "./components/AdminAreaMapping";
+import CombinedEmailExport from "./components/CombinedEmailExport";
+import RoleAccessMatrix from "./components/RoleAccessMatrix";
+import RoleDebugLookup from "./components/RoleDebugLookup";
+import DSE_ProdAR, { CATEGORY_OPTIONS as DSE_CATEGORY_OPTIONS, getCategoryOptionsForRoles, hasRole, hasAnyRole } from "./components/DSE_ProdAR";
+
+// ─── Role Maps ────────────────────────────────────────────────────────────────
+const IOH_ROLE_REGION_MAP = {
+  "internal_ioh":         null,
+  "ioh_north_sumatera":   "NORTH SUMATERA",
+  "ioh_central_sumatera": "CENTRAL SUMATERA",
+  "ioh_south_sumatera":   "SOUTH SUMATERA",
+  "cse_rse":              null,   // akses per cluster (mobile)
+  // Salesforce Management (MFTS)
+  "salesforce_mgmt_sumatera": null,             // L2 — seluruh Sumatera (Circle)
+  "region_sfm_north":         "NORTH SUMATERA", // L3
+  "region_sfm_central":       "CENTRAL SUMATERA",
+  "region_sfm_south":         "SOUTH SUMATERA",
+};
+const IOH_ROLES = new Set(["internal_ioh","ioh_north_sumatera","ioh_central_sumatera","ioh_south_sumatera"]);
+const SFM_ROLES = new Set(["salesforce_mgmt_sumatera","region_sfm_north","region_sfm_central","region_sfm_south"]);
+
+const ROLE_BADGE = {
+  "spm_sumatera":         { bg: "magentaBg", bd: "magentaBd", color: "magenta" },
+  "finance_mpx":          { bg: "greenBg",   bd: "greenBd",   color: "green"   },
+  "admin_mc":             { bg: "greenBg",   bd: "greenBd",   color: "green"   },
+  "internal_ioh":         { bg: "yellowBg",  bd: "yellowBd",  color: "yellow"  },
+  "ioh_north_sumatera":   { bg: "yellowBg",  bd: "yellowBd",  color: "yellow"  },
+  "ioh_central_sumatera": { bg: "yellowBg",  bd: "yellowBd",  color: "yellow"  },
+  "ioh_south_sumatera":   { bg: "yellowBg",  bd: "yellowBd",  color: "yellow"  },
+  "cse_rse":              { bg: "blueBg",    bd: "blueBd",    color: "blue"    },
+};
+
+// ─── Theme ────────────────────────────────────────────────────────────────────
+const tk = (d) => ({
+  appBg:     d ? "#0D0D0E" : "#F5F5F6",
+  sidebar:   d ? "#111113" : "#FFFFFF",
+  surface:   d ? "#161618" : "#FFFFFF",
+  card:      d ? "#1A1A1D" : "#FFFFFF",
+  hover:     d ? "#202024" : "#F0F0F2",
+  line:      d ? "#2A2A2F" : "#E2E2E6",
+  lineSoft:  d ? "#222226" : "#EBEBEF",
+  hi:        d ? "#F2F2F3" : "#1A1A1D",
+  mid:       d ? "#8A8A96" : "#5A5A68",
+  lo:        d ? "#5A5A68" : "#8A8A96",
+  blue:      "#ED1C24",
+  blueBg:    d ? "#2A0708" : "#FEECEC",
+  blueBd:    d ? "#5C1012" : "#F8B4B6",
+  blueSoft:  d ? "#200506" : "#FFF5F5",
+  green:     d ? "#32BCAD" : "#1A9E90",
+  greenBg:   d ? "#0A2421" : "#E6F8F6",
+  greenBd:   d ? "#1A4E49" : "#A8E6E0",
+  red:       d ? "#F87171" : "#DC2626",
+  redBg:     d ? "#2A1414" : "#FEEDEC",
+  yellow:    d ? "#FFCB05" : "#946400",
+  yellowBg:  d ? "#2A2200" : "#FFFBEA",
+  yellowBd:  d ? "#5C4B00" : "#FFE680",
+  magenta:   "#C6168D",
+  magentaBg: d ? "#270016" : "#FEECF8",
+  magentaBd: d ? "#520030" : "#F0A8DC",
+  // blue token repurposed for CSE/SDP badge (distinct from t.blue=red brand)
+  blueBadge: d ? "#0A84FF" : "#0066CC",
+  blueBadgeBg: d ? "rgba(10,132,255,0.13)" : "rgba(0,102,204,0.08)",
+  blueBadgeBd: d ? "rgba(10,132,255,0.30)" : "rgba(0,102,204,0.20)",
+  pink:      "#EC008C",
+  inputBg:   d ? "#161618" : "#FFFFFF",
+  inputBd:   d ? "#2A2A2F" : "#D4D4DA",
+  shadowSm:  d ? "0 1px 2px rgba(0,0,0,0.55)"   : "0 1px 2px rgba(26,26,29,0.06)",
+  shadowMd:  d ? "0 6px 18px rgba(0,0,0,0.50)"  : "0 6px 18px rgba(26,26,29,0.09)",
+  shadowLg:  d ? "0 20px 48px rgba(0,0,0,0.65)" : "0 20px 48px rgba(26,26,29,0.16)",
+});
+
+const FONT_STACK = `"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "SF Pro Text", Roboto, system-ui, sans-serif`;
+
+const buildGlobalCSS = (d, t) => `
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: ${d ? "#3A3A40" : "#C8C8D0"}; border-radius: 99px; }
+  ::-webkit-scrollbar-thumb:hover { background: ${d ? "#4D4D4F" : "#A8A8B0"}; }
+  select option { background: ${t.card}; color: ${t.hi}; }
+  @media (max-width: 640px) {
+    .tab-label { display: none !important; }
+    .hide-mobile { display: none !important; }
+    .header-pad { padding-left: 12px !important; padding-right: 12px !important; gap: 6px !important; overflow-x: auto !important; }
+    .content-pad { padding: 20px 16px !important; }
+          .content-pad-dse { padding: 0 16px 20px !important; }
+    /* Header mobile sering kepotong/ketutup (tombol dark mode dkk kedorong
+       keluar layar) krn date-picker (Bulan+Tahun) & grup kanan (theme/bell/
+       profil) sama2 flexShrink:0 & lebar penuh seperti di desktop, padahal
+       layar sempit — di bawah ini dirapatkan/diperkecil KHUSUS mobile
+       (desktop/tablet tetap seperti semula, aturan ini cuma aktif <=640px). */
+    .hdr-left { gap: 4px !important; }
+    .hdr-right { gap: 4px !important; }
+    .hdr-right .icon-btn { width: 32px !important; height: 32px !important; }
+    .hdr-datepicker { height: 32px !important; }
+    .hdr-datepicker select { height: 32px !important; font-size: 12px !important; padding-left: 4px !important; }
+    /* Padding-right select Bulan & Tahun DIBEDAKAN krn posisi ChevronDown-nya
+       beda jarak dari tepi (right:6 utk Bulan, right:9 utk Tahun, lihat JSX
+       di atas) — kalau disamakan rata (spt sblmnya) teks & panah jadi
+       tumpang-tindih, terutama di select Tahun yg chevron-nya lebih ke
+       dalam. Rumus: padding-right >= posisi-chevron + lebar-ikon(12) + sisa
+       jarak nafas (4px) spy teks & panah tidak pernah saling sentuh. */
+    .hdr-datepicker select:first-of-type { padding-left: 2px !important; padding-right: 22px !important; }
+    .hdr-datepicker select:last-of-type { padding-right: 25px !important; }
+    .hdr-cal-icon { margin-left: 6px !important; }
+    .hdr-profile-name { display: none !important; }
+
+  }
+  .dash-card-chevron-mobile { display: none; }
+  /* ── Daftar Menu → gaya list menu app mobile (permintaan user -
+     "redesign seperti menu yang baik tampil di app mobile") ── HANYA di
+     layar SEMPIT beneran (hp, max-width 520px): kartu besar yg di-stack
+     vertikal diubah jadi baris horizontal ringkas (icon kiri lebih kecil,
+     judul 1 baris di tengah, chevron kanan) ala list iOS Settings / menu
+     app native. UPDATE (permintaan user - "pada ukuran layar fold yang
+     dibentangkan [Galaxy Z Fold 6 unfolded, 744px] dia seharusnya dapat
+     tampilan seperti desktop"): breakpoint SEBELUMNYA sempat dilebarin ke
+     860px utk benerin grid 2-kolom yg timpang di lebar tablet, tapi itu
+     malah bikin layar Fold-dibentangkan (744px, jelas cukup lebar utk
+     grid multi-kolom spt desktop) ikut kepaksa jadi list 1-kolom polos -
+     breakpoint diciutin lagi ke 520px (phone asli / Fold TERLIPAT) supaya
+     Fold-dibentangkan & tablet dapat grid multi-kolom responsive spt
+     desktop (grid default-nya sendiri sudah auto-fit minmax(250px,1fr),
+     otomatis jadi 2-3 kolom sesuai lebar layar, tidak perlu override). */
+  @media (max-width: 520px) {
+    .dash-grid { grid-template-columns: 1fr !important; gap: 10px !important; }
+    .dash-card {
+      flex-direction: row !important;
+      align-items: center !important;
+      padding: 13px 14px !important;
+      gap: 13px !important;
+      border-radius: 14px !important;
+    }
+    .dash-card-stripe { display: none !important; }
+    .dash-card-top { flex: 0 0 auto !important; }
+    .dash-card-icon { width: 42px !important; height: 42px !important; border-radius: 11px !important; }
+    .dash-card-text { flex: 1 1 auto !important; min-width: 0 !important; }
+    .dash-card-text h3 { font-size: 14.5px !important; margin-bottom: 2px !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }
+    .dash-card-text p { display: none !important; }
+    .dash-card-footer { display: none !important; }
+    .dash-card-chevron-mobile { display: flex !important; flex-shrink: 0; }
+  }
+  .snav {
+    width: 100%; display: flex; align-items: center; gap: 10px;
+    padding: 9px 11px; border-radius: 8px; border: none;
+    background: transparent; cursor: pointer;
+    font-size: 13.5px; font-weight: 500; letter-spacing: -0.005em;
+    color: ${t.mid}; transition: background .14s, color .14s;
+    text-align: left; outline: none; font-family: inherit;
+  }
+  .snav:hover  { background: ${t.hover}; color: ${t.hi}; }
+  .snav.active { background: ${t.blueBg}; color: ${t.blue}; font-weight: 600; }
+  .snav:disabled { opacity: 0.36; cursor: not-allowed; pointer-events: none; }
+  .back-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: none; border: none; cursor: pointer;
+    font-size: 13px; font-weight: 500;
+    color: ${t.mid}; transition: color .14s; outline: none; padding: 6px 0; font-family: inherit;
+  }
+  .back-btn:hover { color: ${t.blue}; }
+  .tab-pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 8px 16px; border-radius: 7px; border: none;
+    font-size: 13.5px; font-weight: 500; cursor: pointer;
+    transition: all .14s; white-space: nowrap; outline: none;
+    letter-spacing: -0.005em; font-family: inherit;
+  }
+  .tab-pill.off { background: transparent; color: ${t.mid}; }
+  .tab-pill.off:hover { background: ${t.hover}; color: ${t.hi}; }
+  .tab-pill.on { background: ${t.blue}; color: #fff; font-weight: 600; }
+  .danger-btn {
+    width: 100%; display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-radius: 8px; border: none;
+    background: transparent; cursor: pointer;
+    font-size: 13.5px; font-weight: 500; color: ${t.red};
+    transition: background .14s; outline: none; font-family: inherit;
+  }
+  .danger-btn:hover { background: ${t.redBg}; }
+  .icon-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid ${t.line}; background: ${t.inputBg};
+    border-radius: 8px; cursor: pointer; color: ${t.mid};
+    transition: border-color .14s, color .14s, background .14s; outline: none;
+  }
+  .icon-btn:hover { border-color: ${t.blueBd}; color: ${t.blue}; background: ${t.blueSoft}; }
+`;
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+const MONTHS              = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
+const CURRENT_DATE        = new Date();
+const CURRENT_MONTH_INDEX = CURRENT_DATE.getMonth();
+const CURRENT_YEAR        = CURRENT_DATE.getFullYear();
+const getCurrentMonth     = () => MONTHS[CURRENT_MONTH_INDEX];
+const getCurrentYear      = () => CURRENT_YEAR.toString();
+
+// UPDATE (permintaan user - "perbaiki total bagian ini, sehingga tidak
+// perlu lagi pemilihan periode di kiri atas"): "dse-prod-ar" ditambahkan ke
+// sini krn halaman DSE Prod. & AR sekarang punya pemilihan Tanggal/Periode
+// sendiri (lihat DSE_ProdAR.jsx) - date picker bulan/tahun di header jadi
+// redundan & membingungkan kalau tetap tampil di halaman ini.
+const HIDE_DATE_PICKER_VIEWS    = new Set(["overview","control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","sdp2","mc-cluster","kode-otoritas","mfts","menu-access","promotor-tracking","pnl-mpx","dse-prod-ar","user-management"]);
+
+// Daftar role di tabel profiles, dipakai dropdown "Pilih Role" di menu
+// User Management (permintaan user - "beda beda untuk detailnya"). ready:
+// false = belum ada UI kelolanya, tampil placeholder "Segera hadir".
+const USER_MGMT_ROLES = [
+  { k: "admin_mc",                    label: "District Admin",                ready: true },
+  { k: "admin_area",                  label: "Admin Area",                    ready: true },
+  { k: "spm_sumatera",                label: "SPM Sumatera",                  ready: false },
+  { k: "marketing_sumatera_program",  label: "Marketing Sumatera Program",    ready: false },
+  { k: "ioh_north_sumatera",          label: "IOH North Sumatera",            ready: false },
+  { k: "ioh_central_sumatera",        label: "IOH Central Sumatera",          ready: false },
+  { k: "ioh_south_sumatera",          label: "IOH South Sumatera",            ready: false },
+  { k: "internal_ioh",                label: "Internal IOH",                  ready: false },
+  { k: "martahub_super_user",         label: "MartaHub Super User",           ready: false },
+  { k: "agency",                      label: "Agency",                        ready: false },
+];
+const PNL_VIEWS = new Set(["summary","pendapatan","pengeluaran"]);
+// MPX P&L Report V2 (permintaan user - "MPX P&L Report V2 yang akan
+// disederhanakan ... berdampingan sebagai menu terpisah") - menu & tabel
+// data (pnl_reports_v2) TERPISAH TOTAL dari V1 di atas, cuma 2 tab
+// (Pendapatan V2, Pengeluaran V2 - tanpa Summary/Control Center/Pivot/
+// Import dulu di versi awal ini).
+const PNL_VIEWS_V2 = new Set(["pendapatan-v2","pengeluaran-v2"]);
+// Filter Laporan (Region/Partner/Branch) di sidebar HANYA relevan untuk 4
+// modul di dalam menu "MPX P&L Report" — di luar situ disembunyikan
+// (bukan lagi daftar "sembunyikan di view X", tapi allow-list "tampilkan
+// hanya di view Y", supaya menu baru otomatis tidak menampilkannya).
+const SHOW_SIDEBAR_FILTER_VIEWS = new Set(["control-center","pivot-summary","import-wizard","summary","pendapatan","pengeluaran","pendapatan-v2","pengeluaran-v2"]);
+// Semua view di dalam menu "MPX P&L Report" — dipakai untuk menandai item
+// sidebar-nya aktif walau user sedang di salah satu dari 4 modul di dalamnya.
+const PNL_MPX_VIEWS = new Set(["pnl-mpx","control-center","pivot-summary","import-wizard","summary","pendapatan","pengeluaran"]);
+// Sama perannya dgn PNL_MPX_VIEWS, tapi utk grup sidebar "MPX P&L Report V2".
+const PNL_MPX_V2_VIEWS = new Set(["pnl-mpx-v2","pendapatan-v2","pengeluaran-v2"]);
+
+// Sub-menu yang ketersediaannya dapat dikontrol SPM per-role (maintenance).
+const CONTROLLABLE_MENUS = {
+  "summary":        "Laporan P&L",
+  "control-center": "PNL Control Center",
+  "pivot-summary":  "Pivot P&L Summary",
+  "payout-tracker": "Payout Tracker",
+  "sdp-status":     "SDP Management (Archive)",
+  "mfts":           "Pemenuhan Manpower",
+};
+const menuKeyForView = (v) => (PNL_VIEWS.has(v) ? "summary" : v);
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+function FilterSelect({ label, value, onChange, children, t, d, disabled, icon }) {
+  return (
+    <div style={{ opacity: disabled ? 0.4 : 1, pointerEvents: disabled ? "none" : "auto" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, paddingLeft: 2 }}>
+        <span style={{ color: t.lo, display: "flex" }}>{icon}</span>
+        <span style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: t.mid }}>{label}</span>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", border: `1px solid ${t.inputBd}`, borderRadius: 8, background: t.inputBg, height: 36, position: "relative", transition: "border-color .12s" }}>
+        <select value={value} onChange={e => onChange(e.target.value)}
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", appearance: "none", WebkitAppearance: "none", background: "transparent", border: "none", fontSize: 13.5, fontWeight: 500, color: t.hi, outline: "none", cursor: "pointer", paddingLeft: 12, paddingRight: 32, fontFamily: "inherit" }}>
+          {children}
+        </select>
+        <div style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", color: t.lo, pointerEvents: "none", display: "flex" }}>
+          <ChevronDown size={14} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SNavItem({ icon, label, active, onClick, disabled, maint }) {
+  return (
+    <button onClick={onClick} disabled={disabled} className={`snav${active ? " active" : ""}`}>
+      <span style={{ flexShrink: 0, display: "flex", opacity: active ? 1 : 0.7 }}>{icon}</span>
+      <span style={{ flex: 1, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>{label}</span>
+      {maint && <span title="Sedang dalam pemeliharaan" style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", width: 16, height: 16, borderRadius: 5, background: "rgba(255,176,32,0.16)", color: "#FFB020" }}><Wrench size={10} /></span>}
+    </button>
+  );
+}
+
+// Panel pemberitahuan saat sebuah menu ditandai "dalam pemeliharaan" untuk role user.
+function MaintenanceView({ t, label, note, onBack }) {
+  const amber = "#FFB020";
+  return (
+    <div style={{ maxWidth: 560, margin: "48px auto 0", padding: "40px 32px", borderRadius: 16, border: `1px solid ${t.line}`, background: t.surface, textAlign: "center", boxShadow: t.shadowSm }}>
+      <div style={{ width: 62, height: 62, borderRadius: 16, margin: "0 auto 20px", display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(255,176,32,0.13)", border: "1px solid rgba(255,176,32,0.30)" }}>
+        <Wrench size={27} color={amber} strokeWidth={2.1} />
+      </div>
+      <h3 style={{ fontSize: 19, fontWeight: 800, letterSpacing: "-0.02em", color: t.hi, marginBottom: 8 }}>
+        {label} sedang dalam pemeliharaan
+      </h3>
+      <p style={{ fontSize: 13.5, color: t.mid, lineHeight: 1.6, maxWidth: 400, margin: "0 auto" }}>
+        Menu ini untuk sementara kami nonaktifkan karena sedang ditingkatkan. Tim SPM Sumatera sedang mengerjakannya — silakan cek kembali beberapa saat lagi. Terima kasih atas pengertiannya.
+      </p>
+      {note && (
+        <div style={{ marginTop: 18, padding: "11px 14px", borderRadius: 10, background: "rgba(255,176,32,0.09)", border: "1px solid rgba(255,176,32,0.24)", fontSize: 12.5, color: t.hi, lineHeight: 1.55, textAlign: "left", display: "flex", gap: 9 }}>
+          <AlertTriangle size={15} color={amber} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span><b style={{ color: amber }}>Catatan:</b> {note}</span>
+        </div>
+      )}
+      <button className="back-btn" onClick={onBack} style={{ marginTop: 24, display: "inline-flex" }}>
+        <ChevronLeft size={15} /> Kembali ke Daftar Menu
+      </button>
+    </div>
+  );
+}
+
+function DashCard({ icon, title, desc, tag, active, onClick, t, d, accent = {} }) {
+  const [hov, setHov] = useState(false);
+  const ac = {
+    color:  accent.color  || t.blue,
+    bg:     accent.bg     || t.blueBg,
+    bd:     accent.bd     || t.blueBd,
+    shadow: accent.shadow || "rgba(237,28,36,0.18)",
+  };
+  // UPDATE (permintaan user - "redesign seperti menu yang baik tampil di
+  // app mobile"): kartu vertikal besar yg di-stack ke bawah (icon di atas,
+  // judul, deskripsi 2 baris, baris "Buka modul" terpisah) makan banyak
+  // layar & terasa seperti web-card yg di-skala-kecilkan, bukan menu app
+  // mobile asli. className "dash-card*" di bawah dipakai CSS media query
+  // (lihat buildGlobalCSS, blok @media max-width:640px) utk UBAH TOTAL
+  // layout di layar sempit jadi baris horizontal ringkas ala list menu app
+  // (icon kiri + judul/subjudul 1 baris + chevron kanan, mirip iOS
+  // Settings / app launcher row) - desktop/tablet TIDAK berubah sama
+  // sekali, cuma style default (dipakai desktop) + override mobile.
+  return (
+    <div
+      className="dash-card"
+      onClick={active ? onClick : undefined}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      style={{
+        position: "relative", padding: "23px 22px 20px", borderRadius: 16, overflow: "hidden",
+        border: `1px solid ${hov && active ? ac.bd : t.line}`,
+        background: t.card, cursor: active ? "pointer" : "not-allowed",
+        opacity: active ? 1 : 0.5,
+        transition: "border-color .16s, box-shadow .16s, transform .16s",
+        boxShadow: hov && active ? `0 14px 30px ${ac.shadow}, ${t.shadowSm}` : t.shadowSm,
+        transform: hov && active ? "translateY(-3px)" : "translateY(0)",
+        display: "flex", flexDirection: "column", gap: 16,
+      }}
+    >
+      <div className="dash-card-stripe" style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: ac.color, opacity: hov && active ? 1 : 0, transition: "opacity .16s" }} />
+      <div className="dash-card-top" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+        <div className="dash-card-icon" style={{
+          width: 44, height: 44, borderRadius: 12, flexShrink: 0,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: hov && active ? ac.color : ac.bg,
+          color: hov && active ? "#FFFFFF" : ac.color,
+          border: `1px solid ${hov && active ? ac.color : ac.bd}`,
+          transition: "background .16s, color .16s, border-color .16s",
+        }}>{icon}</div>
+        {/* badge "tag" dihapus dari tampilan (permintaan user - "hilangkan
+            semua badge nya") - prop `tag` masih diterima/dilewatkan di
+            tiap pemanggilan DashCard, cuma ga dirender lagi di sini. */}
+      </div>
+      <div className="dash-card-text">
+        <h3 style={{ fontSize: 16, fontWeight: 700, letterSpacing: "-0.015em", color: t.hi, marginBottom: 6, lineHeight: 1.3 }}>{title}</h3>
+        <p style={{
+          fontSize: 13, color: t.mid, lineHeight: 1.55, fontWeight: 400,
+          display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+        }}>{desc}</p>
+      </div>
+      <div className="dash-card-footer" style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 600, letterSpacing: "0.02em", color: active ? ac.color : t.lo }}>
+        {active ? "Buka modul" : "Terkunci"}<ChevronRight size={13} strokeWidth={2} style={{ transform: hov && active ? "translateX(2px)" : "none", transition: "transform .16s" }} />
+      </div>
+      {/* Chevron khusus mobile - sembunyi di desktop (CSS), muncul di kanan
+          tengah baris saat layout jadi horizontal. */}
+      <div className="dash-card-chevron-mobile" style={{ color: active ? ac.color : t.lo }}>
+        <ChevronRight size={18} strokeWidth={2.2} />
+      </div>
+    </div>
+  );
+}
+
+function LoadingScreen() {
+  return (
+    <div style={{ width:"100%", height:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"var(--background,#F4F4F7)" }}>
+      <HubLogoLoader variant="sandra" logoSize={88} />
+    </div>
+  );
+}
+
+function SidebarToggleBtn({ collapsed, onToggle, t }) {
+  const [hov, setHov] = useState(false);
+  return (
+    <button onClick={onToggle} onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
+      title={collapsed ? "Tampilkan sidebar" : "Sembunyikan sidebar"}
+      style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 32, height: 32, borderRadius: 8, border: `1px solid ${hov ? t.blueBd : t.line}`, background: hov ? t.blueSoft : t.inputBg, cursor: "pointer", outline: "none", flexShrink: 0, color: hov ? t.blue : t.mid, transition: "all .15s" }}>
+      {collapsed ? <PanelLeftOpen size={15} strokeWidth={1.8} /> : <PanelLeftClose size={15} strokeWidth={1.8} />}
+    </button>
+  );
+}
+
+function RoleBadge({ role, t }) {
+  const cfg = ROLE_BADGE[role] || ROLE_BADGE["finance_mpx"];
+  // CSE/SDP use blue badge colors (not t.blue which is the brand red)
+  const isSdpRole = role === "cse_rse";
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 4,
+      fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase",
+      padding: "2px 7px", borderRadius: 4,
+      background: isSdpRole ? t.blueBadgeBg : t[cfg.bg],
+      color:      isSdpRole ? t.blueBadge   : t[cfg.color],
+      border:     `1px solid ${isSdpRole ? t.blueBadgeBd : t[cfg.bd]}`,
+    }}>
+      <Shield size={9} />{role?.replace(/_/g, " ")}
+    </span>
+  );
+}
+
+function PnlPickerPrompt({
+  t, d, isSPM, isMPX, isIOHAny, iohLockedRegion,
+  regions, filteredPartners, availableTypes, availableBranches,
+  activeRegion, setActiveRegion, activePartner, setActivePartner,
+  activeType, setActiveType, activeBranch, setActiveBranch, onBack,
+}) {
+  const hasPartner    = !!activePartner;
+  const hasBranch     = !!activeBranch;
+  const typeAmbiguous = hasPartner && availableTypes.length > 1 && activeType === "ALL";
+  const headline = !hasPartner
+    ? (isMPX ? "Partner kamu sedang dimuat" : iohLockedRegion ? `Pilih partner dari region ${iohLockedRegion}` : "Pilih partner untuk membuka laporan")
+    : typeAmbiguous ? "Partner ini punya beberapa tipe (MPC/MP3)"
+    : !hasBranch ? "Partner ini punya beberapa cabang" : "Konteks laporan siap";
+  const sub = !hasPartner ? "Filter di bawah ini sinkron dengan sidebar — atur dari mana saja."
+    : typeAmbiguous ? "Pilih salah satu tipe agar daftar cabang tepat."
+    : !hasBranch ? "Pilih salah satu cabang untuk melanjutkan." : "Memuat tab laporan…";
+
+  return (
+    <div style={{ maxWidth: 560, margin: "40px auto 0", padding: "36px 32px 32px", borderRadius: 14, border: `1px dashed ${t.blueBd}`, background: t.blueSoft }}>
+      <div style={{ textAlign: "center", marginBottom: 24 }}>
+        <div style={{ width: 56, height: 56, borderRadius: 14, background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", boxShadow: "0 6px 18px rgba(237,28,36,0.30)" }}>
+          <SlidersHorizontal size={24} color="#FFFFFF" strokeWidth={2.2} />
+        </div>
+        <h3 style={{ fontSize: 18, fontWeight: 700, letterSpacing: "-0.025em", color: t.hi, marginBottom: 6 }}>{headline}</h3>
+        <p style={{ fontSize: 13, color: t.mid, lineHeight: 1.55, maxWidth: 380, margin: "0 auto" }}>{sub}</p>
+      </div>
+      <div style={{ padding: 18, borderRadius: 10, background: t.card, border: `1px solid ${t.line}`, display: "flex", flexDirection: "column", gap: 14 }}>
+        {isSPM && (
+          <FilterSelect label="Region" icon={<Globe size={12} />} value={activeRegion}
+            onChange={v => { setActiveRegion(v); setActivePartner(""); setActiveBranch(""); setActiveType("ALL"); }} t={t} d={d}>
+            <option value="SUMATERA">Seluruh Sumatera</option>
+            {regions.map(r => <option key={r} value={r}>{r}</option>)}
+          </FilterSelect>
+        )}
+        {iohLockedRegion && (
+          <div style={{ padding: "8px 11px", borderRadius: 7, fontSize: 11.5, fontWeight: 600, background: t.yellowBg, border: `1px solid ${t.yellowBd}`, color: t.yellow, display: "flex", alignItems: "center", gap: 7 }}>
+            <Globe size={12} style={{ flexShrink: 0 }} />Region terkunci: {iohLockedRegion}
+          </div>
+        )}
+        <FilterSelect label="Nama Partner" icon={<Building2 size={12} />} value={activePartner}
+          onChange={v => { setActivePartner(v); setActiveBranch(""); setActiveType("ALL"); }} t={t} d={d} disabled={isMPX}>
+          <option value="" disabled>Pilih Partner</option>
+          {filteredPartners.map(p => <option key={p} value={p}>{p}</option>)}
+        </FilterSelect>
+        {hasPartner && availableTypes.length > 1 && (
+          <FilterSelect label="Tipe (MPC / MP3)" icon={<SlidersHorizontal size={12} />} value={activeType}
+            onChange={v => { setActiveType(v); setActiveBranch(""); }} t={t} d={d}>
+            <option value="ALL">Semua Tipe</option>
+            {availableTypes.map(tp => <option key={tp} value={tp}>{tp}</option>)}
+          </FilterSelect>
+        )}
+        <FilterSelect
+          label={typeAmbiguous ? "Cabang (pilih Tipe dulu)" : availableBranches.length > 1 ? "Cabang (pilih salah satu)" : "Branch"}
+          icon={<Store size={12} />} value={activeBranch} onChange={v => setActiveBranch(v)}
+          t={t} d={d} disabled={!hasPartner || typeAmbiguous}>
+          <option value="" disabled>Pilih Cabang</option>
+          {availableBranches.map(b => <option key={b} value={b}>{b}</option>)}
+        </FilterSelect>
+      </div>
+      <div style={{ marginTop: 18, display: "flex", justifyContent: "center" }}>
+        <button onClick={onBack} className="back-btn"><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
+export default function DashboardPage() {
+  const router = useRouter();
+  const [loading,           setLoading]          = useState(true);
+  const [profile,           setProfile]          = useState(null);
+  const [view,              setView]             = useState("overview");
+  const [theme,             setTheme]            = useState(() =>
+    typeof window !== "undefined"
+      ? (localStorage.getItem("hub-theme") || localStorage.getItem("sh-theme") || "dark")
+      : "dark"
+  );
+  const [profileOpen,       setProfileOpen]      = useState(false);
+  const [editingName,       setEditingName]      = useState(false);
+  const [nameDraft,         setNameDraft]        = useState("");
+  const [savingName,        setSavingName]       = useState(false);
+  const [navOpen,           setNavOpen]          = useState(true);
+  const [sidebarCollapsed,  setSidebarCollapsed] = useState(false);
+  const [masterData,        setMasterData]       = useState([]);
+  const [regions,           setRegions]          = useState([]);
+  const [activeRegion,      setActiveRegion]     = useState("SUMATERA");
+  const [activePartner,     setActivePartner]    = useState("");
+  const [activeType,        setActiveType]       = useState("ALL");
+  const [activeBranch,      setActiveBranch]     = useState("");
+  const [activeMonth,       setActiveMonth]      = useState(getCurrentMonth);
+  const [activeYear,        setActiveYear]       = useState(getCurrentYear);
+  const [formDirty,         setFormDirty]        = useState(false);
+  const [exitConfirm,       setExitConfirm]      = useState(false);
+  const [pendingView,       setPendingView]      = useState(null);
+  const [mobileOpen,        setMobileOpen]       = useState(false);
+  const [disabledMonthsMap, setDisabledMonthsMap] = useState(new Map());
+  // UPDATE (permintaan user - "untuk menu besarnya akan muncul di header
+  // atas saja dan bisa dropdown dengan arrow penanda dan ui yang sangat
+  // bagus, disamping kiri dari button show sidebar"): `category` modul DSE
+  // Prod & AR (Penjualan&AR DSE / AR DSO / AR HoA) di-LIFT ke sini (dulu
+  // state lokal di dalam DSE_ProdAR.jsx) supaya bisa dikontrol dari
+  // dropdown di header - dikirim turun ke <DSE_ProdAR /> sebagai props.
+  // UPDATE (permintaan user - "pindahin dropdown-nya ke dalam card title,
+  // bukan di app bar lagi"): dropdown pemilih category (tombol + portal
+  // menu) dipindah seluruhnya ke dalam DSE_ProdAR.jsx (nempel di title
+  // card-nya sendiri) - state `dseCategory` TETAP di-lift di sini (masih
+  // dipakai sidebar submenu "Prod. & AR" & dikirim turun sbg props ke
+  // <DSE_ProdAR category=.. setCategory=.. />), cuma UI dropdown app-bar-nya
+  // (dseCategoryOpen/Pos + refs + effect positioning) sudah tidak dipakai lagi
+  // & dihapus.
+  const [dseCategory,       setDseCategory]      = useState("dse");
+  // Grup "Archive" di Overview — menu lama yang dipertimbangkan dihapus ke
+  // depannya, tapi code-nya sengaja belum disentuh/dihapus. Lihat-lihat saja
+  // di sini, disembunyikan (collapsed) secara default supaya overview tidak
+  // penuh; tidak mengubah role gating/akses sama sekali.
+  const [archiveOpen,       setArchiveOpen]      = useState(false);
+  const [sidebarArchiveOpen, setSidebarArchiveOpen] = useState(false);
+  // "User Management" bisa kelola beberapa role berbeda, tapi detail
+  // tiap role beda-beda (permintaan user - "ada button Pilih Role, karena
+  // beda beda untuk detailnya") - umRole nyimpen role yg sedang dipilih,
+  // defaultnya finance_mpx karena itu yg udah ada implementasinya (bukan
+  // "Admin MC" - itu istilah beda, permintaan user: "admin MC itu bukan
+  // finance mpx").
+  const [umRole,            setUmRole]             = useState("admin_mc");
+  // Sub-menu langsung ke 4 modul di dalam "MPX P&L Report" — collapsed
+  // default; klik label menu tetap buka layar PNL_MPX_Menu, chevron ini
+  // cuma pintasan sidebar.
+  const [pnlGroupOpen,      setPnlGroupOpen]     = useState(false);
+  const [pnlV2GroupOpen,    setPnlV2GroupOpen]   = useState(false);
+  const [prodArOpen,        setProdArOpen]       = useState(false);
+
+  // ── Role flags ────────────────────────────────────────────────────────────
+  // MULTI-ROLE (permintaan user - role bisa ganda, hak akses digabung,
+  // "kalau terdaftar di dua role... bisa edit maka dia akan bisa edit"):
+  // isSPM/isMPX/isAdminArea sekarang baca GABUNGAN role (profile.roles,
+  // lihat my_roles() RPC di atas), bukan cuma profile.role tunggal -
+  // supaya akun yg terdaftar di >1 role (co: finance_mpx + admin_area)
+  // dapat SEMUA gate yg relevan utk SETIAP role-nya, bukan cuma satu.
+  const isSPM       = hasRole(profile, "spm_sumatera");
+  // MIGRASI ROLE (permintaan user - Admin MC pindah dari "finance_mpx"
+  // ke "admin_mc" sbg role sendiri) - dual-support sementara spy akun
+  // yg belum/sudah dimigrasi di DB sama2 tetap dikenali.
+  const isMPX       = hasAnyRole(profile, ["finance_mpx", "admin_mc"]);
+  // FIX AKSES (audit user - "pastikan 100persen tidak ada bug"): role baru
+  // admin_area sebelumnya ga ke-handle sama sekali di gating sidebar/menu
+  // halaman ini - karena kebanyakan gate di bawah pakai pola "!isMPX" (bukan
+  // whitelist role), admin_area ke-lolos ke menu2 yg bukan wewenangnya (MPX
+  // P&L Report, Payout Tracker) SEKALIGUS ke-block dari menu yg SEHARUSNYA
+  // dia akses (Prod. & AR, khususnya tab HoA AR). isAdminArea ditambahkan
+  // eksplisit supaya kedua arah itu dibenerin.
+  const isAdminArea = hasRole(profile, "admin_area");
+  const isIOHAny    = IOH_ROLES.has(profile?.role);
+  const isSFM       = SFM_ROLES.has(profile?.role);
+  const canMfts     = isSPM || isIOHAny || isSFM;
+  const isCSE       = profile?.role === "cse_rse";
+  const isBSM       = profile?.role === "bsm";
+  const isPICRegion = profile?.role === "pic_region";
+  const isSDPMember = isCSE || isBSM || isPICRegion;   // bisa akses SDP Status Form
+
+  const iohLockedRegion = IOH_ROLE_REGION_MAP[profile?.role] ?? null;
+  // Region efektif untuk memfilter tampilan (payout/MFTS):
+  //  • IOH regional  → region terkunci (mis. NORTH SUMATERA)
+  //  • IOH Sumatera (internal_ioh) → mengikuti pilihan "Region View" di sidebar
+  //    ("SUMATERA" = seluruh region → null = tidak difilter)
+  const iohRegionView   = iohLockedRegion || (isIOHAny && activeRegion !== "SUMATERA" ? activeRegion : null);
+  const isReadOnly      = isIOHAny;
+  const canMonitor      = isSPM || isIOHAny || isMPX;
+  const canSdp          = isSPM || isSDPMember || isIOHAny;   // IOH: lihat saja (read-only)
+  const canReportMerge   = isSPM || isIOHAny;   // Report Merge: SPM Sumatera + Internal IOH, Finance MPX TIDAK boleh
+
+  // ── Kontrol ketersediaan menu (maintenance per-role, diatur SPM) ────────────
+  const [menuStatus, setMenuStatus] = useState(new Map()); // menu_key -> { status, note }
+  useEffect(() => {
+    if (!profile?.role || isSPM) { setMenuStatus(new Map()); return; } // SPM tak terpengaruh
+    let alive = true;
+    supabase.from("app_menu_status").select("menu_key, status, note").eq("role", profile.role)
+      .then(({ data }) => { if (alive) setMenuStatus(new Map((data || []).map(r => [r.menu_key, r]))); });
+    return () => { alive = false; };
+  }, [profile?.role, isSPM]);
+  const menuMaint  = (mk) => !isSPM && menuStatus.get(mk)?.status === "maintenance";
+  const viewMenuKey    = menuKeyForView(view);
+  const viewUnderMaint = !!CONTROLLABLE_MENUS[viewMenuKey] && menuMaint(viewMenuKey);
+
+  // ── PNL form access ───────────────────────────────────────────────────────
+  const canPnl = useMemo(() => {
+    if (!activePartner || !activeBranch) return false;
+    if (isMPX && activePartner !== profile?.partner_name) return false;
+    const partnerTypes = [...new Set(masterData.filter(i => i.partner_name === activePartner).map(i => i.mpc_mp3))];
+    if (partnerTypes.length > 1 && (!activeType || activeType === "ALL")) return false;
+    return true;
+  }, [activePartner, activeBranch, activeType, isMPX, profile?.partner_name, masterData]);
+
+  const availableYears  = useMemo(() => Array.from({ length: CURRENT_YEAR - 2026 + 1 }, (_, i) => (2026 + i).toString()).reverse(), []);
+  const availableMonths = useMemo(() => Number(activeYear) === CURRENT_YEAR ? MONTHS.slice(0, CURRENT_MONTH_INDEX + 1) : MONTHS, [activeYear]);
+
+  const activeContextDisabledMonths = useMemo(() => {
+    if (!activePartner || !activeBranch) return new Set();
+    const resolvedType = (activeType && activeType !== "ALL") ? activeType
+      : masterData.find(i => i.partner_name === activePartner && i.branch_name === activeBranch)?.mpc_mp3;
+    if (!resolvedType) return new Set();
+    const key = `${activePartner}|${activeBranch}|${resolvedType}|${activeYear}`;
+    return disabledMonthsMap.get(key) || new Set();
+  }, [disabledMonthsMap, activePartner, activeBranch, activeType, activeYear, masterData]);
+
+  useEffect(() => {
+    if (activeContextDisabledMonths.has(activeMonth)) {
+      const fallback = availableMonths.find(m => !activeContextDisabledMonths.has(m));
+      if (fallback) setActiveMonth(fallback);
+    }
+  }, [activeContextDisabledMonths, activeMonth, availableMonths]);
+
+  const d = theme === "dark";
+  const t = tk(d);
+  const toggleTheme = () => { const next = d ? "light" : "dark"; setTheme(next); localStorage.setItem("hub-theme", next); localStorage.setItem("sh-theme", next); };
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    setTheme(localStorage.getItem("hub-theme") || localStorage.getItem("sh-theme") || "dark");
+    const sc = localStorage.getItem("sh-sidebar-collapsed");
+    if (sc) setSidebarCollapsed(sc === "true");
+
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return router.push("/sandra/login");
+      const { data: prof } = await supabase.from("profiles").select("*").eq("id", user.id).single();
+
+      // MULTI-ROLE (permintaan user - "ini role akan ada beberapa dan bisa
+      // menggunakan email yang sama, jadi nanti hak akses teratas digabung
+      // gabung"): selain role utama (profiles.role, TIDAK diubah/dihapus -
+      // tetap dipakai sbg fallback), 1 akun sekarang bisa punya role
+      // TAMBAHAN (tabel profile_extra_roles). my_roles() RPC mengembalikan
+      // gabungan role utama + tambahan sbg array - dipasang sbg prof.roles
+      // supaya semua pengecekan akses di komponen (isMPX/isAdminArea/dst)
+      // bisa baca SELURUH role yg dimiliki, bukan cuma satu. Kalau RPC
+      // gagal/kosong, fallback ke [prof.role] saja (perilaku lama, aman).
+      if (prof && prof.role) {
+        const { data: rolesData } = await supabase.rpc("my_roles");
+        prof.roles = Array.isArray(rolesData) && rolesData.length ? rolesData : [prof.role];
+      }
+
+      // FIX KEAMANAN (permintaan user - "saya takutnya bisa mengakses data
+      // lain padahal login gagal"): sebelumnya kalau baris `profiles` tidak
+      // ada / role-nya null (misal krn RPC mf_dse_admin_mc_login_apply gagal
+      // diam2 - lihat bug yg baru diperbaiki), SEMUA pengecekan "role ===
+      // finance_mpx" dst di bawah ini jadi FALSE, jadi query partner_branches
+      // MELEWATI filter partner_name/region yang seharusnya membatasi akses -
+      // akibatnya user yg profilnya rusak/kosong ini tetap bisa lihat SEMUA
+      // partner (termasuk yang bukan tanggung jawabnya), bukan cuma yg
+      // ditentukan role-nya. Sekarang: profil tidak ditemukan = jangan
+      // percaya sesi ini sama sekali - paksa logout & balik ke login, JANGAN
+      // lanjut render dashboard dengan akses default yang longgar.
+      if (!prof || !prof.role) {
+        await supabase.auth.signOut();
+        router.replace("/sandra/login?error=profile_missing");
+        return;
+      }
+
+      // Agency: bukan user dashboard internal → arahkan ke portal agency
+      if (prof?.role === "agency") return router.replace("/agency");
+
+      // CSE/SDP/BSM/PIC: tidak perlu load partner_branches
+      const isCseOrSdp = prof?.role === "cse_rse" || prof?.role === "bsm" || prof?.role === "pic_region";
+      let mapData = [];
+      if (!isCseOrSdp) {
+        let query = supabase.from("partner_branches").select("*").order("partner_name", { ascending: true });
+        if (prof?.role === "finance_mpx" || prof?.role === "admin_mc") query = query.eq("partner_name", prof?.partner_name);
+        const lockedRegion = IOH_ROLE_REGION_MAP[prof?.role];
+        if (lockedRegion) query = query.eq("region", lockedRegion);
+        const { data } = await query;
+        mapData = data || [];
+      }
+
+      setProfile(prof);
+      setMasterData(mapData);
+      setRegions([...new Set(mapData.map(i => i.region))].sort());
+      if (prof?.role === "finance_mpx" || prof?.role === "admin_mc") setActivePartner(prof?.partner_name || "");
+      const lockedRegion = IOH_ROLE_REGION_MAP[prof?.role];
+      if (lockedRegion) setActiveRegion(lockedRegion);
+
+      // CSE: default ke SDP Management (Baru) — modul Registrasi hasil rebuild.
+      // BSM/PIC Region masih ke sdp-status (Archive) karena modul mereka
+      // belum dibangun ulang.
+      if (prof?.role === "cse_rse") setView("sdp2");
+      else if (isCseOrSdp) setView("sdp-status");
+
+      setLoading(false);
+    })();
+  }, [router]);
+
+  // ── Disabled months ───────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!activeYear) return;
+    (async () => {
+      try {
+        const { data, error } = await supabase.from("pnl_disabled_months").select("partner_name,branch_name,mpc_mp3,month,year");
+        if (error) { setDisabledMonthsMap(new Map()); return; }
+        const map = new Map();
+        (data || []).forEach(r => {
+          const key = `${r.partner_name}|${r.branch_name}|${r.mpc_mp3}|${String(r.year)}`;
+          if (!map.has(key)) map.set(key, new Set());
+          map.get(key).add(r.month);
+        });
+        setDisabledMonthsMap(map);
+      } catch (e) { setDisabledMonthsMap(new Map()); }
+    })();
+  }, [activeYear]);
+
+  useEffect(() => {
+    if (!activeYear) return;
+    const channel = supabase.channel(`page_dm_${activeYear}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "pnl_disabled_months", filter: `year=eq.${activeYear}` }, (payload) => {
+        const { eventType, new: n, old: o } = payload;
+        setDisabledMonthsMap(prev => {
+          const next = new Map(prev);
+          if (eventType === "INSERT" && n) {
+            const key = `${n.partner_name}|${n.branch_name}|${n.mpc_mp3}|${String(n.year)}`;
+            if (!next.has(key)) next.set(key, new Set());
+            next.get(key).add(n.month);
+          } else if (eventType === "DELETE" && o) {
+            const key = `${o.partner_name}|${o.branch_name}|${o.mpc_mp3}|${String(o.year)}`;
+            if (next.has(key)) { const s = new Set(next.get(key)); s.delete(o.month); if (s.size === 0) next.delete(key); else next.set(key, s); }
+          }
+          return next;
+        });
+      }).subscribe();
+    return () => supabase.removeChannel(channel);
+  }, [activeYear]);
+
+  const handleToggleSidebar = () => { const next = !sidebarCollapsed; setSidebarCollapsed(next); localStorage.setItem("sh-sidebar-collapsed", String(next)); };
+
+  // UPDATE (permintaan user - "coba perbaiki agar mereka bisa edit nama
+  // mereka sendiri"): Admin MC (role finance_mpx, login via OTP email -
+  // lihat app/sandra/login-admin-mc) dulu nama tampilannya (profiles.
+  // full_name) cuma bisa keisi SEKALI dari RPC mf_dse_admin_mc_login_apply
+  // (atau diubah SPM lewat tab Mapping & User Management), tidak pernah
+  // bisa diubah sendiri oleh pemiliknya. Sekarang bisa, lewat dropdown
+  // profil (pojok kanan atas) - update profiles.full_name milik akun
+  // SENDIRI saja (RLS policy "profiles_update_own": id = auth.uid()).
+  const saveOwnName = async () => {
+    const newName = nameDraft.trim();
+    if (!newName || !profile?.id) { setEditingName(false); return; }
+    if (newName === profile.full_name) { setEditingName(false); return; }
+    setSavingName(true);
+    try {
+      const { error } = await supabase.from("profiles").update({ full_name: newName }).eq("id", profile.id);
+      if (error) throw error;
+      setProfile((prev) => (prev ? { ...prev, full_name: newName } : prev));
+      setEditingName(false);
+    } catch {
+      // best-effort - dropdown kecil, cukup biarkan draft tetap kebuka kalau gagal
+    } finally {
+      setSavingName(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!activePartner || iohLockedRegion) return;
+    const partnerData = masterData.find(i => i.partner_name === activePartner);
+    if (partnerData?.region) setActiveRegion(partnerData.region);
+  }, [activePartner, masterData, iohLockedRegion]);
+
+  const filteredPartners = useMemo(() => {
+    let list = masterData;
+    if (iohLockedRegion) list = list.filter(i => i.region === iohLockedRegion);
+    else if (activeRegion !== "SUMATERA") list = list.filter(i => i.region === activeRegion);
+    return [...new Set(list.map(i => i.partner_name))];
+  }, [masterData, activeRegion, iohLockedRegion]);
+
+  const availableTypes = useMemo(() => {
+    if (!activePartner) return [];
+    return [...new Set(masterData.filter(i => i.partner_name === activePartner).map(i => i.mpc_mp3))];
+  }, [masterData, activePartner]);
+
+  const availableBranches = useMemo(() => {
+    if (!activePartner) return [];
+    return [...new Set(masterData.filter(i => i.partner_name === activePartner && (activeType === "ALL" || i.mpc_mp3 === activeType)).map(i => i.branch_name))];
+  }, [masterData, activePartner, activeType]);
+
+  useEffect(() => {
+    if (availableTypes.length === 1) setActiveType(availableTypes[0]);
+    else if (activeType !== "ALL" && !availableTypes.includes(activeType)) setActiveType("ALL");
+  }, [availableTypes, activePartner]);
+
+  useEffect(() => {
+    if (availableBranches.length === 1) setActiveBranch(availableBranches[0]);
+    else if (!availableBranches.includes(activeBranch)) setActiveBranch("");
+  }, [availableBranches]);
+
+  useEffect(() => {
+    if (!activePartner || !activeBranch) return;
+    if (activeType && activeType !== "ALL") return;
+    const branchTypes = [...new Set(masterData.filter(i => i.partner_name === activePartner && i.branch_name === activeBranch).map(i => i.mpc_mp3))];
+    if (branchTypes.length === 1) setActiveType(branchTypes[0]);
+  }, [activeBranch, activeType, activePartner, masterData]);
+
+  useEffect(() => {
+    if (!availableMonths.includes(activeMonth)) setActiveMonth(availableMonths[availableMonths.length - 1]);
+  }, [activeYear, availableMonths, activeMonth]);
+
+  const mpxType = activeType !== "ALL" ? activeType
+    : masterData.find(i => i.partner_name === activePartner && i.branch_name === activeBranch)?.mpc_mp3;
+
+  const clearFilters = () => {
+    if (!iohLockedRegion) setActiveRegion("SUMATERA");
+    if (!isMPX) setActivePartner("");
+    setActiveBranch("");
+    setActiveType("ALL");
+  };
+
+  // Muat ulang daftar partner/branch (dipakai setelah Admin Panel menambah/
+  // mengubah/menghapus branch) supaya selektor & Control Center langsung sinkron.
+  const refreshBranches = useCallback(async () => {
+    if (!profile) return;
+    const isCseOrSdp = profile.role === "cse_rse" || profile.role === "bsm" || profile.role === "pic_region";
+    if (isCseOrSdp) return;
+    let query = supabase.from("partner_branches").select("*").order("partner_name", { ascending: true });
+    if (profile.role === "finance_mpx" || profile.role === "admin_mc") query = query.eq("partner_name", profile.partner_name);
+    const lockedRegion = IOH_ROLE_REGION_MAP[profile.role];
+    if (lockedRegion) query = query.eq("region", lockedRegion);
+    const { data } = await query;
+    const mapData = data || [];
+    setMasterData(mapData);
+    setRegions([...new Set(mapData.map(i => i.region))].sort());
+  }, [profile]);
+
+  const navigate = (viewId) => {
+    if (formDirty) { setPendingView(viewId); setExitConfirm(true); }
+    else { setView(viewId); setMobileOpen(false); }
+  };
+
+  // Begitu masuk ke menu yang punya sub-menu (MPX P&L Report), langsung
+  // buka sub-menunya di sidebar — tidak perlu klik chevron dulu. Pakai
+  // effect (bukan dihitung langsung dari `view`) supaya user masih bisa
+  // menutupnya manual lewat chevron tanpa langsung dipaksa terbuka lagi.
+  useEffect(() => {
+    if (PNL_MPX_VIEWS.has(view)) setPnlGroupOpen(true);
+  }, [view]);
+
+  useEffect(() => {
+    if (PNL_MPX_V2_VIEWS.has(view)) setPnlV2GroupOpen(true);
+  }, [view]);
+
+  // Sama seperti grup "MPX P&L Report" di atas — begitu masuk ke
+  // "DSE Prod. & AR" (view === "dse-prod-ar"), sub-menunya (DSE/DSO-DSP/HoA)
+  // langsung dibuka otomatis di sidebar.
+  useEffect(() => {
+    if (view === "dse-prod-ar") setProdArOpen(true);
+  }, [view]);
+
+  const navigateTab = (tabId) => {
+    if (tabId === view) return;
+    if (formDirty) { setPendingView(tabId); setExitConfirm(true); }
+    else setView(tabId);
+  };
+
+  const HEADER_H  = 60;
+  const SIDEBAR_W = 252;
+  const hideDatePicker    = HIDE_DATE_PICKER_VIEWS.has(view);
+  const hideSidebarFilter = !SHOW_SIDEBAR_FILTER_VIEWS.has(view);
+
+  if (loading) return <LoadingScreen />;
+
+  // ── Sidebar ───────────────────────────────────────────────────────────────
+  const SidebarInner = () => (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", userSelect: "none" }}>
+      <div style={{ height: HEADER_H, display: "flex", alignItems: "center", padding: "0 20px", flexShrink: 0, borderBottom: `1px solid ${t.line}`, background: d ? "linear-gradient(135deg, #1A0506 0%, #111113 100%)" : "linear-gradient(135deg, #FFF5F5 0%, #FFFFFF 100%)" }}>
+        <div style={{ width: 32, height: 32, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <HubLogo variant="sandra" size={32} dark={d} shadow={false} />
+        </div>
+        <div style={{ marginLeft: 10 }}>
+          <span style={{ fontSize: 18, fontWeight: 700, letterSpacing: "-0.03em", color: t.hi, lineHeight: 1 }}>
+            Sandra<span style={{ background: "linear-gradient(90deg, #ED1C24, #C6168D)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Hub</span>
+          </span>
+        </div>
+      </div>
+
+      <div style={{ flex: 1, overflowY: "auto", padding: "20px 14px 24px", display: "flex", flexDirection: "column", gap: 26 }}>
+        {/* Filter laporan (hanya tampil untuk role yang akses PNL) */}
+        {!hideSidebarFilter && !isSDPMember && !isAdminArea && (
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 2px", marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                <SlidersHorizontal size={12} style={{ color: t.lo }} />
+                <span style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: "0.10em", textTransform: "uppercase", color: t.mid }}>Filter Laporan</span>
+              </div>
+              <button onClick={clearFilters} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "transparent", border: `1px solid ${t.line}`, cursor: "pointer", fontSize: 10.5, fontWeight: 500, color: t.mid, padding: "3px 8px", borderRadius: 5, fontFamily: "inherit" }}>
+                <X size={10} />Reset
+              </button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {(isSPM || isIOHAny) && (
+                <FilterSelect label={iohLockedRegion ? "Region (terkunci)" : (isIOHAny ? "Region View" : "Region")} icon={<Globe size={12} />} value={activeRegion}
+                  onChange={v => { if (iohLockedRegion) return; setActiveRegion(v); setActivePartner(""); setActiveBranch(""); }}
+                  t={t} d={d} disabled={!!iohLockedRegion}>
+                  <option value="SUMATERA">Seluruh Sumatera</option>
+                  {regions.map(r => <option key={r} value={r}>{r}</option>)}
+                </FilterSelect>
+              )}
+              {iohLockedRegion && (
+                <div style={{ padding: "8px 11px", borderRadius: 7, fontSize: 11.5, fontWeight: 600, background: t.yellowBg, border: `1px solid ${t.yellowBd}`, color: t.yellow, display: "flex", alignItems: "center", gap: 7 }}>
+                  <Globe size={12} style={{ flexShrink: 0 }} />Akses dibatasi: {iohLockedRegion}
+                </div>
+              )}
+              <FilterSelect label="Nama Partner" icon={<Building2 size={12} />} value={activePartner}
+                onChange={v => { setActivePartner(v); setActiveBranch(""); setActiveType("ALL"); }} t={t} d={d} disabled={isMPX}>
+                <option value="" disabled>Pilih Partner</option>
+                {filteredPartners.map(p => <option key={p} value={p}>{p}</option>)}
+              </FilterSelect>
+              {activePartner && availableTypes.length > 1 && (
+                <FilterSelect label="Tipe (MPC / MP3)" icon={<SlidersHorizontal size={12} />} value={activeType}
+                  onChange={v => { setActiveType(v); setActiveBranch(""); }} t={t} d={d}>
+                  <option value="ALL">Semua Tipe</option>
+                  {availableTypes.map(tp => <option key={tp} value={tp}>{tp}</option>)}
+                </FilterSelect>
+              )}
+              <FilterSelect label={availableBranches.length > 1 ? "Cabang (pilih salah satu)" : "Branch"}
+                icon={<Store size={12} />} value={activeBranch} onChange={v => setActiveBranch(v)}
+                t={t} d={d} disabled={!activePartner}>
+                <option value="" disabled>Pilih Cabang</option>
+                {availableBranches.map(b => <option key={b} value={b}>{b}</option>)}
+              </FilterSelect>
+              {activePartner && (!activeBranch || (availableTypes.length > 1 && activeType === "ALL")) && (
+                <div style={{ padding: "8px 11px", borderRadius: 7, fontSize: 11, fontWeight: 500, background: t.yellowBg, border: `1px solid ${t.yellowBd}`, color: t.yellow, display: "flex", alignItems: "flex-start", gap: 7, lineHeight: 1.45 }}>
+                  <AlertTriangle size={11} style={{ flexShrink: 0, marginTop: 1 }} />
+                  <span>{availableTypes.length > 1 && activeType === "ALL" ? "Pilih tipe MPC/MP3 untuk melanjutkan." : "Pilih cabang untuk membuka laporan."}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Navigasi */}
+        <div>
+          <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: "0.10em", textTransform: "uppercase", color: t.mid, paddingLeft: 2, marginBottom: 8 }}>Navigasi</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 2, marginBottom: 2 }}>
+            <button onClick={() => { navigate("overview"); setNavOpen(true); }} className={`snav${view === "overview" ? " active" : ""}`} style={{ flex: 1 }}>
+              <span style={{ display: "flex", opacity: view === "overview" ? 1 : 0.7 }}><LayoutGrid size={15} /></span>
+              <span style={{ flex: 1 }}>Daftar Menu</span>
+            </button>
+            <button onClick={() => setNavOpen(!navOpen)} title={navOpen ? "Sembunyikan navigasi" : "Tampilkan navigasi"}
+              style={{ flexShrink: 0, width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", cursor: "pointer", color: t.lo, borderRadius: 6, fontFamily: "inherit" }}>
+              <span style={{ display: "flex", transform: navOpen ? "rotate(180deg)" : "rotate(0)", transition: "transform .18s" }}><ChevronDown size={13} /></span>
+            </button>
+          </div>
+          <AnimatePresence>
+            {navOpen && (
+              <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.17 }} style={{ overflow: "hidden" }}>
+                <div style={{ marginLeft: 14, paddingLeft: 10, borderLeft: `1px solid ${t.line}`, paddingTop: 4, paddingBottom: 4, display: "flex", flexDirection: "column", gap: 2 }}>
+                  {/* MPX P&L Report — klik label buka layar menunya
+                      (PNL_MPX_Menu), klik chevron buka pintasan langsung
+                      ke 4 modul di dalamnya tanpa pindah halaman dulu. */}
+                  {/* FIX AKSES (permintaan user - "untuk admin mc mengapa dia bisa
+                      mengakses mpx p&l report dan payout tracker"): Admin MC
+                      (finance_mpx) HANYA boleh akses "Prod. & AR" - tidak boleh
+                      lihat menu ini sama sekali, makanya "&& !isMPX" ditambahkan
+                      eksplisit (canMonitor/!isSDPMember sebelumnya ikut
+                      meng-include isMPX secara tidak sengaja). */}
+                  {!isMPX && !isAdminArea && (canMonitor || !isSDPMember || isSPM) && (
+                    <>
+                      <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                        <button onClick={() => navigate("pnl-mpx")} className={`snav${(view === "pnl-mpx" || PNL_MPX_VIEWS.has(view)) ? " active" : ""}`} style={{ flex: 1 }}>
+                          <span style={{ flexShrink: 0, display: "flex", opacity: (view === "pnl-mpx" || PNL_MPX_VIEWS.has(view)) ? 1 : 0.7 }}><PieChart size={14} /></span>
+                          <span style={{ flex: 1, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>MPX P&amp;L Report</span>
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); setPnlGroupOpen(v => !v); }} title={pnlGroupOpen ? "Sembunyikan sub-menu" : "Tampilkan sub-menu"}
+                          style={{ flexShrink: 0, width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", cursor: "pointer", color: t.lo, borderRadius: 6, fontFamily: "inherit" }}>
+                          {pnlGroupOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                        </button>
+                      </div>
+                      {pnlGroupOpen && (
+                        <div style={{ marginLeft: 10, paddingLeft: 8, borderLeft: `1px solid ${t.line}`, display: "flex", flexDirection: "column", gap: 2 }}>
+                          {!isSDPMember && !isMPX && <SNavItem icon={<PieChart size={13} />}    label="Laporan P&L"          active={PNL_VIEWS.has(view)}       maint={menuMaint("summary")} onClick={() => navigate("summary")} />}
+                          {canMonitor && !isMPX && <SNavItem icon={<Layers size={13} />}        label="PNL Control Center"   active={view === "control-center"} maint={menuMaint("control-center")} onClick={() => navigate("control-center")} />}
+                          {canMonitor && !isMPX && <SNavItem icon={<Table2 size={13} />}        label="Pivot P&L Summary"    active={view === "pivot-summary"}  maint={menuMaint("pivot-summary")} onClick={() => navigate("pivot-summary")} />}
+                          {isSPM        && <SNavItem icon={<FileSpreadsheet size={13} />} label="Import Data"      active={view === "import-wizard"}  onClick={() => navigate("import-wizard")} />}
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {/* MPX P&L Report V2 (permintaan user - "MPX P&L Report V2 yang
+                      akan disederhanakan ... berdampingan sebagai menu
+                      terpisah") - BEDA audiens dari V1 di atas: V1
+                      sengaja menyembunyikan isMPX/isAdminArea (mereka
+                      pakai "Prod. & AR"), tapi V2 justru dibuat UNTUK
+                      partner itu sendiri (mengisi "Form Pendapatan Area
+                      Level") + SPM (mengisi "Data Provided Area Level") -
+                      jadi gate-nya isSPM || isMPX || isAdminArea, bukan
+                      exclude seperti V1. */}
+                  {(isSPM || isMPX || isAdminArea) && (
+                    <>
+                      <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                        <button onClick={() => navigate("pnl-mpx-v2")} className={`snav${(view === "pnl-mpx-v2" || PNL_MPX_V2_VIEWS.has(view)) ? " active" : ""}`} style={{ flex: 1 }}>
+                          <span style={{ flexShrink: 0, display: "flex", opacity: (view === "pnl-mpx-v2" || PNL_MPX_V2_VIEWS.has(view)) ? 1 : 0.7 }}><PieChart size={14} /></span>
+                          <span style={{ flex: 1, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>MPX P&amp;L Report V2</span>
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); setPnlV2GroupOpen(v => !v); }} title={pnlV2GroupOpen ? "Sembunyikan sub-menu" : "Tampilkan sub-menu"}
+                          style={{ flexShrink: 0, width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", cursor: "pointer", color: t.lo, borderRadius: 6, fontFamily: "inherit" }}>
+                          {pnlV2GroupOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                        </button>
+                      </div>
+                      {pnlV2GroupOpen && (
+                        <div style={{ marginLeft: 10, paddingLeft: 8, borderLeft: `1px solid ${t.line}`, display: "flex", flexDirection: "column", gap: 2 }}>
+                          <SNavItem icon={<ArrowUpRight size={13} />}  label="Pendapatan V2"  active={view === "pendapatan-v2"}  onClick={() => navigate("pendapatan-v2")} />
+                          <SNavItem icon={<ArrowDownLeft size={13} />} label="Pengeluaran V2" active={view === "pengeluaran-v2"} onClick={() => navigate("pengeluaran-v2")} />
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {!isSDPMember && !isMPX && !isAdminArea && <SNavItem icon={<Wallet size={14} />}      label="Payout Tracker"       active={view === "payout-tracker"} maint={menuMaint("payout-tracker")} onClick={() => navigate("payout-tracker")} />}
+                  {canSdp       && <SNavItem icon={<Store size={14} />}       label="SDP Management"       active={view === "sdp2"}           onClick={() => navigate("sdp2")} />}
+                  {/* UPDATE (permintaan user - "mapping admin mc itu
+                      seharusnya didalam dse prod, bukan menjadi menu
+                      terpisah, namanya user management"): nav item & card
+                      "Mapping Admin MC" yg terpisah DIHAPUS - fitur yg sama
+                      skrg jadi tab "User Management" DI DALAM DSE Prod. &
+                      AR itu sendiri (lihat DSE_ProdAR.jsx). */}
+                  {(isSPM || isMPX || isAdminArea) && (
+                    <>
+                      <button onClick={() => setProdArOpen(v => !v)}
+                        style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", background: (view === "dse-prod-ar") ? t.blueBg : "transparent", border: "none", borderRadius: 8, cursor: "pointer", padding: "9px 11px", color: (view === "dse-prod-ar") ? t.blue : t.mid, fontFamily: "inherit", fontSize: 13.5, fontWeight: (view === "dse-prod-ar") ? 600 : 500 }}>
+                        <Wallet size={14} style={{ flexShrink: 0, opacity: (view === "dse-prod-ar") ? 1 : 0.7 }} />
+                        <span style={{ flex: 1, textAlign: "left", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>Prod. & AR</span>
+                        {prodArOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                      </button>
+                      {prodArOpen && (
+                        <div style={{ marginLeft: 10, paddingLeft: 8, borderLeft: `1px solid ${t.line}`, display: "flex", flexDirection: "column", gap: 2 }}>
+                          {/* FIX AKSES (audit user): tab kategori difilter sesuai role -
+                              District Admin cuma DSE+DSO/DSP, Admin Area cuma HoA (lihat
+                              getCategoryOptionsForRole di DSE_ProdAR.jsx). */}
+                          {getCategoryOptionsForRoles(Array.isArray(profile?.roles) && profile.roles.length ? profile.roles : [profile?.role]).map((opt) => (
+                            <SNavItem key={opt.k} icon={<Wallet size={13} />} label={opt.label}
+                              active={view === "dse-prod-ar" && dseCategory === opt.k}
+                              onClick={() => { setDseCategory(opt.k); navigate("dse-prod-ar"); }} />
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {isSPM        && <SNavItem icon={<UserRoundCog size={14} />}   label="User Management"   active={view === "user-management"} onClick={() => navigate("user-management")} />}
+
+                  {/* Archive — menu lama, dipertimbangkan dihapus ke depannya;
+                      code TIDAK dihapus, cuma dikumpulkan & collapsed di sini. */}
+                  {isSPM && (
+                    <>
+                      <button onClick={() => setSidebarArchiveOpen(v => !v)}
+                        style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", background: "none", border: "none", cursor: "pointer", padding: "8px 8px 4px", marginTop: 2, color: t.lo, fontFamily: "inherit" }}>
+                        <Archive size={12} />
+                        <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", flex: 1, textAlign: "left" }}>Archive</span>
+                        {sidebarArchiveOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                      </button>
+                      {sidebarArchiveOpen && (
+                        <>
+                          {canSdp       && <SNavItem icon={<Users size={14} />}       label="SDP Management (Archive)" active={view === "sdp-status"}  maint={menuMaint("sdp-status")} onClick={() => navigate("sdp-status")} />}
+                          {canMfts && <SNavItem icon={<Briefcase size={14} />} label="Pemenuhan Manpower" active={view === "mfts"}          maint={menuMaint("mfts")} onClick={() => navigate("mfts")} />}
+                          {(isSPM || isPICRegion || isSFM || isCSE) && <SNavItem icon={<Store size={14} />} label="Promotor Tracking" active={view === "promotor-tracking"} onClick={() => navigate("promotor-tracking")} />}
+                          {isSPM        && <SNavItem icon={<Wrench size={14} />}      label="Kelola Menu"          active={view === "menu-access"}    onClick={() => navigate("menu-access")} />}
+                          {isSPM        && <SNavItem icon={<MapPin size={14} />}           label="MC/Cluster Mapping" active={view === "mc-cluster"}       onClick={() => navigate("mc-cluster")} />}
+                          {isSPM        && <SNavItem icon={<Database size={14} />}         label="Database DSE"      active={view === "dse-database"}     onClick={() => navigate("dse-database")} />}
+                          {isSPM        && <SNavItem icon={<Key size={14} />}              label="Kode Otoritas"      active={view === "kode-otoritas"}    onClick={() => navigate("kode-otoritas")} />}
+                          {isSPM        && <SNavItem icon={<Shield size={14} />}            label="Kode Otoritas MPX"  active={view === "admin-panel"}      onClick={() => navigate("admin-panel")} />}
+                          {canReportMerge && <SNavItem icon={<Mail size={14} />}         label="Report Merge"       active={view === "report-merge"}     onClick={() => navigate("report-merge")} />}
+                        </>
+                      )}
+                    </>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  return (
+    <div style={{ display: "flex", height: "100vh", background: t.appBg, color: t.hi, fontFamily: FONT_STACK, WebkitFontSmoothing: "antialiased", overflow: "hidden" }}>
+      <style>{buildGlobalCSS(d, t)}</style>
+
+      <aside className="lg-sidebar" style={{ width: sidebarCollapsed ? 0 : SIDEBAR_W, flexShrink: 0, background: t.sidebar, borderRight: sidebarCollapsed ? "none" : `1px solid ${t.line}`, height: "100vh", position: "sticky", top: 0, zIndex: 50, overflow: "hidden", transition: "width .22s cubic-bezier(0.4,0,0.2,1)", display: "none" }}>
+        <div style={{ width: SIDEBAR_W, height: "100%", flexShrink: 0 }}><SidebarInner /></div>
+      </aside>
+
+      <main style={{ flex: 1, display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden", minWidth: 0 }}>
+        {/* Header */}
+        <header className="header-pad" style={{ height: HEADER_H, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", gap: 12, background: d ? "rgba(17,17,19,0.92)" : "rgba(255,255,255,0.92)", borderBottom: `1px solid ${t.line}`, backdropFilter: "blur(24px)", zIndex: 100, position: "relative" }}>
+          <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: "linear-gradient(90deg, #ED1C24 0%, #FFCB05 33%, #32BCAD 66%, #C6168D 100%)" }} />
+          <div className="hdr-left" style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            <div className="lg-sidebar-toggle" style={{ display: "none" }}>
+              <SidebarToggleBtn collapsed={sidebarCollapsed} onToggle={handleToggleSidebar} t={t} />
+            </div>
+            <button className="mob-hamburger" onClick={() => setMobileOpen(true)} style={{ display: "none", width: 36, height: 36, alignItems: "center", justifyContent: "center", border: `1px solid ${t.line}`, background: t.inputBg, borderRadius: 8, cursor: "pointer", color: t.mid }}>
+              <Menu size={17} />
+            </button>
+            {/* UPDATE (permintaan user - "di samping kanan button show hide
+                sidebar tambahkan title Productivity & AR"): judul halaman
+                di header atas - CUMA utk view "dse-prod-ar" (menu Prod &
+                AR), krn header-nya kosong di situ (hideDatePicker=true,
+                ga ada datepicker yg biasanya ngisi slot ini) - jadi kalau
+                nanti ada view lain yg butuh judul serupa, tinggal tambah
+                kondisi baru di sini, bukan di-generic-kan dulu skrg krn
+                cuma 1 kebutuhan konkret. */}
+            {view === "dse-prod-ar" && (
+              <span style={{ fontSize: 15, fontWeight: 800, color: t.hi, whiteSpace: "nowrap", flexShrink: 0 }}>Productivity &amp; AR</span>
+            )}
+            {!hideDatePicker && (
+              <div className="hdr-datepicker" style={{ display: "flex", alignItems: "center", border: `1px solid ${t.inputBd}`, borderRadius: 8, background: t.inputBg, height: 36, overflow: "hidden", flexShrink: 0, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", borderRight: `1px solid ${t.inputBd}`, height: "100%", position: "relative", minWidth: 0 }}>
+                  <Calendar size={13} className="hdr-cal-icon" style={{ color: t.blue, marginLeft: 11, flexShrink: 0 }} />
+                  <div style={{ position: "relative", display: "flex", alignItems: "center", minWidth: 0 }}>
+                    <select value={activeMonth} onChange={e => setActiveMonth(e.target.value)}
+                      style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", background: "transparent", border: "none", fontSize: 13.5, fontWeight: 500, color: t.hi, cursor: "pointer", paddingLeft: 7, paddingRight: 24, height: 36, fontFamily: "inherit", minWidth: 0 }}>
+                      {availableMonths.map(m => (
+                        <option key={m} value={m} disabled={activeContextDisabledMonths.has(m)}>{m}{activeContextDisabledMonths.has(m) ? " (nonaktif)" : ""}</option>
+                      ))}
+                    </select>
+                    <ChevronDown size={12} style={{ position: "absolute", right: 6, pointerEvents: "none", color: t.lo }} />
+                  </div>
+                </div>
+                <div style={{ position: "relative", display: "flex", alignItems: "center", minWidth: 0 }}>
+                  <select value={activeYear} onChange={e => setActiveYear(e.target.value)} style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", background: "transparent", border: "none", fontSize: 13.5, fontWeight: 500, color: t.hi, cursor: "pointer", paddingLeft: 12, paddingRight: 28, height: 36, fontFamily: "inherit", minWidth: 0 }}>
+                    {availableYears.map(year => <option key={year} value={year}>{year}</option>)}
+                  </select>
+                  <ChevronDown size={12} style={{ position: "absolute", right: 9, pointerEvents: "none", color: t.lo }} />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="hdr-right" style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            <button className="icon-btn" onClick={toggleTheme} style={{ width: 36, height: 36 }}>{d ? <Sun size={15} /> : <Moon size={15} />}</button>
+            {/* UPDATE (bug report - "mengapa admin mc bisa mengakses ini",
+                screenshot: Admin MC lihat notifikasi finalisasi laporan
+                P&L milik Partner/MC LAIN - PT ADI CIPTA SURYA TEKNIK, PT
+                PRIMA SENTRAL DISTRIBUSI, dst): bell ini bagian dari modul
+                MPX P&L yg sudah diputuskan DISEMBUNYIKAN TOTAL dari Admin
+                MC (lihat semua `!isMPX` di sekitar MPX P&L Report/Payout
+                Tracker) - tapi ke-lewat di sini krn propnya `isSPM={canMonitor}`,
+                dan `canMonitor` SENDIRI didefinisikan termasuk isMPX
+                (`isSPM || isIOHAny || isMPX`), jadi Admin MC tetep lolos
+                gate `if (!isSPM) return null;` di dalam NotificationBell &
+                liat SEMUA notifikasi P&L lintas Partner/MC tanpa filter
+                sama sekali (bukan cuma salah tampil, beneran data orang
+                lain). Fix: exclude isMPX eksplisit di sini. */}
+            <NotificationBell t={t} d={d} isSPM={canMonitor && !isMPX} activeYear={activeYear} masterData={masterData} disabledMonthsMap={disabledMonthsMap} />
+            <div style={{ position: "relative" }}>
+              <button onClick={() => setProfileOpen(!profileOpen)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 10px 0 4px", height: 36, borderRadius: 8, border: `1px solid ${profileOpen ? t.blueBd : t.line}`, background: profileOpen ? t.blueSoft : t.inputBg, cursor: "pointer", fontFamily: "inherit" }}>
+                <div style={{ width: 26, height: 26, borderRadius: 6, background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", display: "flex", alignItems: "center", justifyContent: "center", color: "#FFFFFF", fontSize: 12, fontWeight: 700 }}>
+                  {profile?.full_name?.charAt(0) || "U"}
+                </div>
+                <span style={{ fontSize: 13.5, fontWeight: 500, color: t.hi, maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} className="lg-hide-text hdr-profile-name">
+                  {profile?.full_name?.split(" ")[0]}
+                </span>
+                <ChevronDown size={12} style={{ color: t.lo, transform: profileOpen ? "rotate(180deg)" : "rotate(0)" }} />
+              </button>
+              <AnimatePresence>
+                {profileOpen && (
+                  <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 6 }} transition={{ duration: 0.13 }}
+                    style={{ position: "absolute", right: 0, top: "calc(100% + 8px)", width: 232, background: t.surface, border: `1px solid ${t.line}`, borderRadius: 12, boxShadow: t.shadowLg, zIndex: 200, overflow: "hidden" }}>
+                    <div style={{ padding: "16px 16px 12px", borderBottom: `1px solid ${t.lineSoft}` }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 10 }}>
+                        <div style={{ width: 36, height: 36, borderRadius: 8, background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", display: "flex", alignItems: "center", justifyContent: "center", color: "#FFFFFF", fontSize: 14, fontWeight: 700 }}>{profile?.full_name?.charAt(0) || "U"}</div>
+                        <div style={{ overflow: "hidden", minWidth: 0, flex: 1 }}>
+                          {editingName ? (
+                            <div style={{ display: "flex", alignItems: "center", gap: 5 }} onClick={(ev) => ev.stopPropagation()}>
+                              <input
+                                autoFocus
+                                value={nameDraft}
+                                onChange={(ev) => setNameDraft(ev.target.value)}
+                                onKeyDown={(ev) => { if (ev.key === "Enter") saveOwnName(); if (ev.key === "Escape") setEditingName(false); }}
+                                style={{ flex: 1, minWidth: 0, height: 28, padding: "0 8px", borderRadius: 6, border: `1px solid ${t.blueBd}`, background: t.inputBg, color: t.hi, fontSize: 13, fontFamily: "inherit", outline: "none" }}
+                              />
+                              <button onClick={saveOwnName} disabled={savingName} title="Simpan nama" style={{ width: 26, height: 26, borderRadius: 6, border: "none", background: t.blue, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: savingName ? "not-allowed" : "pointer", flexShrink: 0 }}>
+                                {savingName ? <Loader2 size={12} className="spin" /> : <Check size={12} />}
+                              </button>
+                            </div>
+                          ) : (
+                            <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                              <div style={{ fontSize: 13.5, fontWeight: 600, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profile?.full_name || "Member"}</div>
+                              {/* UPDATE (permintaan user - "coba perbaiki agar mereka bisa edit
+                                  nama mereka sendiri"): tombol pensil ini sengaja cuma muncul utk
+                                  Admin MC (isMPX) - edit profiles.full_name milik akun sendiri. */}
+                              {isMPX && (
+                                <button onClick={(ev) => { ev.stopPropagation(); setNameDraft(profile?.full_name || ""); setEditingName(true); }} title="Ubah nama saya" style={{ width: 20, height: 20, borderRadius: 5, border: "none", background: "transparent", color: t.lo, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                                  <Pencil size={11} />
+                                </button>
+                              )}
+                            </div>
+                          )}
+                          <div style={{ fontSize: 11.5, color: t.mid, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profile?.email}</div>
+                        </div>
+                      </div>
+                      <RoleBadge role={profile?.role} t={t} />
+                    </div>
+                    <div style={{ padding: 6 }}>
+                      <button className="danger-btn" onClick={async () => { await supabase.auth.signOut(); router.replace("/sandra/login"); }}><LogOut size={14} /> Keluar dari Akun</button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </div>
+        </header>
+
+        {/* Content */}
+        <div className={`content-pad${view === "dse-prod-ar" ? " content-pad-dse" : ""}`} style={{ flex: 1, overflowY: "auto", padding: view === "dse-prod-ar" ? "0 28px 48px" : "28px 28px 48px" }}>
+          <AnimatePresence mode="wait">
+
+            {/* ── Overview ── */}
+            {view === "overview" && (
+              <motion.div key="ov" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} style={{ maxWidth: 980, margin: "0 auto" }}>
+                {/* UPDATE (permintaan user - "daftar menu ini redesign...
+                    maksud saya title daftar menunya" + contoh gambar header
+                    DSE Prod. & AR "seperti ini dengan icon namun tidak
+                    perlu pemilihan periode"): judul "Daftar Menu" diganti
+                    pola card-bar yg sama kayak header modul lain (icon box
+                    + title, dibungkus 1 card), cuma TANPA bagian
+                    Periode/Full Month-Daily (ga relevan di overview). */}
+                <div style={{ display: "flex", alignItems: "center", gap: 12, borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: "10px 16px", marginBottom: 20 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 10, background: t.blueBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <LayoutGrid size={17} color={t.blue} />
+                  </div>
+                  <div style={{ fontSize: 19, fontWeight: 700, letterSpacing: -0.3 }}>Daftar Menu</div>
+                </div>
+
+                {/* Partner/branch yang sedang aktif (kalau ada) tetap ditampilkan
+                    sekilas — bukan lagi sebagai ajakan mengisi filter, karena
+                    filter kini hanya relevan di dalam menu MPX P&L Report. */}
+                {!isSDPMember && activePartner && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", marginBottom: 24, borderRadius: 9, border: `1px solid ${t.blueBd}`, background: t.blueSoft }}>
+                    <MapPin size={14} style={{ color: t.blue, flexShrink: 0 }} />
+                    <span style={{ fontSize: 13, color: t.hi, lineHeight: 1.5, minWidth: 0 }}>
+                      <strong style={{ fontWeight: 600 }}>{activePartner}</strong>{activeBranch && <> &middot; <strong style={{ fontWeight: 600 }}>{activeBranch}</strong></>}{iohLockedRegion && <span style={{ color: t.yellow, fontSize: 12, marginLeft: 8 }}>({iohLockedRegion})</span>}
+                    </span>
+                  </div>
+                )}
+
+                <div className="dash-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 14 }}>
+
+                  {/* MPX P&L Report — satu menu, isinya 4 modul pelaporan P&L
+                      (lihat PNL_MPX_Menu.jsx). */}
+                  {!isMPX && !isAdminArea && (canMonitor || !isSDPMember || isSPM) && (
+                    <DashCard icon={<PieChart size={20} />} title="MPX P&L Report"
+                      desc="Laporan P&L, Control Center, Pivot Summary, dan Import Data — 4 modul dalam satu menu."
+                      tag="Profit & Loss" active={true} onClick={() => navigate("pnl-mpx")} t={t} d={d}
+                      accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.12)" : "rgba(50,188,173,0.08)", bd: d ? "rgba(50,188,173,0.30)" : "rgba(50,188,173,0.20)", shadow: "rgba(50,188,173,0.20)" }} />
+                  )}
+
+                  {/* MPX P&L Report V2 — kartu Overview, kartu BARU terpisah
+                      dari V1 di atas (permintaan user - lihat PNL_FormPendapatanV2.
+                      jsx / PNL_FormPengeluaranV2.jsx). Audiens: SPM + Admin MC/
+                      Area (beda dari V1 yg justru menyembunyikan dua role itu). */}
+                  {(isSPM || isMPX || isAdminArea) && (
+                    <DashCard icon={<PieChart size={20} />} title="MPX P&L Report V2"
+                      desc="Versi disederhanakan — Form Pendapatan & Pengeluaran yang lebih ringkas."
+                      tag="Baru" active={true} onClick={() => navigate("pendapatan-v2")} t={t} d={d}
+                      accent={{ color: "#2563EB", bg: d ? "rgba(37,99,235,0.14)" : "rgba(37,99,235,0.08)", bd: d ? "rgba(37,99,235,0.32)" : "rgba(37,99,235,0.20)", shadow: "rgba(37,99,235,0.20)" }} />
+                  )}
+
+                  {!isSDPMember && !isMPX && !isAdminArea && (
+                    <DashCard icon={<Wallet size={20} />} title="Payout Tracker"
+                      desc="Monitoring pembayaran Partner & Agency Prepaid — SLA, funnel, heatmap, dan raw data."
+                      tag="Payout" active={true} onClick={() => navigate("payout-tracker")} t={t} d={d}
+                      accent={{ color: "#C6168D", bg: d ? "rgba(198,22,141,0.11)" : "rgba(198,22,141,0.07)", bd: d ? "rgba(198,22,141,0.28)" : "rgba(198,22,141,0.16)", shadow: "rgba(198,22,141,0.16)" }} />
+                  )}
+
+                  {/* SDP Management — SPM, BSM, CSE, PIC, dan IOH (lihat saja) */}
+                  {canSdp && (
+                    <DashCard icon={<Store size={20} />} title="SDP Management"
+                      desc="Versi baru — registrasi SDP dengan progres 1 tahapan yang jelas, lebih sedikit langkah."
+                      tag="Baru" active={true} onClick={() => navigate("sdp2")} t={t} d={d}
+                      accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.12)" : "rgba(26,158,144,0.08)", bd: d ? "rgba(50,188,173,0.3)" : "rgba(26,158,144,0.2)", shadow: "rgba(50,188,173,0.16)" }} />
+                  )}
+
+                  {/* UPDATE (permintaan user - "mapping admin mc itu
+                      seharusnya didalam dse prod, bukan menjadi menu
+                      terpisah, namanya user management"): DashCard
+                      "Mapping Admin MC" yg terpisah DIHAPUS - fiturnya skrg
+                      tab "User Management" di dalam kartu DSE Prod. & AR
+                      ini sendiri (lihat DSE_ProdAR.jsx), bukan tujuan
+                      navigasi sendiri lagi. */}
+                  {/* UPDATE (permintaan user - "ubah title menjadi Prod. & AR
+                      saja dan subtitle juga sesuaikan karena isinya bukan
+                      hanya DSE prod & ar"): modul ini sekarang mencakup 3
+                      kategori (lihat CATEGORY_OPTIONS di DSE_ProdAR.jsx -
+                      DSE Prod & AR, DSO/DSP AR, HoA AR), jadi title/desc
+                      kartu di dashboard ini ga boleh nyebut "DSE" doang
+                      lagi supaya ga menyesatkan. */}
+                  {(isSPM || isMPX || isAdminArea) && (
+                    <DashCard icon={<Wallet size={20} />} title="Prod. & AR"
+                      desc="Upload penjualan harian & kelola AR/piutang outstanding — level DSE, DSO/DSP, maupun HoA."
+                      tag={isMPX ? "Admin MC" : isAdminArea ? "Admin Area" : "SPM"} active={true} onClick={() => navigate("dse-prod-ar")} t={t} d={d}
+                      accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.11)" : "rgba(26,158,144,0.07)", bd: d ? "rgba(50,188,173,0.28)" : "rgba(26,158,144,0.20)", shadow: "rgba(26,158,144,0.16)" }} />
+                  )}
+
+                  {/* User Management diletakkan paling akhir (permintaan
+                      user - "user management paling akhir") */}
+                  {isSPM && (
+                    <DashCard icon={<UserRoundCog size={20} />} title="User Management"
+                      desc="Kelola user & role untuk setiap modul, dalam satu tempat."
+                      tag="Sistem" active={true} onClick={() => navigate("user-management")} t={t} d={d}
+                      accent={{ color: d ? "#A78BFA" : "#7C3AED", bg: d ? "rgba(167,139,250,0.11)" : "rgba(124,58,237,0.07)", bd: d ? "rgba(167,139,250,0.28)" : "rgba(124,58,237,0.18)", shadow: "rgba(124,58,237,0.18)" }} />
+                  )}
+                </div>
+
+                {/* ── Archive — menu lama, dipertimbangkan dihapus ke depannya.
+                     Code TIDAK dihapus, hanya dikumpulkan & disembunyikan di
+                     sini (collapsed default) supaya overview lebih rapi. ── */}
+                {isSPM && (
+                  <div style={{ marginTop: 28 }}>
+                    {/* UPDATE (permintaan user - "rapikan", versi
+                        sebelumnya: icon+label+chevron di baris atas, lalu
+                        deskripsi 2-baris di bawah dgn chevron nongkrong
+                        sendirian di pojok atas-kanan, ga sejajar sama
+                        konten di bawahnya - keliatan ga seimbang):
+                        sekarang baris menu sungguhan ala list - icon kiri
+                        (center vertikal thdp SELURUH konten), label +
+                        deskripsi ditumpuk di tengah, chevron kanan (center
+                        vertikal juga) - 1 kesatuan baris yg rapi, konsisten
+                        sama pola DashCard mobile (icon-kiri/teks-tengah/
+                        chevron-kanan), bukan 2 baris terpisah yg chevronnya
+                        nyasar ke atas. */}
+                    <button onClick={() => setArchiveOpen(v => !v)} className="archive-toggle-btn"
+                      style={{ display: "flex", alignItems: "center", gap: 12, width: "100%",
+                        background: t.card, border: `1px solid ${t.line}`, borderRadius: 12, cursor: "pointer",
+                        padding: "13px 14px", color: t.mid, fontFamily: "inherit", textAlign: "left" }}>
+                      <div style={{
+                        width: 32, height: 32, borderRadius: 9, flexShrink: 0,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        background: t.hover, color: t.mid,
+                      }}>
+                        <Archive size={15} />
+                      </div>
+                      {/* UPDATE (permintaan user - "tidak perlu ada
+                          subtitle agar lebih rapi"): deskripsi di bawah
+                          label dihapus, cukup label "ARCHIVE" saja. */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: t.mid }}>Archive</div>
+                      </div>
+                      {archiveOpen ? <ChevronDown size={16} style={{ flexShrink: 0 }} /> : <ChevronRight size={16} style={{ flexShrink: 0 }} />}
+                    </button>
+
+                    {archiveOpen && (
+                      <div className="dash-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14, marginTop: 4, paddingTop: 4 }}>
+
+                        {canSdp && (
+                          <DashCard icon={<Users size={20} />} title="SDP Management (Archive)"
+                            desc={
+                              isSPM       ? "Upload territory, mapping kode otoritas, rekap data, dan pantau status seluruh SDP Sumatera." :
+                              isCSE       ? `Isi formulir data SDP di cluster ${profile?.cluster || "Anda"}.` :
+                              isBSM       ? "Kelola kode otoritas CSE/RGE, rekap data SDP, dan konfirmasi di branch Anda." :
+                              isPICRegion ? "Monitor progres pengisian dan konfirmasi BSM seluruh SDP." :
+                              isIOHAny    ? "Pantau data SDP" + (iohLockedRegion ? ` region ${iohLockedRegion}` : " seluruh Sumatera") + " — tampilan baca-saja." :
+                                            `Isi dan submit data SDP Anda.`
+                            }
+                            tag={isSPM ? "SPM" : isBSM ? "BSM" : isPICRegion ? "PIC" : isIOHAny ? "Monitor" : "SDP"} active={true} onClick={() => navigate("sdp-status")} t={t} d={d}
+                            accent={{ color: d ? "#30D158" : "#1A9E5A", bg: d ? "rgba(48,209,88,0.11)" : "rgba(26,158,90,0.07)", bd: d ? "rgba(48,209,88,0.28)" : "rgba(26,158,90,0.20)", shadow: "rgba(48,209,88,0.16)" }} />
+                        )}
+
+                        {canMfts && (
+                          <DashCard icon={<Briefcase size={20} />} title="Pemenuhan Manpower"
+                            desc="Lacak pemenuhan DSF: alokasi per cluster, vacancy yang sedang digarap, roster manpower, dan progres agency."
+                            tag="Manpower" active={true} onClick={() => navigate("mfts")} t={t} d={d}
+                            accent={{ color: d ? "#0A84FF" : "#2563EB", bg: d ? "rgba(10,132,255,0.12)" : "rgba(37,99,235,0.07)", bd: d ? "rgba(10,132,255,0.28)" : "rgba(37,99,235,0.18)", shadow: "rgba(37,99,235,0.16)" }} />
+                        )}
+
+                        {(isSPM || isPICRegion || isSFM || isCSE) && (
+                          <DashCard icon={<Store size={20} />} title="Promotor Tracking System"
+                            desc="Roster identitas promotor, mapping outlet per bulan (dual brand IM3/3ID), geofence, dan pantau klaim penjualan SP dengan validasi GA."
+                            tag={isSPM ? "SPM" : isSFM ? "SFM" : isCSE ? "CSE" : "PIC"} active={true} onClick={() => navigate("promotor-tracking")} t={t} d={d}
+                            accent={{ color: "#ED1C24", bg: d ? "rgba(237,28,36,0.12)" : "rgba(237,28,36,0.07)", bd: d ? "rgba(237,28,36,0.28)" : "rgba(237,28,36,0.18)", shadow: "rgba(237,28,36,0.18)" }} />
+                        )}
+
+                        {isSPM && (
+                          <DashCard icon={<Wrench size={20} />} title="Kelola Menu"
+                            desc="Atur ketersediaan tiap sub-menu per role. Tandai menu 'dalam pemeliharaan' — role tetap melihatnya dengan pemberitahuan."
+                            tag="Pengaturan" active={true} onClick={() => navigate("menu-access")} t={t} d={d}
+                            accent={{ color: d ? "#FFB020" : "#B7791F", bg: d ? "rgba(255,176,32,0.12)" : "rgba(183,121,31,0.08)", bd: d ? "rgba(255,176,32,0.30)" : "rgba(183,121,31,0.22)", shadow: "rgba(183,121,31,0.16)" }} />
+                        )}
+
+                        {isSPM && (
+                          <DashCard icon={<Database size={20} />} title="Database DSE"
+                            desc="Upload file List DS/DSE per HOA (bisa banyak sekaligus), pilih Region, lalu export hasilnya ke Excel."
+                            tag="SPM" active={true} onClick={() => navigate("dse-database")} t={t} d={d}
+                            accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.11)" : "rgba(26,158,144,0.07)", bd: d ? "rgba(50,188,173,0.28)" : "rgba(26,158,144,0.20)", shadow: "rgba(26,158,144,0.16)" }} />
+                        )}
+
+                        {isSPM && (
+                          <DashCard icon={<MapPin size={20} />} title="MC / Cluster Mapping"
+                            desc="Kelola mapping MC (IM3) dan Cluster (3ID) per branch. Upload CSV atau tambah data manual."
+                            tag="Mapping" active={true} onClick={() => navigate("mc-cluster")} t={t} d={d}
+                            accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.12)" : "rgba(50,188,173,0.08)", bd: d ? "rgba(50,188,173,0.30)" : "rgba(50,188,173,0.20)", shadow: "rgba(50,188,173,0.20)" }} />
+                        )}
+
+                        {isSPM && (
+                          <DashCard icon={<Key size={20} />} title="Kode Otoritas"
+                            desc="Kelola semua kode otoritas BSM, Sales Team (MC/Cluster), dan Partner dalam satu tempat."
+                            tag="Kode Akses" active={true} onClick={() => navigate("kode-otoritas")} t={t} d={d}
+                            accent={{ color: "#C6168D", bg: d ? "rgba(198,22,141,0.11)" : "rgba(198,22,141,0.07)", bd: d ? "rgba(198,22,141,0.28)" : "rgba(198,22,141,0.16)", shadow: "rgba(198,22,141,0.16)" }} />
+                        )}
+
+                        {isSPM && (
+                          <DashCard icon={<Shield size={20} />} title="Kode Otoritas MPX"
+                            desc="Kelola kode otoritas dan daftar partner branches seluruh Sumatera."
+                            tag="Sistem" active={true} onClick={() => navigate("admin-panel")} t={t} d={d}
+                            accent={{ color: d ? "#A78BFA" : "#7C3AED", bg: d ? "rgba(167,139,250,0.11)" : "rgba(124,58,237,0.07)", bd: d ? "rgba(167,139,250,0.28)" : "rgba(124,58,237,0.18)", shadow: "rgba(124,58,237,0.18)" }} />
+                        )}
+
+                        {canReportMerge && (
+                          <DashCard icon={<Mail size={20} />} title="Report Merge"
+                            desc="Mail-merge email & pembuatan surat PDF dengan alur approval."
+                            tag={isSPM ? "SPM" : "IOH"} active={true} onClick={() => navigate("report-merge")} t={t} d={d}
+                            accent={{ color: d ? "#818CF8" : "#4F46E5", bg: d ? "rgba(129,140,248,0.11)" : "rgba(79,70,229,0.07)", bd: d ? "rgba(129,140,248,0.28)" : "rgba(79,70,229,0.16)", shadow: "rgba(79,70,229,0.16)" }} />
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </motion.div>
+            )}
+
+            {/* ── PNL Control Center ── */}
+            {view === "control-center" && canMonitor && !isMPX && !viewUnderMaint && (
+              <motion.div key="cc" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
+                <PNLControlCenter
+                  theme={theme} masterData={masterData} activeYear={activeYear} activeMonth={activeMonth}
+                  disabledMonthsMap={disabledMonthsMap} userRole={profile?.role}
+                  partnerName={isMPX ? profile?.partner_name : null}
+                  onOpenBranch={p => { setActivePartner(p.partner_name); setActiveBranch(p.branch_name); setActiveType(p.mpc_mp3); setActiveMonth(p.month); setView("summary"); }}
+                />
+              </motion.div>
+            )}
+
+            {/* ── Pivot P&L Summary ── */}
+            {view === "pivot-summary" && canMonitor && !isMPX && !viewUnderMaint && (
+              <motion.div key="ps" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
+                <PNLPivotSummary theme={theme} activeYear={activeYear} userRole={profile?.role} partnerName={isMPX ? profile?.partner_name : null} />
+              </motion.div>
+            )}
+
+            {/* ── Payout Tracker ── */}
+            {view === "payout-tracker" && !isSDPMember && !isMPX && !isAdminArea && !viewUnderMaint && (
+              <motion.div key="pt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
+                <PayoutTracker theme={theme} profile={profile} regionFilter={iohRegionView} partnerName={isMPX ? (profile?.partner_name || null) : (activePartner || null)} filterType={activeType !== "ALL" ? activeType : null} readOnly={isReadOnly} masterData={masterData} />
+              </motion.div>
+            )}
+
+            {/* ── MFTS — Pemenuhan Manpower ── */}
+            {view === "mfts" && canMfts && !viewUnderMaint && (
+              <motion.div key="mfts" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
+                <MFTS_Module supabase={supabase} theme={theme} profile={profile} scopeRegion={iohRegionView} />
+              </motion.div>
+            )}
+
+            {/* ── Promotor Tracking System ── */}
+            {view === "promotor-tracking" && (isSPM || isPICRegion || isSFM || isCSE) && (
+              <motion.div key="pts" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
+                <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
+                  <div style={{ padding: "24px 28px" }}>
+                    <PTS_Module supabase={supabase} theme={theme} profile={profile} />
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* ── Admin Panel ── */}
+            {view === "admin-panel" && isSPM && (
+              <motion.div key="ap" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
+                <AdminPanel theme={theme} profile={profile} onBranchesChanged={refreshBranches} />
+              </motion.div>
+            )}
+
+            {/* ── Import Data Otomatis ── */}
+            {view === "import-wizard" && isSPM && (
+              <motion.div key="iw" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
+                <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
+                  <div style={{ padding: "28px 32px" }}>
+                    <PNL_ImportWizard theme={theme} supabase={supabase} />
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* ── MC / Cluster Mapping ── */}
+            {view === "mc-cluster" && isSPM && (
+              <motion.div key="mc" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
+                <MC_ClusterMapping theme={theme} profile={profile} />
+              </motion.div>
+            )}
+
+            {/* ── Database DSE ── */}
+            {view === "dse-database" && isSPM && (
+              <motion.div key="dse-db" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
+                <SDP_DseDatabase theme={theme} profile={profile} />
+              </motion.div>
+            )}
+
+            {/* ── DSE Prod. & AR ── */}
+            {view === "dse-prod-ar" && (isSPM || isMPX || isAdminArea) && (
+              <motion.div key="dse-prod-ar" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <DSE_ProdAR theme={theme} profile={profile} onBack={() => navigate("overview")} category={dseCategory} setCategory={setDseCategory} />
+              </motion.div>
+            )}
+
+            {/* ── User Management (migrasi dari tab "Mapping & User
+                Management" di dalam DSE Prod. & AR - permintaan user:
+                "mulai dari migrasi user management untuk Admin Micro
+                Cluster" - jadi menu sidebar sendiri, isSPM saja).
+                UPDATE (permintaan user - "ada button Pilih Role, karena
+                beda beda untuk detailnya"): dropdown "Pilih Role"
+                ditambahkan karena tiap role di tabel profiles punya
+                detail/cara kelola yg beda-beda. Baru role finance_mpx
+                yg ada implementasinya (AdminMcMapping, migrasi dari DSE
+                Prod & AR) - role lain tampil "Segera hadir" dulu. */}
+            {view === "user-management" && isSPM && (
+              <motion.div key="user-mgmt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
+
+                {/* FITUR (permintaan user - "sediakan fitur export laporan yang bisa
+                    menandai role yang dipilih misal admin mc dan admin area... export
+                    datanya langsung di dalam excel yang sama... dipisahkan untuk
+                    masing masing region... ada fitur untuk upload kembali" ->
+                    diklarifikasi: soal Download/Upload Daftar Email di User
+                    Management, bukan laporan data): card gabungan - export 1 file
+                    Excel multi-sheet (Admin MC + Admin Area, dipecah per Region) &
+                    upload baliknya - ditaruh di sini, SELALU tampil terlepas dari
+                    role mana yg sedang dipilih di bawah (umRole). */}
+                {/* PANEL BARU (permintaan user - "pada user management ada
+                    informasi untuk menampilkan hak akses menu untuk
+                    setiap role... jika misal dia terdaftar di dua role
+                    hanya edit dan bisa edit maka dia akan bisa edit"):
+                    matrix referensi role x tab DSE Prod&AR + daftar akun
+                    multi-role & akses gabungannya - SELALU tampil di atas
+                    terlepas dari role mana yg sedang dipilih (umRole),
+                    sama seperti CombinedEmailExport. */}
+                <RoleAccessMatrix theme={theme} />
+
+                <RoleDebugLookup theme={theme} />
+
+                <CombinedEmailExport theme={theme} />
+
+                {/* UPDATE (permintaan user - "pilih role di kiri pencarian"):
+                    dropdown "Pilih Role" dipindah ke dalam baris pencarian
+                    AdminMcMapping (lewat prop roleValue/roleOptions/
+                    onRoleChange) supaya sejajar & lebih simpel - row
+                    terpisah di sini cuma dipertahankan utk role yg BELUM
+                    ready (placeholder "Segera hadir" tidak punya baris
+                    pencarian sendiri). */}
+                {umRole === "admin_mc" ? (
+                  <AdminMcMapping theme={theme} roleValue={umRole} roleOptions={USER_MGMT_ROLES} onRoleChange={setUmRole} />
+                ) : umRole === "admin_area" ? (
+                  <AdminAreaMapping theme={theme} roleValue={umRole} roleOptions={USER_MGMT_ROLES} onRoleChange={setUmRole} />
+                ) : (
+                  <>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>Pilih Role</div>
+                      <div style={{ position: "relative" }}>
+                        <select value={umRole} onChange={(e) => setUmRole(e.target.value)}
+                          style={{ appearance: "none", WebkitAppearance: "none", height: 38, padding: "0 32px 0 14px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>
+                          {USER_MGMT_ROLES.filter((r) => r.ready).map((r) => (
+                            <option key={r.k} value={r.k}>{r.label}</option>
+                          ))}
+                        </select>
+                        <ChevronDown size={14} color={t.lo} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+                      </div>
+                    </div>
+                    <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: "40px 24px", textAlign: "center", color: t.mid, fontSize: 13 }}>
+                      Pengelolaan user untuk role &ldquo;{USER_MGMT_ROLES.find((r) => r.k === umRole)?.label}&rdquo; belum tersedia — segera hadir.
+                    </div>
+                  </>
+                )}
+              </motion.div>
+            )}
+
+            {/* ── Kode Otoritas ── */}
+            {view === "kode-otoritas" && isSPM && (
+              <motion.div key="ko" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
+                <KodeOtoritas theme={theme} profile={profile} />
+              </motion.div>
+            )}
+
+            {/* ── SDP Status ── */}
+            {view === "report-merge" && canReportMerge && !viewUnderMaint && (
+              <motion.div key="report-merge" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <ReportMerge_Module t={t} profile={profile} />
+              </motion.div>
+            )}
+
+            {view === "pnl-mpx" && !isMPX && !isAdminArea && (canMonitor || !isSDPMember || isSPM) && (
+              <motion.div key="pnl-mpx" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
+                  <div style={{ padding: "24px 28px" }}>
+                    <PNL_MPX_Menu theme={theme} onExit={() => navigate("overview")} onSelect={(id) => navigate(id)}
+                      items={[
+                        !isSDPMember && !isMPX && { id: "summary", icon: PieChart, label: "Laporan P&L",
+                          desc: "Analisis pendapatan harian, margin produk, dan pengeluaran operasional partner.", tag: "Profit & Loss",
+                          accent: { color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.12)" : "rgba(50,188,173,0.08)", bd: d ? "rgba(50,188,173,0.30)" : "rgba(50,188,173,0.20)" } },
+                        canMonitor && !isMPX && { id: "control-center", icon: Layers, label: "PNL Control Center",
+                          desc: isMPX ? "Monitoring progres pengisian laporan branch-branch di partner Anda." : "Monitoring progres pengisian laporan seluruh branch di wilayah Sumatera.", tag: "Monitoring",
+                          accent: { color: "#ED1C24", bg: d ? "rgba(237,28,36,0.10)" : "rgba(237,28,36,0.06)", bd: d ? "rgba(237,28,36,0.26)" : "rgba(237,28,36,0.16)" } },
+                        canMonitor && !isMPX && { id: "pivot-summary", icon: Table2, label: "Pivot P&L Summary",
+                          desc: isMPX ? "Ringkasan REV, EXP, dan P/L branch-branch partner Anda dalam pivot table." : "Ringkasan REV, EXP, dan P/L seluruh MPX per bulan dalam format pivot table.", tag: "Ringkasan",
+                          accent: { color: d ? "#C49A00" : "#9A7400", bg: d ? "rgba(255,203,5,0.11)" : "rgba(255,203,5,0.09)", bd: d ? "rgba(255,203,5,0.28)" : "rgba(255,203,5,0.20)" } },
+                        isSPM && { id: "import-wizard", icon: FileSpreadsheet, label: "Import Data Otomatis",
+                          desc: "Upload Excel/CSV, mapping kolom drag-and-drop, lalu import massal ke database laporan.", tag: "Import",
+                          accent: { color: d ? "#60C8F0" : "#0284C7", bg: d ? "rgba(96,200,240,0.11)" : "rgba(2,132,199,0.07)", bd: d ? "rgba(96,200,240,0.28)" : "rgba(2,132,199,0.18)" } },
+                      ].filter(Boolean)} />
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {view === "sdp2" && canSdp && (
+              <motion.div key="sdp2" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                {/* SDP Management (Baru) — rebuild bertahap, dimulai dari modul
+                    Registrasi (lihat docs plan). Modul lain masih di Archive. */}
+                <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
+                  <div style={{ padding: "24px 28px" }}>
+                    <SDP2_StatusForm supabase={supabase} theme={theme} profile={profile} onExit={() => navigate("overview")} />
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {view === "sdp-status" && canSdp && !viewUnderMaint && (
+              <motion.div key="sdp" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                {/* Tombol "Kembali ke Daftar Menu" ditangani DI DALAM SDP_StatusForm
+                    (hanya tampil di landing SDP) agar tidak menumpuk dengan tombol
+                    kembali sub-view. */}
+                <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
+                  <div style={{ padding: "24px 28px" }}>
+                    <SDP_StatusForm
+                      supabase={supabase}
+                      theme={theme}
+                      profile={profile}
+                      readOnly={isIOHAny}
+                      lockRegion={iohLockedRegion}
+                      showOverviewBack={!isSDPMember}
+                      onBackToOverview={() => navigate("overview")}
+                    />
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* ── Kelola Menu (SPM) ── */}
+            {view === "menu-access" && isSPM && (
+              <motion.div key="ma" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
+                <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
+                  <div style={{ padding: "24px 28px" }}>
+                    <MenuAccessManager supabase={supabase} theme={theme} profile={profile} />
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* ── Pemberitahuan menu sedang dipelihara ── */}
+            {viewUnderMaint && (
+              <motion.div key="maint" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
+                <MaintenanceView t={t} label={CONTROLLABLE_MENUS[viewMenuKey]} note={menuStatus.get(viewMenuKey)?.note} onBack={() => navigate("overview")} />
+              </motion.div>
+            )}
+
+            {/* ── Laporan P&L (Summary / Pendapatan / Pengeluaran) ── */}
+            {PNL_VIEWS.has(view) && !isMPX && !isAdminArea && !viewUnderMaint && (
+              <motion.div key="fv" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} style={{ maxWidth: 920, margin: "0 auto" }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 20 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
+                {!canPnl ? (
+                  <PnlPickerPrompt t={t} d={d} isSPM={isSPM} isMPX={isMPX} isIOHAny={isIOHAny} iohLockedRegion={iohLockedRegion}
+                    regions={regions} filteredPartners={filteredPartners} availableTypes={availableTypes} availableBranches={availableBranches}
+                    activeRegion={activeRegion} setActiveRegion={setActiveRegion}
+                    activePartner={activePartner} setActivePartner={setActivePartner}
+                    activeType={activeType} setActiveType={setActiveType}
+                    activeBranch={activeBranch} setActiveBranch={setActiveBranch}
+                    onBack={() => navigate("overview")} />
+                ) : (
+                  <>
+                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 22 }}>
+                      <div style={{ display: "inline-flex", gap: 2, padding: 4, borderRadius: 10, border: `1px solid ${t.line}`, background: t.card }}>
+                        {[
+                          { id: "summary",     label: "Summary",     icon: <LayoutGrid size={14} /> },
+                          { id: "pendapatan",  label: "Pendapatan",  icon: <ArrowUpRight size={14} /> },
+                          { id: "pengeluaran", label: "Pengeluaran", icon: <ArrowDownLeft size={14} /> },
+                        ].map(tab => (
+                          <button key={tab.id} onClick={() => navigateTab(tab.id)} className={`tab-pill ${view === tab.id ? "on" : "off"}`}>
+                            {tab.icon}<span className="tab-label">{tab.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
+                      <div style={{ padding: "28px 32px" }}>
+                        <AnimatePresence mode="wait">
+                          {view === "summary" && (
+                            <motion.div key="sv" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.13 }}>
+                              <FormSummary theme={theme} activeContext={{ branch: activeBranch, month: activeMonth, year: activeYear, mpxName: activePartner, mpxType }} />
+                            </motion.div>
+                          )}
+                          {view === "pendapatan" && (
+                            <motion.div key="pv" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.13 }}>
+                              <FormPendapatan
+                                theme={theme}
+                                setIsFormDirty={isReadOnly ? undefined : setFormDirty}
+                                readOnly={isReadOnly}
+                                userRole={profile?.role}
+                                activeContext={{ branch: activeBranch, month: activeMonth, year: activeYear, mpxName: activePartner, mpxType }}
+                                disabledMonths={activeContextDisabledMonths}
+                                onMonthChange={setActiveMonth}
+                              />
+                            </motion.div>
+                          )}
+                          {view === "pengeluaran" && (
+                            <motion.div key="ev" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.13 }}>
+                              <FormPengeluaran
+                                theme={theme}
+                                setIsFormDirty={isReadOnly ? undefined : setFormDirty}
+                                readOnly={isReadOnly}
+                                activeContext={{ branch: activeBranch, month: activeMonth, year: activeYear, mpxName: activePartner, mpxType }}
+                                disabledMonths={activeContextDisabledMonths}
+                                onMonthChange={setActiveMonth}
+                              />
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </motion.div>
+            )}
+
+            {/* ── MPX P&L Report V2 (Pendapatan/Pengeluaran) — menu BARU,
+                terpisah total dari V1 di atas (tabel pnl_reports_v2).
+                Audiens BEDA dari V1: di sini isMPX/isAdminArea JUSTRU
+                yang mengisi "Form Pendapatan Area Level" (dan
+                "Pengeluaran"), SPM mengisi "Data Provided Area Level". ── */}
+            {PNL_VIEWS_V2.has(view) && !viewUnderMaint && (
+              <motion.div key="fv2" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} style={{ maxWidth: 920, margin: "0 auto" }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 20 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
+                {!canPnl ? (
+                  <PnlPickerPrompt t={t} d={d} isSPM={isSPM} isMPX={isMPX || isAdminArea} isIOHAny={isIOHAny} iohLockedRegion={iohLockedRegion}
+                    regions={regions} filteredPartners={filteredPartners} availableTypes={availableTypes} availableBranches={availableBranches}
+                    activeRegion={activeRegion} setActiveRegion={setActiveRegion}
+                    activePartner={activePartner} setActivePartner={setActivePartner}
+                    activeType={activeType} setActiveType={setActiveType}
+                    activeBranch={activeBranch} setActiveBranch={setActiveBranch}
+                    onBack={() => navigate("overview")} />
+                ) : (
+                  <>
+                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 22 }}>
+                      <div style={{ display: "inline-flex", gap: 2, padding: 4, borderRadius: 10, border: `1px solid ${t.line}`, background: t.card }}>
+                        {[
+                          { id: "pendapatan-v2",  label: "Pendapatan",  icon: <ArrowUpRight size={14} /> },
+                          { id: "pengeluaran-v2", label: "Pengeluaran", icon: <ArrowDownLeft size={14} /> },
+                        ].map(tab => (
+                          <button key={tab.id} onClick={() => navigateTab(tab.id)} className={`tab-pill ${view === tab.id ? "on" : "off"}`}>
+                            {tab.icon}<span className="tab-label">{tab.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
+                      <div style={{ padding: "28px 32px" }}>
+                        <AnimatePresence mode="wait">
+                          {view === "pendapatan-v2" && (
+                            <motion.div key="pv2" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.13 }}>
+                              <FormPendapatanV2
+                                theme={theme}
+                                profile={profile}
+                                setIsFormDirty={isReadOnly ? undefined : setFormDirty}
+                                readOnly={isReadOnly}
+                                canEditPendapatan={isMPX || isAdminArea}
+                                canEditDataProvided={isSPM}
+                                activeContext={{ branch: activeBranch, month: activeMonth, year: activeYear, mpxName: activePartner, mpxType }}
+                              />
+                            </motion.div>
+                          )}
+                          {view === "pengeluaran-v2" && (
+                            <motion.div key="ev2" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.13 }}>
+                              <FormPengeluaranV2
+                                theme={theme}
+                                profile={profile}
+                                setIsFormDirty={isReadOnly ? undefined : setFormDirty}
+                                readOnly={isReadOnly}
+                                canEdit={isMPX || isAdminArea || isSPM}
+                                activeContext={{ branch: activeBranch, month: activeMonth, year: activeYear, mpxName: activePartner, mpxType }}
+                              />
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </motion.div>
+            )}
+
+          </AnimatePresence>
+        </div>
+      </main>
+
+      {/* Mobile Sidebar Drawer */}
+      <AnimatePresence>
+        {mobileOpen && (
+          <div style={{ position: "fixed", inset: 0, zIndex: 100 }}>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setMobileOpen(false)}
+              style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(8px)" }} />
+            <motion.aside initial={{ x: "-100%" }} animate={{ x: 0 }} exit={{ x: "-100%" }} transition={{ type: "spring", damping: 30, stiffness: 300 }}
+              style={{ position: "absolute", top: 0, left: 0, bottom: 0, width: 268, maxWidth: "85vw", background: t.sidebar, borderRight: `1px solid ${t.line}`, display: "flex", flexDirection: "column", zIndex: 50 }}>
+              <button onClick={() => setMobileOpen(false)} style={{ position: "absolute", top: 12, right: 12, width: 30, height: 30, borderRadius: 7, border: `1px solid ${t.line}`, background: t.inputBg, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.mid, zIndex: 10 }}>
+                <X size={14} />
+              </button>
+              <SidebarInner />
+            </motion.aside>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Exit Confirm Modal */}
+      <AnimatePresence>
+        {exitConfirm && (
+          <div style={{ position: "fixed", inset: 0, zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, background: "rgba(10,12,18,0.62)", backdropFilter: "blur(14px)" }}>
+            <motion.div initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }} transition={{ duration: 0.14 }}
+              style={{ maxWidth: 340, width: "100%", background: t.surface, border: `1px solid ${t.line}`, borderRadius: 14, boxShadow: t.shadowLg, overflow: "hidden" }}>
+              <div style={{ padding: 26, textAlign: "center" }}>
+                <div style={{ width: 48, height: 48, borderRadius: 11, background: t.redBg, margin: "0 auto 16px", display: "flex", alignItems: "center", justifyContent: "center", color: t.red }}>
+                  <AlertTriangle size={22} />
+                </div>
+                <h3 style={{ fontSize: 17, fontWeight: 700, color: t.hi, marginBottom: 7 }}>Batalkan Progress?</h3>
+                <p style={{ fontSize: 13.5, color: t.mid, lineHeight: 1.55, marginBottom: 22 }}>Data yang belum disimpan akan terhapus.</p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                  <button onClick={() => { setFormDirty(false); setView(pendingView); setExitConfirm(false); setPendingView(null); }}
+                    style={{ width: "100%", padding: 11, background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", color: "#FFFFFF", border: "none", borderRadius: 8, fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                    Hapus & Lanjutkan
+                  </button>
+                  <button onClick={() => { setExitConfirm(false); setPendingView(null); }}
+                    style={{ width: "100%", padding: 11, background: "transparent", color: t.mid, border: `1px solid ${t.line}`, borderRadius: 8, fontSize: 13.5, fontWeight: 500, cursor: "pointer", fontFamily: "inherit" }}>
+                    Kembali ke Form
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <style>{`
+        @media (min-width: 1024px) {
+          aside.lg-sidebar { display: flex !important; }
+          .lg-sidebar-toggle { display: flex !important; }
+          .mob-hamburger { display: none !important; }
+          .lg-hide-text { display: inline !important; }
+        }
+        @media (max-width: 1023px) {
+          aside.lg-sidebar { display: none !important; }
+          .lg-sidebar-toggle { display: none !important; }
+          .mob-hamburger { display: flex !important; }
+        }
+        .spin { animation: dash-spin 0.8s linear infinite; }
+        @keyframes dash-spin { to { transform: rotate(360deg); } }
+      `}</style>
+    </div>
+  );
+} 

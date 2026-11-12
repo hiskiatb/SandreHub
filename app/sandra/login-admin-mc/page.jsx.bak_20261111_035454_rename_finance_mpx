@@ -1,0 +1,387 @@
+"use client";
+/**
+ * login-admin-mc/page.jsx — Login "Admin MC" via Email OTP (tanpa password).
+ *
+ * Alur:
+ *  1. User masukkan email → dicek ke mf_dse_admin_mc_mapping (mf_dse_admin_mc_lookup).
+ *     Kalau tidak terdaftar, ditolak di sini juga (tidak lanjut ke OTP).
+ *  2. Kalau terdaftar → kirim kode OTP 6 digit via Supabase Auth
+ *     (supabase.auth.signInWithOtp), tanpa bikin akun password.
+ *  3. User masukkan kode → supabase.auth.verifyOtp() membentuk sesi asli
+ *     (auth.uid() valid, dipakai semua RLS yang sudah ada).
+ *  4. Panggil RPC mf_dse_admin_mc_login_apply() — menyamakan profiles.role
+ *     ('finance_mpx') & partner_name (= MC) dgn mapping, lalu redirect ke
+ *     /dashboard (otomatis cuma lihat menu yg relevan utk Admin MC, termasuk
+ *     "DSE Prod. & AR").
+ */
+import { useState, useEffect, useRef, Suspense } from "react";
+import { useRouter } from "next/navigation";
+import supabase from "../../../lib/supabase";
+import { HubLogo } from "../../../components/HubLogo";
+import { PwaInstallBanner } from "../../../components/PwaInstallBanner";
+import { Mail, KeyRound, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, CheckCircle2 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+
+const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
+const TEAL = "#32BCAD";
+const RED  = "#ED1C24";
+const MAGA = "#C6168D";
+
+const mk = (d) => ({
+  bg: d ? "#0A0A0B" : "#F4F4F6", card: d ? "#141417" : "#FFFFFF", line: d ? "#22222A" : "#E4E2EA",
+  hi: d ? "#F0F0F2" : "#111116", mid: d ? "#7A7A88" : "#5A5A68", lo: d ? "#4A4A58" : "#C8C5D0",
+  fieldBg: d ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.025)",
+  red: d ? "#F87171" : "#DC2626", redBg: d ? "rgba(248,113,113,0.10)" : "rgba(220,38,38,0.07)", redBd: d ? "rgba(248,113,113,0.25)" : "rgba(220,38,38,0.20)",
+  tealBg: d ? "rgba(50,188,173,0.10)" : "rgba(50,188,173,0.07)", tealBd: d ? "rgba(50,188,173,0.28)" : "rgba(50,188,173,0.20)",
+  card$: d ? "0 24px 60px rgba(0,0,0,0.65)" : "0 8px 40px rgba(0,0,0,0.10)",
+});
+
+function AdminMcLoginInner() {
+  const router = useRouter();
+  const [d, setD] = useState(false);
+  const [stage, setStage] = useState("email"); // email | otp
+  const [email, setEmail] = useState("");
+  const [otp, setOtp] = useState("");
+  const [mcList, setMcList] = useState([]); // bisa lebih dari 1 MC per email - lihat mf_dse_admin_mc_lookup (field "mcs")
+  const [errMsg, setErrMsg] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [checking, setChecking] = useState(true);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const otpRefs = useRef([]);
+  const t = mk(d);
+
+  // UPDATE (permintaan user - "perbaiki tampilan ini seharusnya ui untuk
+  // memasukkan otpnya buat menjadi jauh lebih bagus"): countdown "Kirim
+  // ulang" - 45 detik sejak kode OTP pertama kali dikirim (stage berubah
+  // ke "otp"), supaya tombol "Kirim ulang" tidak bisa di-spam & user tau
+  // berapa lama lagi harus menunggu.
+  useEffect(() => {
+    if (stage !== "otp") return;
+    setResendCooldown(45);
+  }, [stage]);
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const id = setInterval(() => setResendCooldown((v) => Math.max(0, v - 1)), 1000);
+    return () => clearInterval(id);
+  }, [resendCooldown]);
+
+  // Digit OTP disimpan tetap sbg 1 string (`otp`, dipakai apa adanya oleh
+  // handleVerifyOtp) - array ini CUMA representasi utk 6 kotak input di
+  // bawah, selalu panjang 6 (dipad "").
+  const otpDigits = Array.from({ length: 6 }, (_, i) => otp[i] || "");
+  const setOtpDigit = (i, val) => {
+    const clean = val.replace(/\D/g, "").slice(-1);
+    const next = otpDigits.slice();
+    next[i] = clean;
+    const joined = next.join("").replace(/\s+/g, "");
+    setOtp(joined);
+    if (clean && i < 5) otpRefs.current[i + 1]?.focus();
+  };
+  const handleOtpKeyDown = (i, ev) => {
+    if (ev.key === "Backspace" && !otpDigits[i] && i > 0) {
+      otpRefs.current[i - 1]?.focus();
+    } else if (ev.key === "ArrowLeft" && i > 0) {
+      otpRefs.current[i - 1]?.focus();
+    } else if (ev.key === "ArrowRight" && i < 5) {
+      otpRefs.current[i + 1]?.focus();
+    }
+    // (Enter tidak perlu ditangani manual - auto-submit effect di bawah
+    // (otp.length === 6) sudah menangani submit begitu kode lengkap;
+    // handleVerifyOtp sendiri dideklarasikan setelah fungsi ini (const
+    // arrow fn, tidak di-hoist) jadi tidak aman dipanggil langsung di sini.
+  };
+  const handleOtpPaste = (ev) => {
+    const pasted = ev.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
+    if (!pasted) return;
+    ev.preventDefault();
+    setOtp(pasted);
+    otpRefs.current[Math.min(pasted.length, 5)]?.focus();
+  };
+
+  useEffect(() => {
+    setD(localStorage.getItem("hub-theme") === "dark");
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) router.replace("/dashboard");
+      else setChecking(false);
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSendOtp = async () => {
+    setErrMsg("");
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) { setErrMsg("Masukkan email yang valid."); return; }
+    setLoading(true);
+    try {
+      const { data: lookup, error: lookupErr } = await supabase.rpc("mf_dse_admin_mc_lookup", { p_email: cleanEmail });
+      if (lookupErr || !lookup?.found) {
+        setErrMsg("Email ini belum terdaftar sebagai Admin MC. Hubungi SPM untuk didaftarkan.");
+        return;
+      }
+      // UPDATE (permintaan user - "kan bisa beberapa mc sekaligus"): 1 email
+      // Admin MC bisa di-mapping ke LEBIH DARI 1 MC sekaligus (lihat field
+      // "mcs" dari mf_dse_admin_mc_lookup, bukan cuma "mc" yg cuma MC
+      // pertama) - sebelumnya di sini cuma diambil lookup.mc (1 MC saja),
+      // jadi badge "Terdaftar sebagai Admin MC" SALAH kalau akunnya punya
+      // beberapa MC (cuma nampilin 1, nyembunyiin sisanya).
+      setMcList((lookup.mcs || []).map((x) => x.mc).filter(Boolean));
+      // Dikirim lewat /api/send-otp (Resend, template SandraHub) - BUKAN
+      // supabase.auth.signInWithOtp lagi, karena itu mengirim email "Magic
+      // Link" bawaan Supabase (tidak branded, dan tidak menampilkan kode
+      // OTP sama sekali, padahal UI di bawah minta user mengetik kode).
+      const otpRes = await fetch("/api/send-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: cleanEmail }),
+      });
+      const otpJson = await otpRes.json();
+      if (!otpRes.ok || !otpJson.success) { setErrMsg(otpJson.error || "Gagal mengirim kode OTP."); return; }
+      setStage("otp");
+    } catch {
+      setErrMsg("Terjadi gangguan pada sistem.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    setErrMsg("");
+    const cleanOtp = otp.trim();
+    if (!cleanOtp) { setErrMsg("Masukkan kode OTP."); return; }
+    setLoading(true);
+    try {
+      const cleanEmail = email.trim().toLowerCase();
+      // Verifikasi OTP custom (tabel email_otps, sama isinya dgn yang dikirim
+      // /api/send-otp di atas) lewat endpoint server-side khusus login Admin
+      // MC - BUKAN /api/verify-otp (itu endpoint registrasi, bikin auth user
+      // + profile baru). Endpoint ini mengembalikan token_hash dari Admin API
+      // generateLink (magiclink), ditukar jadi sesi asli lewat verifyOtp di
+      // bawah - pola yang sama persis dgn /marta/login (OTP login).
+      const verifyRes = await fetch("/api/sandra/verify-admin-mc-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: cleanEmail, otp: cleanOtp }),
+      });
+      const verifyJson = await verifyRes.json();
+      if (!verifyRes.ok || !verifyJson.success) {
+        setErrMsg(verifyJson.error || "Kode OTP salah atau sudah tidak berlaku.");
+        return;
+      }
+      const { error: verifyErr } = await supabase.auth.verifyOtp({ token_hash: verifyJson.token_hash, type: "magiclink" });
+      if (verifyErr) {
+        setErrMsg("Gagal membuat sesi login. Coba lagi.");
+        return;
+      }
+      // FIX (bug "nama/role profil kosong setelah login Admin MC") - sama
+      // pola dgn /sandra/login, lihat komentar di sana.
+      // FIX (TypeError "...rpc(...).catch is not a function") - sama
+      // persis penjelasan di /sandra/login.
+      try { await supabase.rpc("mf_dse_admin_mc_login_apply", { p_email: email }); } catch { /* best-effort */ }
+      router.refresh();
+      router.push("/dashboard");
+    } catch (e) {
+      console.error("[handleVerifyOtp]", e);
+      setErrMsg("Terjadi gangguan pada sistem: " + (e?.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Auto-submit begitu 6 digit lengkap terisi - UX standar kotak OTP
+  // (user tidak perlu lagi klik "Verifikasi & Masuk" manual).
+  const autoSubmittedRef = useRef("");
+  useEffect(() => {
+    if (stage === "otp" && otp.length === 6 && autoSubmittedRef.current !== otp) {
+      autoSubmittedRef.current = otp;
+      handleVerifyOtp();
+    }
+  }, [otp, stage]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleResend = async () => {
+    setErrMsg("");
+    setLoading(true);
+    try {
+      const res = await fetch("/api/send-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim().toLowerCase() }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) setErrMsg(json.error || "Gagal mengirim ulang kode OTP.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (checking) return (
+    <div style={{ minHeight: "100svh", display: "flex", alignItems: "center", justifyContent: "center", background: "#0A0A0B" }}>
+      <Loader2 size={26} color={TEAL} style={{ animation: "spin 1s linear infinite" }} />
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+
+  const fieldStyle = { display: "flex", alignItems: "center", gap: 10, height: 46, padding: "0 14px", borderRadius: 10, background: t.fieldBg, border: `1.5px solid ${t.line}` };
+  const inputStyle = { flex: 1, minWidth: 0, height: "100%", background: "transparent", border: "none", outline: "none", fontSize: 14, fontWeight: 500, color: t.hi, fontFamily: FONT, WebkitAppearance: "none" };
+
+  return (
+    <div style={{ minHeight: "100svh", fontFamily: FONT, background: t.bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "28px 20px", position: "relative", WebkitFontSmoothing: "antialiased" }}>
+      <div style={{ position: "fixed", inset: 0, zIndex: 0, pointerEvents: "none", overflow: "hidden" }}>
+        <div style={{ position: "absolute", top: "-20%", left: "-10%", width: "60vw", height: "60vw", borderRadius: "50%", background: "radial-gradient(circle,rgba(50,188,173,0.08) 0%,transparent 70%)", filter: "blur(2px)" }} />
+        <div style={{ position: "absolute", inset: 0, background: d ? "radial-gradient(ellipse at 50% 50%,transparent 30%,rgba(10,10,11,0.7) 100%)" : "radial-gradient(ellipse at 50% 50%,transparent 30%,rgba(244,244,246,0.6) 100%)" }} />
+      </div>
+
+      <div style={{ position: "fixed", top: 18, left: 18, zIndex: 50 }}>
+        <button onClick={() => router.push("/sandra/login")} style={{ display: "flex", alignItems: "center", gap: 6, background: d ? "rgba(20,20,23,0.9)" : "rgba(255,255,255,0.9)", border: `1px solid ${t.line}`, borderRadius: 10, padding: "8px 14px", cursor: "pointer", color: t.mid, fontSize: 13, fontWeight: 600, fontFamily: FONT, backdropFilter: "blur(20px)" }}>
+          <ArrowLeft size={14} /> Kembali
+        </button>
+      </div>
+      <button onClick={() => { const n = !d; setD(n); localStorage.setItem("hub-theme", n ? "dark" : "light"); }} style={{ position: "fixed", top: 18, right: 18, zIndex: 50, width: 36, height: 36, borderRadius: 10, border: `1px solid ${t.line}`, background: d ? "rgba(20,20,23,0.9)" : "rgba(255,255,255,0.9)", display: "flex", alignItems: "center", justifyContent: "center", color: t.mid, cursor: "pointer" }}>
+        {d ? <Sun size={15} /> : <Moon size={15} />}
+      </button>
+
+      <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.42 }} style={{ width: "100%", maxWidth: 400, position: "relative", zIndex: 1 }}>
+        <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 18, boxShadow: t.card$, overflow: "hidden" }}>
+          <div style={{ height: 3, background: `linear-gradient(90deg,${TEAL},${MAGA})` }} />
+          <div style={{ padding: "28px 28px 24px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 26 }}>
+              <HubLogo variant="sandra" size={52} shadow inBox />
+              <div>
+                <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.04em", color: t.hi, lineHeight: 1.1 }}>
+                  Admin <span style={{ background: `linear-gradient(90deg,${TEAL},${MAGA})`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>MC</span>
+                </div>
+                <div style={{ marginTop: 3, fontSize: 11, fontWeight: 600, letterSpacing: "0.14em", textTransform: "uppercase", color: t.mid }}>Login via Email OTP</div>
+              </div>
+            </div>
+
+            <AnimatePresence>
+              {errMsg && (
+                <motion.div key="err" initial={{ opacity: 0, height: 0, marginBottom: 0 }} animate={{ opacity: 1, height: "auto", marginBottom: 14 }} exit={{ opacity: 0, height: 0, marginBottom: 0 }} transition={{ duration: 0.18 }}
+                  style={{ padding: "9px 13px", borderRadius: 10, background: t.redBg, border: `1px solid ${t.redBd}`, display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, fontWeight: 600, color: t.red, overflow: "hidden" }}>
+                  <AlertCircle size={13} strokeWidth={2.2} style={{ flexShrink: 0 }} />{errMsg}
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <AnimatePresence mode="wait">
+              {stage === "email" ? (
+                <motion.div key="s-email" initial={{ opacity: 0, x: -14 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -14 }} transition={{ duration: 0.22 }}>
+                  <div style={{ marginBottom: 18 }}>
+                    <div style={{ fontSize: 17, fontWeight: 700, color: t.hi, letterSpacing: "-0.02em" }}>Masuk sebagai Admin MC</div>
+                    <div style={{ marginTop: 3, fontSize: 13, color: t.mid }}>Tidak perlu kata sandi — masuk cukup dengan kode OTP yang dikirim ke email terdaftar.</div>
+                  </div>
+                  <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: t.mid }}>Email</label>
+                  <div style={{ ...fieldStyle, marginTop: 5 }}>
+                    <Mail size={14} color={t.lo} style={{ flexShrink: 0 }} />
+                    <input type="email" placeholder="nama@email.com" value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleSendOtp()} style={inputStyle} autoComplete="email" autoFocus />
+                  </div>
+                  <button onClick={handleSendOtp} disabled={loading}
+                    style={{ marginTop: 20, width: "100%", height: 46, borderRadius: 10, border: "none", background: loading ? `${TEAL}55` : `linear-gradient(135deg,${TEAL},#1A9E90)`, color: "#fff", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: loading ? "not-allowed" : "pointer", fontFamily: FONT }}>
+                    {loading ? <Loader2 size={16} style={{ animation: "spin .85s linear infinite" }} /> : <><span>Kirim Kode OTP</span><ArrowRight size={14} strokeWidth={2.5} /></>}
+                  </button>
+                </motion.div>
+              ) : (
+                <motion.div key="s-otp" initial={{ opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 14 }} transition={{ duration: 0.22 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", borderRadius: 10, background: t.fieldBg, border: `1px solid ${t.line}`, marginBottom: 10 }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                      <Mail size={14} color={t.lo} style={{ flexShrink: 0 }} />
+                      <span style={{ fontSize: 13.5, fontWeight: 600, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{email}</span>
+                    </span>
+                    <button onClick={() => { setStage("email"); setOtp(""); setErrMsg(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: TEAL, fontSize: 12.5, fontWeight: 700, fontFamily: FONT, flexShrink: 0 }}>Ganti</button>
+                  </div>
+
+                  {mcList.length > 0 && (
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 9, padding: "10px 12px", borderRadius: 10, background: t.tealBg, border: `1px solid ${t.tealBd}`, marginBottom: 16 }}>
+                      <CheckCircle2 size={15} color={TEAL} style={{ flexShrink: 0, marginTop: 1 }} />
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 800, color: t.hi }}>Terdaftar sebagai Admin MC{mcList.length > 1 ? ` (${mcList.length} MC)` : ""}</div>
+                        {/* UPDATE (permintaan user - "perbaiki masuk sebagai admin 4 mc
+                            perbaiki tampilannnya agar clear"): tiap MC jadi chip kecil
+                            sendiri2 (flexWrap) - sama pola dgn perbaikan di /sandra/login,
+                            biar semua MC selalu kebaca penuh walau jumlahnya banyak. */}
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 5 }}>
+                          {mcList.map((mc) => (
+                            <span key={mc} style={{ fontSize: 11, fontWeight: 700, color: TEAL, background: d ? "rgba(50,188,173,0.14)" : "#fff", border: `1px solid ${t.tealBd}`, borderRadius: 999, padding: "3px 9px", whiteSpace: "nowrap" }}>{mc}</span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: t.mid, display: "block", marginBottom: 9, textAlign: "center" }}>Masukkan kode 6 digit</label>
+                  {/* UPDATE (permintaan user - "perbaiki tampilan ini seharusnya ui
+                      untuk memasukkan otpnya buat menjadi jauh lebih bagus"): input
+                      OTP tunggal (1 text box, placeholder titik2) diganti 6 kotak
+                      digit terpisah - pola standar OTP yang jauh lebih jelas &
+                      gampang dibaca (tiap digit kotaknya sendiri, auto-pindah ke
+                      kotak berikutnya begitu 1 digit terisi, bisa paste 6 digit
+                      sekaligus, auto-submit begitu lengkap) - lihat otpDigits/
+                      setOtpDigit/handleOtpKeyDown/handleOtpPaste di atas. */}
+                  <div onPaste={handleOtpPaste} className="otpBoxRow" style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+                    {otpDigits.map((digit, i) => (
+                      <input key={i} ref={(el) => (otpRefs.current[i] = el)}
+                        type="text" inputMode="numeric" maxLength={1} value={digit}
+                        onChange={(e) => setOtpDigit(i, e.target.value)}
+                        onKeyDown={(e) => handleOtpKeyDown(i, e)}
+                        onFocus={(e) => e.currentTarget.select()}
+                        className="otpDigitBox"
+                        style={{ width: 44, height: 54, maxWidth: "15vw", borderRadius: 11, border: `1.5px solid ${digit ? TEAL : t.line}`, background: t.fieldBg, color: t.hi, fontFamily: FONT, fontSize: 22, fontWeight: 800, textAlign: "center", outline: "none" }}
+                        autoFocus={i === 0} />
+                    ))}
+                  </div>
+                  <button onClick={handleVerifyOtp} disabled={loading}
+                    style={{ marginTop: 22, width: "100%", height: 46, borderRadius: 10, border: "none", background: loading ? `${TEAL}55` : `linear-gradient(135deg,${TEAL},#1A9E90)`, color: "#fff", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: loading ? "not-allowed" : "pointer", fontFamily: FONT }}>
+                    {loading ? <Loader2 size={16} style={{ animation: "spin .85s linear infinite" }} /> : <><span>Verifikasi & Masuk</span><ArrowRight size={14} strokeWidth={2.5} /></>}
+                  </button>
+                  <div style={{ marginTop: 14, textAlign: "center", fontSize: 12.5, fontWeight: 600, color: t.mid }}>
+                    {resendCooldown > 0 ? (
+                      <span>Belum dapat kode? Kirim ulang dalam {resendCooldown}s</span>
+                    ) : (
+                      <button onClick={() => { handleResend(); setOtp(""); otpRefs.current[0]?.focus(); }} disabled={loading} style={{ background: "none", border: "none", cursor: loading ? "not-allowed" : "pointer", color: TEAL, fontSize: 12.5, fontWeight: 700, fontFamily: FONT }}>
+                        Belum dapat kode? Kirim ulang
+                      </button>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
+        <PwaInstallBanner dark={d} />
+
+        <div style={{ marginTop: 18, textAlign: "center", fontSize: 10.5, letterSpacing: "0.12em", textTransform: "uppercase", color: t.lo, opacity: 0.35, fontWeight: 600 }}>
+          © 2026 SandraHub · Admin MC
+        </div>
+      </motion.div>
+
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700;9..40,800&display=swap');
+        *, *::before, *::after { box-sizing:border-box; margin:0; padding:0 }
+        body { margin:0 }
+        input::placeholder { opacity:0.4 }
+        @keyframes spin { to { transform:rotate(360deg) } }
+        button { transition: opacity 0.14s, transform 0.12s; }
+        button:hover:not(:disabled) { opacity: 0.84; }
+        button:active:not(:disabled) { transform: scale(0.97); }
+        .otpDigitBox { transition: border-color 0.15s, box-shadow 0.15s; }
+        .otpDigitBox:focus { border-color: #32BCAD !important; box-shadow: 0 0 0 3px rgba(50,188,173,0.15); }
+        /* UPDATE (permintaan user - "tapi pastikan resposive di mobile ya") -
+           sama persis pola di /sandra/login. */
+        @media (max-width: 380px) {
+          .otpBoxRow { gap: 5px !important; }
+          .otpDigitBox { width: 38px !important; height: 50px !important; font-size: 19px !important; }
+        }
+        @media (max-width: 340px) {
+          .otpBoxRow { gap: 4px !important; }
+          .otpDigitBox { width: 33px !important; height: 46px !important; font-size: 17px !important; border-radius: 10px !important; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+export default function AdminMcLoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <AdminMcLoginInner />
+    </Suspense>
+  );
+}

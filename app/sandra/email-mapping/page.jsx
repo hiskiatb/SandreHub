@@ -3,7 +3,7 @@
  * /sandra/email-mapping — admin "Update Mapping Email".
  * Mengelola sdp_login_map: email → role/brand/branch/cluster/region, untuk
  * login email-first SandraHub (fitur SDP dst). Tambah/edit/hapus + import/export
- * Excel. Hanya untuk admin (spm_sumatera / finance_mpx / internal_ioh).
+ * Excel. Hanya untuk admin (spm_sumatera / admin_partner_mdi / internal_ioh).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -17,7 +17,7 @@ import {
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
 const TEAL = "#32BCAD", RED = "#ED1C24", MAGA = "#C6168D";
-const ADMIN_ROLES = ["spm_sumatera", "finance_mpx", "admin_mc", "internal_ioh"];
+const ADMIN_ROLES = ["spm_sumatera", "admin_partner_mdi", "admin_mc", "internal_ioh"];
 const ROLES = [
   { v: "cse_rse", label: "CSE / RSE" }, { v: "bsm", label: "BSM" },
   { v: "pic_region", label: "PIC Region" }, { v: "spm_sumatera", label: "SPM Sumatera" },
@@ -242,7 +242,7 @@ export default function EmailMappingPage() {
               )}
         </div>
         <div style={{ fontSize: 11.5, color: t.lo, marginTop: 12, lineHeight: 1.6 }}>
-          Kolom Excel: <b>email, role, brand, branch, cluster, region, full_name</b>. Role valid: cse_rse, bsm, pic_region, spm_sumatera. Email yang sudah ada akan diperbarui. Role di luar mapping (mis. finance_mpx) tidak terpengaruh — login mereka tetap seperti biasa.
+          Kolom Excel: <b>email, role, brand, branch, cluster, region, full_name</b>. Role valid: cse_rse, bsm, pic_region, spm_sumatera. Email yang sudah ada akan diperbarui. Role di luar mapping (mis. admin_partner_mdi) tidak terpengaruh — login mereka tetap seperti biasa.
         </div>
       </div>
 

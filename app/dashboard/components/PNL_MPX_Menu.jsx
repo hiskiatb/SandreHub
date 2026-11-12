@@ -74,7 +74,7 @@ function MenuCard({ item, t, onClick }) {
   );
 }
 
-export default function PNL_MPX_Menu({ theme = "dark", onSelect, onExit, items }) {
+export default function PNL_MPX_Menu({ theme = "dark", onSelect, onExit, items, title = "MPX P&L Report" }) {
   const d = theme === "dark";
   const t = mk(d);
 
@@ -90,7 +90,7 @@ export default function PNL_MPX_Menu({ theme = "dark", onSelect, onExit, items }
         </div>
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.4px" }}>MPX P&amp;L Report</div>
+            <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.4px" }}>{title}</div>
             <span style={{ fontSize: 10.5, fontWeight: 700, color: t.lo, background: t.sub, border: `1px solid ${t.line}`, borderRadius: 99, padding: "2px 9px" }}>{items.length} modul</span>
           </div>
           <div style={{ fontSize: 13, color: t.mid, marginTop: 3 }}>Pilih modul laporan P&amp;L di bawah. Gunakan filter Region/Partner/Branch di sidebar untuk mempersempit tampilan.</div>

@@ -2,7 +2,7 @@
 /**
  * DSE_ProdAR.jsx — "DSE Prod. & AR"
  *
- * Tab utama "Input Harian": Admin District (role finance_mpx) langsung mengisi
+ * Tab utama "Input Harian": Admin District (role admin_partner_mdi) langsung mengisi
  * produksi harian (SP, Saldo, Voucher) + AR/piutang per Kode DSE miliknya —
  * SATU entry amount per DSE per hari. Nama DSE dan District juga bisa diedit
  * langsung dari sini (ditulis ke mf_dse_database).
@@ -5384,7 +5384,7 @@ export const CATEGORY_OPTIONS = [
 ];
 
 // FIX AKSES (audit user - "pastikan 100persen tidak ada bug" utk District
-// Admin & Admin Area): District Admin (finance_mpx) cuma berwenang atas DSE
+// Admin & Admin Area): District Admin (admin_partner_mdi) cuma berwenang atas DSE
 // Prod & AR + DSO/DSP AR ("district admin adalah orang yang mengisi AR DSE
 // dan juga AR DSO/DSP"), Admin Area (admin_area) cuma berwenang atas HoA AR
 // ("admin area adalah orang yang bertugas untuk mengisi AR HoA"). RLS tabel
@@ -5406,13 +5406,13 @@ export const CATEGORY_OPTIONS = [
 export function getCategoryOptionsForRole(role) {
   // UPDATE (permintaan user - "ini hanya bisa dilihat oleh role spm
   // sumatera"): tab "Control Center" cuma utk spm_sumatera - role lain
-  // (admin_area/finance_mpx) difilter keluar di sini.
+  // (admin_area/admin_partner_mdi) difilter keluar di sini.
   if (role === "admin_area") return CATEGORY_OPTIONS.filter((o) => o.k !== "control-center"); // hoa (full) + dso (full) + dse (view-only)
   // MIGRASI ROLE: "admin_mc" (nilai baru) diperlakukan SAMA PERSIS dgn
-  // "finance_mpx" (nilai lama, transisi) di sini - KALAU LUPA ditambahkan,
+  // "admin_partner_mdi" (nilai lama, transisi) di sini - KALAU LUPA ditambahkan,
   // admin_mc akan jatuh ke cabang default di bawah (dse+dso+HOA), padahal
-  // harusnya TIDAK dapat tab "hoa" (sama seperti finance_mpx).
-  if (role === "finance_mpx" || role === "admin_mc") return CATEGORY_OPTIONS.filter((o) => o.k !== "hoa" && o.k !== "control-center");
+  // harusnya TIDAK dapat tab "hoa" (sama seperti admin_partner_mdi).
+  if (role === "admin_partner_mdi" || role === "finance_mpx" || role === "admin_mc") return CATEGORY_OPTIONS.filter((o) => o.k !== "hoa" && o.k !== "control-center");
   if (role === "spm_sumatera") return CATEGORY_OPTIONS; // SPM Sumatera: semua kategori termasuk Control Center
   return CATEGORY_OPTIONS.filter((o) => o.k !== "control-center"); // role lain yg lolos gate di page.jsx: semua KECUALI Control Center
 }
@@ -5829,14 +5829,14 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
 
   const isSPM = hasRole(profile, "spm_sumatera");
   // MIGRASI ROLE (permintaan user - "pindahkan user admin mc, rolenya
-  // tidak lagi menggunakan finance_mpx, namun admin_mc"): selama masa
-  // transisi, "finance_mpx" (nilai lama) & "admin_mc" (nilai baru) DUA
+  // tidak lagi menggunakan admin_partner_mdi, namun admin_mc"): selama masa
+  // transisi, "admin_partner_mdi" (nilai lama) & "admin_mc" (nilai baru) DUA
   // DUANYA dianggap Admin MC - supaya akun yg belum/sudah dimigrasi di
   // DB sama2 tetap jalan tanpa ada jendela waktu kehilangan akses.
-  const isMPX = hasAnyRole(profile, ["finance_mpx", "admin_mc"]);
+  const isMPX = hasAnyRole(profile, ["admin_partner_mdi", "finance_mpx", "admin_mc"]);
   const isAdminArea = hasRole(profile, "admin_area");
   // Admin Area dipaksa view-only utk tab "dse" HANYA kalau dia TIDAK juga
-  // punya role lain yg berhak edit (finance_mpx/spm_sumatera) - "kalau
+  // punya role lain yg berhak edit (admin_partner_mdi/spm_sumatera) - "kalau
   // terdaftar di dua role, salah satunya bisa edit, maka dia bisa edit".
   const dseEditLocked = isAdminArea && !isMPX && !isSPM;
 
@@ -7452,7 +7452,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // utk sekarang summary-nya cuma per District yg sedang dipilih di filter atas.
   const mcSummary = useMemo(() => {
     let totalActive = 0, totalVacant = 0, totalInterview = 0;
-    let qtySp = 0, nilaiSp = 0, nilaiFwa = 0, qtyVoucher = 0, nilaiVoucher = 0, nilaiSaldo = 0, tunggakan = 0, totalDibayar = 0;
+    let qtySp = 0, nilaiSp = 0, nilaiFwa = 0, qtyVoucher = 0, nilaiVoucher = 0, nilaiSaldo = 0, totalPiutangRaw = 0, totalDibayar = 0;
     for (const x of columnFilteredDse) {
       const dse = x.r;
       const liveStatus = identity[dse.dse_code]?.dse_status ?? dse.dse_status ?? "";
@@ -7469,23 +7469,38 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
         qtySp += fRaw(e.qty_sp); nilaiSp += fRaw(e.nilai_sp); nilaiFwa += fRaw(e.nilai_fwa);
         qtyVoucher += fRaw(e.qty_voucher); nilaiVoucher += fRaw(e.nilai_voucher);
         nilaiSaldo += fRaw(e.nilai_saldo);
-        tunggakan += fRaw(e.ar_piutang);
-        totalDibayar += fRaw(e.ar_bayar);
+      }
+      // FIX BUG (laporan admin - "sudah melunaskan lebih dari 1 juta, tp
+      // di hitungan total/sisa/piutang tidak sama"): Total Piutang/Total
+      // Dibayar/Sisa Piutang di kartu Ringkasan ini dulu dihitung dari
+      // `entries[dse].ar_piutang`/`.ar_bayar` - cache KOLOM HARIAN di
+      // mf_dse_prod_ar, cuma ke-update kalau ADMIN NGETIK ULANG nilainya
+      // di tab Input Harian. Sejak AR dipindah jadi per-transaksi
+      // (ar_piutang_items + ar_piutang_payments, lihat `arItemsAgg` di
+      // atas - SUMBER yg SAMA dipakai tabel baris per-DSE di bawah),
+      // pembayaran lewat popup "Edit AR" TIDAK menyentuh kolom cache lama
+      // itu lagi - makanya kartu Ringkasan ini keliatan "nyangkut" di
+      // angka lama padahal baris tabelnya sendiri sudah benar/ter-update.
+      // Diganti baca `arItemsAgg` (live, SAMA PERSIS sumber yg dipakai
+      // kolom Total Piutang/Total Dibayar/Sisa Piutang di tabel) supaya
+      // kartu Ringkasan & tabel selalu sinkron.
+      const agg = arItemsAgg[dse.dse_code];
+      if (agg) {
+        totalPiutangRaw += agg.totalPiutang;
+        totalDibayar += agg.totalDibayar;
       }
     }
+    const tunggakan = totalPiutangRaw - totalDibayar;
     // UPDATE (permintaan user - "Total Piutang | Total Dibayar | Sisa
     // Piutang, cardnya seperti ini juga"): StatTiles tab AR sekarang
     // menambahkan Total Piutang & Total Dibayar di samping Sisa Piutang
     // (tunggakan) yg sudah ada, pakai label/urutan sama persis dgn kolom
-    // tabel yg baru (Total Piutang, Total Dibayar, Sisa Piutang). Dihitung
-    // dari cache mf_dse_prod_ar yg SAMA dgn yg sudah dipakai `tunggakan`
-    // (entries[dse].ar_piutang = sisa, ar_bayar = dibayar HARI INI) - bukan
-    // query baru ke ar_piutang_items per-DSE (terlalu berat utk summary
-    // page-level) - totalPiutang = sisa + dibayar (identitas akuntansi
-    // harian: piutang hari ini = sisa yg belum dibayar + yg sudah dibayar).
-    const totalPiutang = tunggakan + totalDibayar;
+    // tabel yg baru (Total Piutang, Total Dibayar, Sisa Piutang). Sumbernya
+    // `arItemsAgg` (lihat FIX BUG di atas) - sama persis dgn yg dipakai
+    // kolom tabel, bukan lagi cache harian mf_dse_prod_ar.
+    const totalPiutang = totalPiutangRaw;
     return { totalAlokasi: columnFilteredDse.length, totalActive, totalVacant, totalInterview, qtySp, nilaiSp, nilaiFwa, qtyVoucher, nilaiVoucher, nilaiSaldo, tunggakan, totalDibayar, totalPiutang, totalPenjualan: nilaiSp + nilaiFwa + nilaiVoucher + nilaiSaldo };
-  }, [columnFilteredDse, identity, entries, periodMode, entryDate, statusEvents]);
+  }, [columnFilteredDse, identity, entries, periodMode, entryDate, statusEvents, arItemsAgg]);
 
   // UPDATE (permintaan user - "harusnya angkanya saja yang loading namun
   // summary card placeholdernya selalu ada"): shell kartu Ringkasan (ikon,

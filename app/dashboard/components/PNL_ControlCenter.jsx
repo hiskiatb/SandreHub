@@ -4,6 +4,8 @@ import ExcelFilter from "./ExcelFilter";
 import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import supabase from "../../../lib/supabase";
+import { summarizePendapatan } from "./PNL_FormPendapatanV2";
+import { summarizePengeluaran } from "./PNL_FormPengeluaranV2";
 import {
   Search, CheckCircle2, Circle,
   ChevronDown, X, AlertCircle, RotateCcw,
@@ -276,11 +278,13 @@ function MonthPicker({ selected, onChange, t, d }) {
   );
 }
 
-function StatusCell({ statusInfo, t, d, dbDisabled, saving, onClick, onToggleDisabled, userRole }) {
+function StatusCell({ statusInfo, t, d, dbDisabled, saving, onClick, onToggleDisabled, userRole, v2 }) {
   const { status, notes, updatedAt } = statusInfo || { status: "EMPTY", notes: null, updatedAt: null };
   const [tip, setTip] = useState(null);
   const btnRef        = useRef(null);
-  const canDisable = userRole === "spm_sumatera";
+  // V2 (pnl_reports_v2): fitur nonaktifkan bulan TIDAK dipakai - tabel
+  // pnl_disabled_months milik V1, jangan sampai V2 ikut mengubahnya.
+  const canDisable = !v2 && userRole === "spm_sumatera";
 
   const fmt = (iso) => {
     if (!iso) return null;
@@ -302,7 +306,7 @@ function StatusCell({ statusInfo, t, d, dbDisabled, saving, onClick, onToggleDis
     if (status === "FINALIZED") {
       const hasPendapatan = notes?.includes("pendapatan:final");
       const hasPengeluaran = notes?.includes("pengeluaran:final");
-      const bothFinal = hasPendapatan && hasPengeluaran;
+      const bothFinal = v2 || (hasPendapatan && hasPengeluaran);
       return {
         bg:          `rgba(50,188,173,${d?0.15:0.10})`,
         borderColor: `rgba(50,188,173,${d?0.35:0.25})`,
@@ -317,14 +321,14 @@ function StatusCell({ statusInfo, t, d, dbDisabled, saving, onClick, onToggleDis
               flexShrink: 0,
             }}>1</div>
           ),
-        label: "Finalized",
+        label: v2 ? "Lengkap" : "Finalized",
       };
     }
     if (status === "DRAFT") return {
       bg:          `rgba(255,203,5,${d?0.14:0.10})`,
       borderColor: `rgba(255,203,5,${d?0.35:0.25})`,
       icon:        <div style={{ width:9,height:9,borderRadius:"50%",background:"#FFCB05",boxShadow:"0 0 5px rgba(255,203,5,0.6)" }}/>,
-      label:       "Draft",
+      label:       v2 ? "Sebagian" : "Draft",
     };
     return { bg:"transparent", borderColor:"transparent", icon:<Circle size={15} style={{ color:t.lo,opacity:0.4 }}/>, label:"Kosong" };
   };
@@ -395,7 +399,9 @@ function StatusCell({ statusInfo, t, d, dbDisabled, saving, onClick, onToggleDis
               )}
               {!hasNotes && status !== "EMPTY" && <div style={{ fontSize:10.5,color:t.lo,fontStyle:"italic" }}>Tidak ada keterangan tambahan</div>}
               <div style={{ marginTop:7,paddingTop:7,borderTop:`1px solid ${t.line}`,fontSize:10.5,color:t.lo,display:"flex",alignItems:"center",gap:4 }}>
-                {canDisable ? (
+                {v2 ? (
+                  <>Klik untuk membuka laporan</>
+                ) : canDisable ? (
                   <><XCircle size={9}/> Klik kanan → nonaktifkan bulan ini</>
                 ) : (
                   <><AlertCircle size={9}/> Hanya SPM Sumatera yang dapat mengubah status</>
@@ -441,7 +447,7 @@ function StatusCell({ statusInfo, t, d, dbDisabled, saving, onClick, onToggleDis
         }}
       >
         {c.icon}
-        {!dbDisabled && hasNotes && status !== "EMPTY" && (
+        {!v2 && !dbDisabled && hasNotes && status !== "EMPTY" && (
           <div style={{ position:"absolute",top:3,right:3,width:6,height:6,borderRadius:"50%",background:status==="FINALIZED"?"#32BCAD":"#FFCB05",border:`1.5px solid ${d?"#1A1A1D":"#FFFFFF"}`,boxShadow:`0 0 4px ${status==="FINALIZED"?"rgba(50,188,173,0.7)":"rgba(255,203,5,0.7)"}` }}/>
         )}
       </button>
@@ -553,7 +559,14 @@ function ConfirmDisableModal({ payload, onConfirm, onCancel, t, d }) {
 export default function PNLControlCenter({
   theme, masterData, activeYear, activeMonth,
   onOpenBranch, userRole,
+  // variant "v2" = MPX P&L Report V2: tampilan SAMA PERSIS, tapi datanya
+  // dari tabel pnl_reports_v2 (permintaan user: "buat ketiga menu ini juga
+  // sama persis di v2 nya"). V2 belum punya alur finalisasi, jadi status
+  // sel diturunkan dari isian form: Lengkap = Form Pendapatan (bagian
+  // partner) & Form Pengeluaran sudah diisi, Sebagian = baru salah satu.
+  variant = "v1",
 }) {
+  const isV2 = variant === "v2";
   const d = theme === "dark";
   const t = tk(d);
 
@@ -590,10 +603,21 @@ export default function PNLControlCenter({
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const { data, error } = await supabase
+      const { data: rawData, error } = isV2
+        ? await supabase.from("pnl_reports_v2").select("*").eq("year", Number(activeYear))
+        : await supabase
         .from("pnl_reports")
         .select("partner_name,branch,mpc_mp3,month,year,is_finalized,validation_notes,finalized_at,updated_at,grand_total_revenue,realtime_margin,back_margin,sla_fee,special_program,rewards_champions")
         .eq("year", Number(activeYear));
+      // V2: bulan disimpan sbg angka (11) -> samakan ke nama bulan ("November")
+      // spt V1, dan hitung apakah tiap form sudah diisi.
+      const data = (isV2 && rawData) ? rawData.map(r => {
+        const inc = summarizePendapatan(r), exp = summarizePengeluaran(r.pengeluaran_data);
+        const hasQty = Object.values(r.pengeluaran_data || {}).some(v => Number(v?.qty) > 0);
+        return { ...r, month: MONTHS[Number(r.month) - 1],
+          _pendFilled: (inc.totalMargin + inc.luarTemplate) !== 0,
+          _pengFilled: exp.grandTotal !== 0 || hasQty };
+      }) : rawData;
       if (!error && data) {
         const map = {};
         data.forEach(item => {
@@ -604,9 +628,10 @@ export default function PNLControlCenter({
       }
       setLoading(false);
     })();
-  }, [activeYear]);
+  }, [activeYear, isV2]);
 
   useEffect(() => {
+    if (isV2) return;
     (async () => {
       try {
         const { data, error } = await supabase
@@ -633,6 +658,7 @@ export default function PNLControlCenter({
   }, []);
 
   useEffect(() => {
+    if (isV2) return;
     let channel;
     try {
       channel = supabase
@@ -676,7 +702,7 @@ export default function PNLControlCenter({
   }, [savingKeys]);
 
   const handleToggleDisabled = useCallback((row, month, year) => {
-    if (userRole !== "spm_sumatera") return;
+    if (isV2 || userRole !== "spm_sumatera") return;
     const key = `${row.partner_name}|${row.branch_name}|${row.mpc_mp3}|${month}|${year}`;
     const isCurrentlyDisabled = localDisabled.has(key) || dbDisabledMap.has(key);
     setConfirmModal({ row, month, year, isCurrentlyDisabled, key });
@@ -735,6 +761,16 @@ export default function PNLControlCenter({
     const item = statusMap[key];
     if (!item) return { status: "EMPTY", notes: null, updatedAt: null };
 
+    if (isV2) {
+      const { _pendFilled: p, _pengFilled: e } = item;
+      if (!p && !e) return { status: "EMPTY", notes: null, updatedAt: null };
+      return {
+        status:    p && e ? "FINALIZED" : "DRAFT",
+        notes:     p && e ? "Form Pendapatan & Form Pengeluaran sudah diisi." : p ? "Baru Form Pendapatan yang diisi." : "Baru Form Pengeluaran yang diisi.",
+        updatedAt: item.updated_at || null,
+      };
+    }
+
     // Jika laporan belum final dan SATU-SATUNYA data yang terisi adalah field
     // yang diisi otomatis Tim SPM (Realtime/Back Margin, SLA, Tactical Program,
     // Champions), maka partner belum mengisi apa pun -> jangan tandai Draft.
@@ -771,7 +807,7 @@ export default function PNLControlCenter({
       notes:     item.validation_notes || null,
       updatedAt: item.finalized_at || item.updated_at || null,
     };
-  }, [statusMap]);
+  }, [statusMap, isV2]);
 
   const clearFilters = () => { setSearch(""); setFType([]); setFRegion([]); setFPartner([]); setFBranch([]); setFDoneCount([]); };
   const hasFilter = Boolean(search || fType.length || fRegion.length || fPartner.length || fBranch.length || fDoneCount.length);
@@ -882,7 +918,7 @@ export default function PNLControlCenter({
           <div style={{ height:20,width:3,borderRadius:2,background:"linear-gradient(180deg,#ED1C24 0%,#C6168D 100%)" }}/>
           <div style={{ fontSize:10,fontWeight:700,letterSpacing:"0.16em",textTransform:"uppercase",color:"#ED1C24" }}>Laporan Tahun {activeYear}</div>
         </div>
-        <h1 style={{ fontSize:28,fontWeight:800,letterSpacing:"-0.04em",color:t.hi,marginBottom:5 }}>PNL Control Center</h1>
+        <h1 style={{ fontSize:28,fontWeight:800,letterSpacing:"-0.04em",color:t.hi,marginBottom:5 }}>PNL Control Center{isV2 ? " V2" : ""}</h1>
         <p style={{ fontSize:14,color:t.mid }}>
           Data s.d. <strong style={{ color:t.hi,fontWeight:600 }}>{activeMonth} {activeYear}</strong>
           {" · "}{rows.length} branch aktif
@@ -899,9 +935,11 @@ export default function PNLControlCenter({
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
         {[
           { label:"Pencapaian",    value:`${pct}%`,    sub:`${finalCells} dari ${totalCells} laporan aktif`,   color:t.green,      bg:t.greenBg },
-          { label:"Finalized",     value:finalCells,   sub:"laporan telah difinalisasi",                        color:t.green,      bg:t.greenBg },
-          { label:"Draft",         value:draftCells,   sub:"laporan belum difinalisasi",                        color:t.amber,      bg:t.amberBg },
-          { label:"Dinonaktifkan", value:totalDisabled,sub:"sel dikecualikan dari progress",                    color:DISABLED_COLOR,bg:d?"rgba(220,38,38,0.10)":"rgba(220,38,38,0.07)" },
+          { label:isV2?"Lengkap":"Finalized", value:finalCells, sub:isV2?"pendapatan & pengeluaran sudah diisi":"laporan telah difinalisasi", color:t.green, bg:t.greenBg },
+          { label:isV2?"Sebagian":"Draft",    value:draftCells, sub:isV2?"baru salah satu form yang diisi":"laporan belum difinalisasi",     color:t.amber, bg:t.amberBg },
+          isV2
+            ? { label:"Kosong",        value:emptyCells,   sub:"belum ada isian partner",                           color:t.mid,        bg:"transparent" }
+            : { label:"Dinonaktifkan", value:totalDisabled,sub:"sel dikecualikan dari progress",                    color:DISABLED_COLOR,bg:d?"rgba(220,38,38,0.10)":"rgba(220,38,38,0.07)" },
         ].map(c => (
           <div key={c.label} style={{ padding:"18px 20px",borderRadius:12,border:`1px solid ${t.line}`,background:t.card,boxShadow:t.shadow }}>
             <div style={{ fontSize:11,fontWeight:700,letterSpacing:"0.07em",textTransform:"uppercase",color:t.mid,marginBottom:10 }}>{c.label}</div>
@@ -924,7 +962,7 @@ export default function PNLControlCenter({
         </div>
         <div style={{ display:"flex",justifyContent:"space-between",marginTop:8 }}>
           <span style={{ fontSize:11,color:t.lo }}>
-            {finalCells} finalized · {draftCells} draft · {emptyCells} kosong
+            {finalCells} {isV2?"lengkap":"finalized"} · {draftCells} {isV2?"sebagian":"draft"} · {emptyCells} kosong
             {totalDisabled>0&&<span style={{ color:DISABLED_COLOR }}> · {totalDisabled} dinonaktifkan</span>}
           </span>
           <span style={{ fontSize:11,color:t.lo }}>{visibleCols.length} kolom ditampilkan</span>
@@ -954,11 +992,11 @@ export default function PNLControlCenter({
       <div style={{ borderRadius:12,border:`1px solid ${t.line}`,background:t.card,overflow:"hidden",boxShadow:t.shadow }}>
         <div style={{ display:"flex",alignItems:"center",gap:16,flexWrap:"wrap",padding:"10px 18px",borderBottom:`1px solid ${t.line}`,background:t.thead }}>
           {[
-            { label:"Finalized",     color:"#32BCAD",      dot:<CheckCircle2 size={12} style={{ color:"#32BCAD" }}/> },
-            { label:"Draft",         color:"#C49A00",      dot:<div style={{ width:8,height:8,borderRadius:"50%",background:"#FFCB05",boxShadow:"0 0 4px rgba(255,203,5,0.6)" }}/> },
+            { label:isV2?"Lengkap":"Finalized", color:"#32BCAD", dot:<CheckCircle2 size={12} style={{ color:"#32BCAD" }}/> },
+            { label:isV2?"Sebagian":"Draft",    color:"#C49A00", dot:<div style={{ width:8,height:8,borderRadius:"50%",background:"#FFCB05",boxShadow:"0 0 4px rgba(255,203,5,0.6)" }}/> },
             { label:"Kosong",        color:t.lo,           dot:<Circle size={12} style={{ opacity:0.5,color:t.lo }}/> },
-            { label:"Dinonaktifkan", color:DISABLED_COLOR, dot:<XCircle size={12} style={{ color:DISABLED_COLOR }}/> },
-          ].map(l => (
+            !isV2 && { label:"Dinonaktifkan", color:DISABLED_COLOR, dot:<XCircle size={12} style={{ color:DISABLED_COLOR }}/> },
+          ].filter(Boolean).map(l => (
             <div key={l.label} style={{ display:"flex",alignItems:"center",gap:5 }}>
               <span style={{ display:"flex" }}>{l.dot}</span>
               <span style={{ fontSize:11,fontWeight:600,color:t.mid }}>{l.label}</span>
@@ -1066,6 +1104,7 @@ export default function PNLControlCenter({
                                 dbDisabled={cellDisabled}
                                 saving={cellSaving}
                                 userRole={userRole}
+                                v2={isV2}
                                 onClick={e => {
                                   e.stopPropagation();
                                   onOpenBranch({ partner_name:row.partner_name,branch_name:row.branch_name,mpc_mp3:row.mpc_mp3,month:col.month,year:col.year });

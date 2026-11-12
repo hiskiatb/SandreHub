@@ -28,7 +28,7 @@ const mk = (d) => ({
   tealBd: d ? "rgba(50,188,173,0.28)" : "rgba(50,188,173,0.20)",
 });
 
-const ADMIN_ROLES = ["spm_sumatera", "finance_mpx", "admin_mc", "internal_ioh"];
+const ADMIN_ROLES = ["spm_sumatera", "admin_partner_mdi", "admin_mc", "internal_ioh"];
 const PAGE_SIZE = 50;
 
 // ── Toast ──────────────────────────────────────────────────────────────────────

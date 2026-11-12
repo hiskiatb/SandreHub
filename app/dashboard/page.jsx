@@ -28,6 +28,9 @@ import {
 
 import FormPendapatan   from "./components/PNL_FormPendapatan";
 import FormPengeluaran  from "./components/PNL_FormPengeluaran";
+import FormPendapatanV2  from "./components/PNL_FormPendapatanV2";
+import FormPengeluaranV2 from "./components/PNL_FormPengeluaranV2";
+import FormSummaryV2     from "./components/PNL_SummaryV2";
 import FormSummary      from "./components/PNL_MPX_Summary";
 import PNLControlCenter from "./components/PNL_ControlCenter.jsx";
 import PNLPivotSummary  from "./components/PNL_PivotSummary";
@@ -70,7 +73,8 @@ const SFM_ROLES = new Set(["salesforce_mgmt_sumatera","region_sfm_north","region
 
 const ROLE_BADGE = {
   "spm_sumatera":         { bg: "magentaBg", bd: "magentaBd", color: "magenta" },
-  "finance_mpx":          { bg: "greenBg",   bd: "greenBd",   color: "green"   },
+  "circle":               { bg: "magentaBg", bd: "magentaBd", color: "magenta" },
+  "admin_partner_mdi":          { bg: "greenBg",   bd: "greenBd",   color: "green"   },
   "admin_mc":             { bg: "greenBg",   bd: "greenBd",   color: "green"   },
   "internal_ioh":         { bg: "yellowBg",  bd: "yellowBd",  color: "yellow"  },
   "ioh_north_sumatera":   { bg: "yellowBg",  bd: "yellowBd",  color: "yellow"  },
@@ -248,7 +252,7 @@ const getCurrentYear      = () => CURRENT_YEAR.toString();
 // sini krn halaman DSE Prod. & AR sekarang punya pemilihan Tanggal/Periode
 // sendiri (lihat DSE_ProdAR.jsx) - date picker bulan/tahun di header jadi
 // redundan & membingungkan kalau tetap tampil di halaman ini.
-const HIDE_DATE_PICKER_VIEWS    = new Set(["overview","control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","sdp2","mc-cluster","kode-otoritas","mfts","menu-access","promotor-tracking","pnl-mpx","dse-prod-ar","user-management"]);
+const HIDE_DATE_PICKER_VIEWS    = new Set(["overview","control-center","pivot-summary","pnl-mpx-v2","control-center-v2","pivot-summary-v2","payout-tracker","admin-panel","import-wizard","sdp-status","sdp2","mc-cluster","kode-otoritas","mfts","menu-access","promotor-tracking","pnl-mpx","dse-prod-ar","user-management"]);
 
 // Daftar role di tabel profiles, dipakai dropdown "Pilih Role" di menu
 // User Management (permintaan user - "beda beda untuk detailnya"). ready:
@@ -257,6 +261,7 @@ const USER_MGMT_ROLES = [
   { k: "admin_mc",                    label: "District Admin",                ready: true },
   { k: "admin_area",                  label: "Admin Area",                    ready: true },
   { k: "spm_sumatera",                label: "SPM Sumatera",                  ready: false },
+  { k: "circle",                      label: "Circle",                        ready: false },
   { k: "marketing_sumatera_program",  label: "Marketing Sumatera Program",    ready: false },
   { k: "ioh_north_sumatera",          label: "IOH North Sumatera",            ready: false },
   { k: "ioh_central_sumatera",        label: "IOH Central Sumatera",          ready: false },
@@ -266,14 +271,22 @@ const USER_MGMT_ROLES = [
   { k: "agency",                      label: "Agency",                        ready: false },
 ];
 const PNL_VIEWS = new Set(["summary","pendapatan","pengeluaran"]);
+// MPX P&L Report V2 (permintaan user - "MPX P&L Report V2 yang akan
+// disederhanakan ... berdampingan sebagai menu terpisah") - menu & tabel
+// data (pnl_reports_v2) TERPISAH TOTAL dari V1 di atas, 3 tab (Summary
+// V2, Pendapatan V2, Pengeluaran V2 - tanpa Control Center/Pivot/Import
+// dulu di versi awal ini).
+const PNL_VIEWS_V2 = new Set(["summary-v2","pendapatan-v2","pengeluaran-v2"]);
 // Filter Laporan (Region/Partner/Branch) di sidebar HANYA relevan untuk 4
 // modul di dalam menu "MPX P&L Report" — di luar situ disembunyikan
 // (bukan lagi daftar "sembunyikan di view X", tapi allow-list "tampilkan
 // hanya di view Y", supaya menu baru otomatis tidak menampilkannya).
-const SHOW_SIDEBAR_FILTER_VIEWS = new Set(["control-center","pivot-summary","import-wizard","summary","pendapatan","pengeluaran"]);
+const SHOW_SIDEBAR_FILTER_VIEWS = new Set(["control-center","pivot-summary","import-wizard","summary","pendapatan","pengeluaran","summary-v2","pendapatan-v2","pengeluaran-v2","control-center-v2","pivot-summary-v2"]);
 // Semua view di dalam menu "MPX P&L Report" — dipakai untuk menandai item
 // sidebar-nya aktif walau user sedang di salah satu dari 4 modul di dalamnya.
 const PNL_MPX_VIEWS = new Set(["pnl-mpx","control-center","pivot-summary","import-wizard","summary","pendapatan","pengeluaran"]);
+// Sama perannya dgn PNL_MPX_VIEWS, tapi utk grup sidebar "MPX P&L Report V2".
+const PNL_MPX_V2_VIEWS = new Set(["pnl-mpx-v2","summary-v2","pendapatan-v2","pengeluaran-v2","control-center-v2","pivot-summary-v2"]);
 
 // Sub-menu yang ketersediaannya dapat dikontrol SPM per-role (maintenance).
 const CONTROLLABLE_MENUS = {
@@ -432,7 +445,7 @@ function SidebarToggleBtn({ collapsed, onToggle, t }) {
 }
 
 function RoleBadge({ role, t }) {
-  const cfg = ROLE_BADGE[role] || ROLE_BADGE["finance_mpx"];
+  const cfg = ROLE_BADGE[role] || ROLE_BADGE["admin_partner_mdi"];
   // CSE/SDP use blue badge colors (not t.blue which is the brand red)
   const isSdpRole = role === "cse_rse";
   return (
@@ -569,7 +582,7 @@ export default function DashboardPage() {
   // "User Management" bisa kelola beberapa role berbeda, tapi detail
   // tiap role beda-beda (permintaan user - "ada button Pilih Role, karena
   // beda beda untuk detailnya") - umRole nyimpen role yg sedang dipilih,
-  // defaultnya finance_mpx karena itu yg udah ada implementasinya (bukan
+  // defaultnya admin_partner_mdi karena itu yg udah ada implementasinya (bukan
   // "Admin MC" - itu istilah beda, permintaan user: "admin MC itu bukan
   // finance mpx").
   const [umRole,            setUmRole]             = useState("admin_mc");
@@ -577,6 +590,7 @@ export default function DashboardPage() {
   // default; klik label menu tetap buka layar PNL_MPX_Menu, chevron ini
   // cuma pintasan sidebar.
   const [pnlGroupOpen,      setPnlGroupOpen]     = useState(false);
+  const [pnlV2GroupOpen,    setPnlV2GroupOpen]   = useState(false);
   const [prodArOpen,        setProdArOpen]       = useState(false);
 
   // ── Role flags ────────────────────────────────────────────────────────────
@@ -584,13 +598,16 @@ export default function DashboardPage() {
   // "kalau terdaftar di dua role... bisa edit maka dia akan bisa edit"):
   // isSPM/isMPX/isAdminArea sekarang baca GABUNGAN role (profile.roles,
   // lihat my_roles() RPC di atas), bukan cuma profile.role tunggal -
-  // supaya akun yg terdaftar di >1 role (co: finance_mpx + admin_area)
+  // supaya akun yg terdaftar di >1 role (co: admin_partner_mdi + admin_area)
   // dapat SEMUA gate yg relevan utk SETIAP role-nya, bukan cuma satu.
-  const isSPM       = hasRole(profile, "spm_sumatera");
-  // MIGRASI ROLE (permintaan user - Admin MC pindah dari "finance_mpx"
+  const isSPM       = hasAnyRole(profile, ["spm_sumatera", "circle"]);
+  // "User Management" HARUS tetap eksklusif spm_sumatera asli - role
+  // "circle" dapat semua gate isSPM lainnya, tapi bukan ini.
+  const isTrueSPM   = hasRole(profile, "spm_sumatera");
+  // MIGRASI ROLE (permintaan user - Admin MC pindah dari "admin_partner_mdi"
   // ke "admin_mc" sbg role sendiri) - dual-support sementara spy akun
   // yg belum/sudah dimigrasi di DB sama2 tetap dikenali.
-  const isMPX       = hasAnyRole(profile, ["finance_mpx", "admin_mc"]);
+  const isMPX       = hasAnyRole(profile, ["admin_partner_mdi", "finance_mpx", "admin_mc"]);
   // FIX AKSES (audit user - "pastikan 100persen tidak ada bug"): role baru
   // admin_area sebelumnya ga ke-handle sama sekali di gating sidebar/menu
   // halaman ini - karena kebanyakan gate di bawah pakai pola "!isMPX" (bukan
@@ -616,7 +633,7 @@ export default function DashboardPage() {
   const isReadOnly      = isIOHAny;
   const canMonitor      = isSPM || isIOHAny || isMPX;
   const canSdp          = isSPM || isSDPMember || isIOHAny;   // IOH: lihat saja (read-only)
-  const canReportMerge   = isSPM || isIOHAny;   // Report Merge: SPM Sumatera + Internal IOH, Finance MPX TIDAK boleh
+  const canReportMerge   = isSPM || isIOHAny;   // Report Merge: SPM Sumatera + Internal IOH, Admin Partner (MDI) TIDAK boleh
 
   // ── Kontrol ketersediaan menu (maintenance per-role, diatur SPM) ────────────
   const [menuStatus, setMenuStatus] = useState(new Map()); // menu_key -> { status, note }
@@ -692,7 +709,7 @@ export default function DashboardPage() {
       // lain padahal login gagal"): sebelumnya kalau baris `profiles` tidak
       // ada / role-nya null (misal krn RPC mf_dse_admin_mc_login_apply gagal
       // diam2 - lihat bug yg baru diperbaiki), SEMUA pengecekan "role ===
-      // finance_mpx" dst di bawah ini jadi FALSE, jadi query partner_branches
+      // admin_partner_mdi" dst di bawah ini jadi FALSE, jadi query partner_branches
       // MELEWATI filter partner_name/region yang seharusnya membatasi akses -
       // akibatnya user yg profilnya rusak/kosong ini tetap bisa lihat SEMUA
       // partner (termasuk yang bukan tanggung jawabnya), bukan cuma yg
@@ -713,7 +730,7 @@ export default function DashboardPage() {
       let mapData = [];
       if (!isCseOrSdp) {
         let query = supabase.from("partner_branches").select("*").order("partner_name", { ascending: true });
-        if (prof?.role === "finance_mpx" || prof?.role === "admin_mc") query = query.eq("partner_name", prof?.partner_name);
+        if (prof?.role === "admin_partner_mdi" || prof?.role === "admin_mc") query = query.eq("partner_name", prof?.partner_name);
         const lockedRegion = IOH_ROLE_REGION_MAP[prof?.role];
         if (lockedRegion) query = query.eq("region", lockedRegion);
         const { data } = await query;
@@ -723,7 +740,7 @@ export default function DashboardPage() {
       setProfile(prof);
       setMasterData(mapData);
       setRegions([...new Set(mapData.map(i => i.region))].sort());
-      if (prof?.role === "finance_mpx" || prof?.role === "admin_mc") setActivePartner(prof?.partner_name || "");
+      if (prof?.role === "admin_partner_mdi" || prof?.role === "admin_mc") setActivePartner(prof?.partner_name || "");
       const lockedRegion = IOH_ROLE_REGION_MAP[prof?.role];
       if (lockedRegion) setActiveRegion(lockedRegion);
 
@@ -779,7 +796,7 @@ export default function DashboardPage() {
   const handleToggleSidebar = () => { const next = !sidebarCollapsed; setSidebarCollapsed(next); localStorage.setItem("sh-sidebar-collapsed", String(next)); };
 
   // UPDATE (permintaan user - "coba perbaiki agar mereka bisa edit nama
-  // mereka sendiri"): Admin MC (role finance_mpx, login via OTP email -
+  // mereka sendiri"): Admin MC (role admin_partner_mdi, login via OTP email -
   // lihat app/sandra/login-admin-mc) dulu nama tampilannya (profiles.
   // full_name) cuma bisa keisi SEKALI dari RPC mf_dse_admin_mc_login_apply
   // (atau diubah SPM lewat tab Mapping & User Management), tidak pernah
@@ -864,7 +881,7 @@ export default function DashboardPage() {
     const isCseOrSdp = profile.role === "cse_rse" || profile.role === "bsm" || profile.role === "pic_region";
     if (isCseOrSdp) return;
     let query = supabase.from("partner_branches").select("*").order("partner_name", { ascending: true });
-    if (profile.role === "finance_mpx" || profile.role === "admin_mc") query = query.eq("partner_name", profile.partner_name);
+    if (profile.role === "admin_partner_mdi" || profile.role === "admin_mc") query = query.eq("partner_name", profile.partner_name);
     const lockedRegion = IOH_ROLE_REGION_MAP[profile.role];
     if (lockedRegion) query = query.eq("region", lockedRegion);
     const { data } = await query;
@@ -884,6 +901,10 @@ export default function DashboardPage() {
   // menutupnya manual lewat chevron tanpa langsung dipaksa terbuka lagi.
   useEffect(() => {
     if (PNL_MPX_VIEWS.has(view)) setPnlGroupOpen(true);
+  }, [view]);
+
+  useEffect(() => {
+    if (PNL_MPX_V2_VIEWS.has(view)) setPnlV2GroupOpen(true);
   }, [view]);
 
   // Sama seperti grup "MPX P&L Report" di atas — begitu masuk ke
@@ -997,7 +1018,7 @@ export default function DashboardPage() {
                       ke 4 modul di dalamnya tanpa pindah halaman dulu. */}
                   {/* FIX AKSES (permintaan user - "untuk admin mc mengapa dia bisa
                       mengakses mpx p&l report dan payout tracker"): Admin MC
-                      (finance_mpx) HANYA boleh akses "Prod. & AR" - tidak boleh
+                      (admin_partner_mdi) HANYA boleh akses "Prod. & AR" - tidak boleh
                       lihat menu ini sama sekali, makanya "&& !isMPX" ditambahkan
                       eksplisit (canMonitor/!isSDPMember sebelumnya ikut
                       meng-include isMPX secara tidak sengaja). */}
@@ -1019,6 +1040,38 @@ export default function DashboardPage() {
                           {canMonitor && !isMPX && <SNavItem icon={<Layers size={13} />}        label="PNL Control Center"   active={view === "control-center"} maint={menuMaint("control-center")} onClick={() => navigate("control-center")} />}
                           {canMonitor && !isMPX && <SNavItem icon={<Table2 size={13} />}        label="Pivot P&L Summary"    active={view === "pivot-summary"}  maint={menuMaint("pivot-summary")} onClick={() => navigate("pivot-summary")} />}
                           {isSPM        && <SNavItem icon={<FileSpreadsheet size={13} />} label="Import Data"      active={view === "import-wizard"}  onClick={() => navigate("import-wizard")} />}
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {/* MPX P&L Report V2 (permintaan user - "MPX P&L Report V2 yang
+                      akan disederhanakan ... berdampingan sebagai menu
+                      terpisah") - BEDA audiens dari V1 di atas: V1
+                      sengaja menyembunyikan isMPX/isAdminArea (mereka
+                      pakai "Prod. & AR"), tapi V2 justru dibuat UNTUK
+                      partner itu sendiri (mengisi "Form Pendapatan Area
+                      Level") + SPM (mengisi "Data Provided Area Level") -
+                      jadi gate-nya isSPM || isMPX || isAdminArea, bukan
+                      exclude seperti V1. */}
+                  {(isSPM || isMPX || isAdminArea) && (
+                    <>
+                      <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                        <button onClick={() => navigate("pnl-mpx-v2")} className={`snav${(view === "pnl-mpx-v2" || PNL_MPX_V2_VIEWS.has(view)) ? " active" : ""}`} style={{ flex: 1 }}>
+                          <span style={{ flexShrink: 0, display: "flex", opacity: (view === "pnl-mpx-v2" || PNL_MPX_V2_VIEWS.has(view)) ? 1 : 0.7 }}><PieChart size={14} /></span>
+                          <span style={{ flex: 1, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>MPX P&amp;L Report V2</span>
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); setPnlV2GroupOpen(v => !v); }} title={pnlV2GroupOpen ? "Sembunyikan sub-menu" : "Tampilkan sub-menu"}
+                          style={{ flexShrink: 0, width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", cursor: "pointer", color: t.lo, borderRadius: 6, fontFamily: "inherit" }}>
+                          {pnlV2GroupOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                        </button>
+                      </div>
+                      {pnlV2GroupOpen && (
+                        <div style={{ marginLeft: 10, paddingLeft: 8, borderLeft: `1px solid ${t.line}`, display: "flex", flexDirection: "column", gap: 2 }}>
+                          {/* Sama persis dgn sub-menu V1 di atas. Control Center &
+                              Pivot V2 hanya utk SPM (menampilkan data SEMUA partner). */}
+                          <SNavItem icon={<PieChart size={13} />} label="Laporan P&L"        active={PNL_VIEWS_V2.has(view)}        onClick={() => navigate("summary-v2")} />
+                          {isSPM && <SNavItem icon={<Layers size={13} />} label="PNL Control Center" active={view === "control-center-v2"} onClick={() => navigate("control-center-v2")} />}
+                          {isSPM && <SNavItem icon={<Table2 size={13} />} label="Pivot P&L Summary"  active={view === "pivot-summary-v2"}  onClick={() => navigate("pivot-summary-v2")} />}
                         </div>
                       )}
                     </>
@@ -1053,7 +1106,7 @@ export default function DashboardPage() {
                       )}
                     </>
                   )}
-                  {isSPM        && <SNavItem icon={<UserRoundCog size={14} />}   label="User Management"   active={view === "user-management"} onClick={() => navigate("user-management")} />}
+                  {isTrueSPM    && <SNavItem icon={<UserRoundCog size={14} />}   label="User Management"   active={view === "user-management"} onClick={() => navigate("user-management")} />}
 
                   {/* Archive — menu lama, dipertimbangkan dihapus ke depannya;
                       code TIDAK dihapus, cuma dikumpulkan & collapsed di sini. */}
@@ -1263,6 +1316,17 @@ export default function DashboardPage() {
                       accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.12)" : "rgba(50,188,173,0.08)", bd: d ? "rgba(50,188,173,0.30)" : "rgba(50,188,173,0.20)", shadow: "rgba(50,188,173,0.20)" }} />
                   )}
 
+                  {/* MPX P&L Report V2 — kartu Overview, kartu BARU terpisah
+                      dari V1 di atas (permintaan user - lihat PNL_FormPendapatanV2.
+                      jsx / PNL_FormPengeluaranV2.jsx). Audiens: SPM + Admin MC/
+                      Area (beda dari V1 yg justru menyembunyikan dua role itu). */}
+                  {(isSPM || isMPX || isAdminArea) && (
+                    <DashCard icon={<PieChart size={20} />} title="MPX P&L Report V2"
+                      desc="Versi disederhanakan — Form Pendapatan & Pengeluaran yang lebih ringkas."
+                      tag="Baru" active={true} onClick={() => navigate("pnl-mpx-v2")} t={t} d={d}
+                      accent={{ color: "#2563EB", bg: d ? "rgba(37,99,235,0.14)" : "rgba(37,99,235,0.08)", bd: d ? "rgba(37,99,235,0.32)" : "rgba(37,99,235,0.20)", shadow: "rgba(37,99,235,0.20)" }} />
+                  )}
+
                   {!isSDPMember && !isMPX && !isAdminArea && (
                     <DashCard icon={<Wallet size={20} />} title="Payout Tracker"
                       desc="Monitoring pembayaran Partner & Agency Prepaid — SLA, funnel, heatmap, dan raw data."
@@ -1301,7 +1365,7 @@ export default function DashboardPage() {
 
                   {/* User Management diletakkan paling akhir (permintaan
                       user - "user management paling akhir") */}
-                  {isSPM && (
+                  {isTrueSPM && (
                     <DashCard icon={<UserRoundCog size={20} />} title="User Management"
                       desc="Kelola user & role untuk setiap modul, dalam satu tempat."
                       tag="Sistem" active={true} onClick={() => navigate("user-management")} t={t} d={d}
@@ -1446,6 +1510,27 @@ export default function DashboardPage() {
               </motion.div>
             )}
 
+            {/* ── PNL Control Center V2 (data pnl_reports_v2) ── */}
+            {view === "control-center-v2" && isSPM && (
+              <motion.div key="cc2" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("pnl-mpx-v2")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke MPX P&amp;L Report V2</button>
+                <PNLControlCenter
+                  variant="v2"
+                  theme={theme} masterData={masterData} activeYear={activeYear} activeMonth={activeMonth}
+                  userRole={profile?.role}
+                  onOpenBranch={p => { setActivePartner(p.partner_name); setActiveBranch(p.branch_name); setActiveType(p.mpc_mp3); setActiveMonth(p.month); setView("summary-v2"); }}
+                />
+              </motion.div>
+            )}
+
+            {/* ── Pivot P&L Summary V2 (data pnl_reports_v2) ── */}
+            {view === "pivot-summary-v2" && isSPM && (
+              <motion.div key="ps2" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("pnl-mpx-v2")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke MPX P&amp;L Report V2</button>
+                <PNLPivotSummary variant="v2" theme={theme} activeYear={activeYear} userRole={profile?.role} partnerName={null} />
+              </motion.div>
+            )}
+
             {/* ── Payout Tracker ── */}
             {view === "payout-tracker" && !isSDPMember && !isMPX && !isAdminArea && !viewUnderMaint && (
               <motion.div key="pt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
@@ -1524,10 +1609,10 @@ export default function DashboardPage() {
                 UPDATE (permintaan user - "ada button Pilih Role, karena
                 beda beda untuk detailnya"): dropdown "Pilih Role"
                 ditambahkan karena tiap role di tabel profiles punya
-                detail/cara kelola yg beda-beda. Baru role finance_mpx
+                detail/cara kelola yg beda-beda. Baru role admin_partner_mdi
                 yg ada implementasinya (AdminMcMapping, migrasi dari DSE
                 Prod & AR) - role lain tampil "Segera hadir" dulu. */}
-            {view === "user-management" && isSPM && (
+            {view === "user-management" && isTrueSPM && (
               <motion.div key="user-mgmt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
 
@@ -1620,6 +1705,28 @@ export default function DashboardPage() {
                         isSPM && { id: "import-wizard", icon: FileSpreadsheet, label: "Import Data Otomatis",
                           desc: "Upload Excel/CSV, mapping kolom drag-and-drop, lalu import massal ke database laporan.", tag: "Import",
                           accent: { color: d ? "#60C8F0" : "#0284C7", bg: d ? "rgba(96,200,240,0.11)" : "rgba(2,132,199,0.07)", bd: d ? "rgba(96,200,240,0.28)" : "rgba(2,132,199,0.18)" } },
+                      ].filter(Boolean)} />
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* ── Landing "MPX P&L Report V2" — 3 modul yang sama dgn V1 ── */}
+            {view === "pnl-mpx-v2" && (isSPM || isMPX || isAdminArea) && (
+              <motion.div key="pnl-mpx-v2" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
+                  <div style={{ padding: "24px 28px" }}>
+                    <PNL_MPX_Menu theme={theme} title="MPX P&L Report V2" onExit={() => navigate("overview")} onSelect={(id) => navigate(id)}
+                      items={[
+                        { id: "summary-v2", icon: PieChart, label: "Laporan P&L",
+                          desc: "Summary, Form Pendapatan, dan Form Pengeluaran versi ringkas (V2).", tag: "Profit & Loss",
+                          accent: { color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.12)" : "rgba(50,188,173,0.08)", bd: d ? "rgba(50,188,173,0.30)" : "rgba(50,188,173,0.20)" } },
+                        isSPM && { id: "control-center-v2", icon: Layers, label: "PNL Control Center",
+                          desc: "Monitoring progres pengisian laporan V2 seluruh branch di wilayah Sumatera.", tag: "Monitoring",
+                          accent: { color: "#ED1C24", bg: d ? "rgba(237,28,36,0.10)" : "rgba(237,28,36,0.06)", bd: d ? "rgba(237,28,36,0.26)" : "rgba(237,28,36,0.16)" } },
+                        isSPM && { id: "pivot-summary-v2", icon: Table2, label: "Pivot P&L Summary",
+                          desc: "Ringkasan REV, EXP, dan P/L V2 seluruh MPX per bulan dalam format pivot table.", tag: "Ringkasan",
+                          accent: { color: d ? "#C49A00" : "#9A7400", bg: d ? "rgba(255,203,5,0.11)" : "rgba(255,203,5,0.09)", bd: d ? "rgba(255,203,5,0.28)" : "rgba(255,203,5,0.20)" } },
                       ].filter(Boolean)} />
                   </div>
                 </div>
@@ -1736,6 +1843,78 @@ export default function DashboardPage() {
                                 activeContext={{ branch: activeBranch, month: activeMonth, year: activeYear, mpxName: activePartner, mpxType }}
                                 disabledMonths={activeContextDisabledMonths}
                                 onMonthChange={setActiveMonth}
+                              />
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </motion.div>
+            )}
+
+            {/* ── MPX P&L Report V2 (Pendapatan/Pengeluaran) — menu BARU,
+                terpisah total dari V1 di atas (tabel pnl_reports_v2).
+                Audiens BEDA dari V1: di sini isMPX/isAdminArea JUSTRU
+                yang mengisi "Form Pendapatan Area Level" (dan
+                "Pengeluaran"), SPM mengisi "Data Provided Area Level". ── */}
+            {PNL_VIEWS_V2.has(view) && !viewUnderMaint && (
+              <motion.div key="fv2" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} style={{ maxWidth: 920, margin: "0 auto" }}>
+                <button className="back-btn" onClick={() => navigate("pnl-mpx-v2")} style={{ marginBottom: 20 }}><ChevronLeft size={15} /> Kembali ke MPX P&amp;L Report V2</button>
+                {!canPnl ? (
+                  <PnlPickerPrompt t={t} d={d} isSPM={isSPM} isMPX={isMPX || isAdminArea} isIOHAny={isIOHAny} iohLockedRegion={iohLockedRegion}
+                    regions={regions} filteredPartners={filteredPartners} availableTypes={availableTypes} availableBranches={availableBranches}
+                    activeRegion={activeRegion} setActiveRegion={setActiveRegion}
+                    activePartner={activePartner} setActivePartner={setActivePartner}
+                    activeType={activeType} setActiveType={setActiveType}
+                    activeBranch={activeBranch} setActiveBranch={setActiveBranch}
+                    onBack={() => navigate("overview")} />
+                ) : (
+                  <>
+                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 22 }}>
+                      <div style={{ display: "inline-flex", gap: 2, padding: 4, borderRadius: 10, border: `1px solid ${t.line}`, background: t.card }}>
+                        {[
+                          { id: "summary-v2",     label: "Summary",     icon: <LayoutGrid size={14} /> },
+                          { id: "pendapatan-v2",  label: "Pendapatan",  icon: <ArrowUpRight size={14} /> },
+                          { id: "pengeluaran-v2", label: "Pengeluaran", icon: <ArrowDownLeft size={14} /> },
+                        ].map(tab => (
+                          <button key={tab.id} onClick={() => navigateTab(tab.id)} className={`tab-pill ${view === tab.id ? "on" : "off"}`}>
+                            {tab.icon}<span className="tab-label">{tab.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
+                      <div style={{ padding: "28px 32px" }}>
+                        <AnimatePresence mode="wait">
+                          {view === "summary-v2" && (
+                            <motion.div key="sv2" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.13 }}>
+                              <FormSummaryV2 theme={theme} activeContext={{ branch: activeBranch, month: activeMonth, year: activeYear, mpxName: activePartner, mpxType }} />
+                            </motion.div>
+                          )}
+                          {view === "pendapatan-v2" && (
+                            <motion.div key="pv2" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.13 }}>
+                              <FormPendapatanV2
+                                theme={theme}
+                                profile={profile}
+                                setIsFormDirty={isReadOnly ? undefined : setFormDirty}
+                                readOnly={isReadOnly}
+                                canEditPendapatan={isMPX || isAdminArea}
+                                canEditDataProvided={isSPM}
+                                activeContext={{ branch: activeBranch, month: activeMonth, year: activeYear, mpxName: activePartner, mpxType }}
+                              />
+                            </motion.div>
+                          )}
+                          {view === "pengeluaran-v2" && (
+                            <motion.div key="ev2" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.13 }}>
+                              <FormPengeluaranV2
+                                theme={theme}
+                                profile={profile}
+                                setIsFormDirty={isReadOnly ? undefined : setFormDirty}
+                                readOnly={isReadOnly}
+                                canEdit={isMPX || isAdminArea || isSPM}
+                                activeContext={{ branch: activeBranch, month: activeMonth, year: activeYear, mpxName: activePartner, mpxType }}
                               />
                             </motion.div>
                           )}

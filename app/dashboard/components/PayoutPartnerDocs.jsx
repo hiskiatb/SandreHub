@@ -1,7 +1,7 @@
 "use client";
 // Dokumen payout per PO (nanti per Invoice ID), Partner & Agency Prepaid — 4 slot:
 //   1. Invoicing  2. BAST  3. Surat Pemberitahuan  4. Faktur Pajak
-//  • finance_mpx  : upload/hapus untuk PO partner sendiri
+//  • admin_partner_mdi  : upload/hapus untuk PO partner sendiri
 //  • agency       : upload/hapus untuk PO agency sendiri (RLS siap; belum ada UI di portal agency)
 //  • spm_sumatera : lihat semua PO, upload atas nama partner/agency, satu-satunya yang bisa merge & download
 //  • IOH          : lihat & buka file saja
@@ -93,7 +93,7 @@ function toast(t, msg, type = "ok") {
 // ── data ───────────────────────────────────────────────────────────────────
 // Ringkasan dokumen semua PO (1 query untuk seluruh tab + kolom Raw Data)
 export function usePartnerDocStats(profile) {
-  const enabled = canViewAll(profile) || profile?.role === "finance_mpx" || profile?.role === "admin_mc" || profile?.role === "agency";
+  const enabled = canViewAll(profile) || profile?.role === "admin_partner_mdi" || profile?.role === "admin_mc" || profile?.role === "agency";
   const [state, setState] = useState({ byRef: {}, loaded: false, error: "" });
   // Approval hanya untuk admin SPM / admin internal Indosat — partner tidak pernah memuat data approval
   const apprAdmin = APPROVAL_ENABLED && canManageApprovals(profile);
@@ -345,7 +345,7 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
     setZipping(null);
   };
 
-  const roHint = docs?.profile?.role === "finance_mpx" || docs?.profile?.role === "admin_mc" || docs?.profile?.role === "agency"
+  const roHint = docs?.profile?.role === "admin_partner_mdi" || docs?.profile?.role === "admin_mc" || docs?.profile?.role === "agency"
     ? `This ${DOC_REF_LABEL} does not belong to your ${ownerLabel(segment).toLowerCase()}, so it is view-only.`
     : `View-only access: you can open and download files. Uploads and deletions are handled by the ${ownerLabel(segment).toLowerCase()} that owns this ${DOC_REF_LABEL}, or by SPM.`;
 
@@ -416,7 +416,7 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
                 canWrite={slotWriteFor(dt.key)} refId={refId} partnerName={partnerName} segment={segment} title={title} amountText={amountText}
                 approval={docs?.approvals?.[approvalKey(segment, partnerName, refId, dt.key)]} approvalsAvailable={docs?.approvalsAvailable !== false}
                 isSPM={!!docs?.canManageApprovals} onApprovalChanged={docsRefresh}
-                ownerSign={dt.key === "bast" && canWrite && ["finance_mpx", "admin_mc", "agency"].includes(docs?.profile?.role)}
+                ownerSign={dt.key === "bast" && canWrite && ["admin_partner_mdi", "admin_mc", "agency"].includes(docs?.profile?.role)}
                 spmSignedUpload={!!docs?.canMerge && isPaymentRef(refId) && APPROVAL_DOC_TYPES.includes(dt.key)}
                 onBusy={(d) => setUploading((x) => Math.max(0, x + d))} onChanged={changed} lockAll={!!merge}
                 focusTick={focus.key === dt.key ? focus.n : 0} t={t} />
@@ -943,7 +943,7 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
   const isSPM = !!docs?.canMerge;
   const role = docs?.profile?.role;
   const own = ownerLabel(segment);
-  const isOwnerRole = role === "finance_mpx" || role === "admin_mc" || role === "agency";
+  const isOwnerRole = role === "admin_partner_mdi" || role === "admin_mc" || role === "agency";
   const payMode = isSPM && refMode === "pay";
   const { rows: payRows, err: payErr } = usePaymentRows(segment, docs, { enabled: payMode || isOwnerRole, withMeta: payMode });
   const REF = payMode ? "Payment ID" : DOC_REF_LABEL;

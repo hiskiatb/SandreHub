@@ -28,7 +28,7 @@ export const ROLE_LABELS = {
   ioh_central_sumatera: "IOH Central Sumatera",
   ioh_south_sumatera:   "IOH South Sumatera",
   admin_mc:       "Admin MC (District Admin)",
-  finance_mpx:    "Finance MPX (akses P&L per-partner - 19 akun, belum didefinisikan penuh)",
+  admin_partner_mdi:    "Admin Partner (MDI) (akses P&L per-partner)",
   admin_area:     "Admin Area",
   marketing_sumatera_program: "Marketing Sumatera Program",
   martahub_super_user:        "Martahub Super User",
@@ -66,15 +66,15 @@ export const ROLE_TAB_ACCESS = {
   admin_mc:             { dse: "edit", dso: "edit", hoa: "none", "control-center": "none" },
   admin_area:           { dse: "view", dso: "edit", hoa: "edit", "control-center": "none" },
   // CATATAN (temuan user - "ada alamat email yang sebelumnya terdaftar
-  // sbg finance_mpx namun tidak terdaftar di mapping admin_mc maupun
+  // sbg admin_partner_mdi namun tidak terdaftar di mapping admin_mc maupun
   // admin_area"): per audit 2026-11-10, 19 akun TIDAK punya mapping MC
   // atau Area sama sekali - mereka didaftarkan lewat jalur BERBEDA
-  // (register.jsx "Finance MPX", akses P&L berbasis partner_name, BUKAN
-  // roster per-MC) - jadi "finance_mpx" TIDAK dikosongkan total, sengaja
+  // (register.jsx "Admin Partner (MDI)", akses P&L berbasis partner_name, BUKAN
+  // roster per-MC) - jadi "admin_partner_mdi" TIDAK dikosongkan total, sengaja
   // dipertahankan sbg role tersendiri utk 19 akun ini, menunggu fitur
-  // "Finance MPX" didefinisikan scope aksesnya. Sementara ini (dual-
+  // "Admin Partner (MDI)" didefinisikan scope aksesnya. Sementara ini (dual-
   // support di RLS/kode) akses efektifnya SAMA dgn admin_mc.
-  finance_mpx:          { dse: "edit", dso: "edit", hoa: "none", "control-center": "none" },
+  admin_partner_mdi:          { dse: "edit", dso: "edit", hoa: "none", "control-center": "none" },
 };
 
 // Role LAIN yg ADA di sistem (akun aktif di tabel profiles atau dikenal di

@@ -52,8 +52,8 @@ const ROLES = [
     icon: Shield, color: "#C6168D",
   },
   {
-    value: "finance_mpx",
-    label: "Finance MPX",
+    value: "admin_partner_mdi",
+    label: "Admin Partner (MDI)",
     desc: "Akses laporan P&L partner sendiri",
     icon: Building2, color: "#32BCAD",
   },
@@ -125,10 +125,10 @@ const ROLES = [
   },
 ];
 
-const NEEDS_PARTNER  = ["finance_mpx"];
+const NEEDS_PARTNER  = ["admin_partner_mdi"];
 const NEEDS_CLUSTER  = [];               // CSE tidak perlu cluster saat daftar
 const NEEDS_BSM      = ["bsm"];
-const CODE_PER_PARTNER = ["finance_mpx"];
+const CODE_PER_PARTNER = ["admin_partner_mdi"];
 const NO_CODE_ROLES  = ["cse_rse"];      // role yang tidak butuh kode otoritas
 
 const BSM_BRANDS = [
@@ -231,7 +231,7 @@ function CheckItem({ label, ok, t }) {
 const ROLE_GROUPS = [
   {
     label: "Tim Internal",
-    roles: ROLES.filter(r => ["spm_sumatera", "finance_mpx"].includes(r.value)),
+    roles: ROLES.filter(r => ["spm_sumatera", "admin_partner_mdi"].includes(r.value)),
   },
   {
     label: "IOH (Read-only)",
@@ -439,11 +439,18 @@ export default function RegisterPage() {
           }
           assignmentId = asmRow.id;
         } else {
+          // TRANSISI (DB access_codes.type belum dimigrasi - 21 kode lama
+          // masih "finance_mpx", trigger proteksi di profiles mencegah
+          // migrasi lewat SQL non-SPM-session): kalau role yg dipilih
+          // "admin_partner_mdi", terima juga kode lama bertype "finance_mpx"
+          // supaya kode otoritas existing tetap bisa dipakai selama masa
+          // transisi.
+          const codeTypes = role === "admin_partner_mdi" ? ["admin_partner_mdi", "finance_mpx"] : [role];
           let codeQuery = supabase
             .from("access_codes")
             .select("id, partner_name")
             .eq("code", codeUpper)
-            .eq("type", role)
+            .in("type", codeTypes)
             .eq("is_active", true);
           if (CODE_PER_PARTNER.includes(role)) {
             codeQuery = codeQuery.eq("partner_name", partner_name);
@@ -451,7 +458,7 @@ export default function RegisterPage() {
           const { data: codeRow } = await codeQuery.maybeSingle();
           if (!codeRow) {
             const msgs = {
-              finance_mpx: "Kode otoritas tidak valid untuk partner yang dipilih.",
+              admin_partner_mdi: "Kode otoritas tidak valid untuk partner yang dipilih.",
             };
             setErrMsg(msgs[role] || "Kode otoritas tidak valid.");
             return;
@@ -635,7 +642,7 @@ export default function RegisterPage() {
                   )}
                 </div>
 
-                {/* ── Conditional: Partner (finance_mpx) ── */}
+                {/* ── Conditional: Partner (admin_partner_mdi) ── */}
                 <AnimatePresence>
                   {needsPartner && (
                     <motion.div key="partner" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} style={{ gridColumn: "1 / -1", overflow: "hidden" }}>
@@ -769,7 +776,7 @@ export default function RegisterPage() {
                         <strong style={{ color: t.hi }}>Kode Otoritas</strong> bersifat unik per role.
                         <br />
                         <span style={{ fontSize: 11.5 }}>
-                          • SPM / Finance MPX / IOH → dari <strong style={{ color: t.hi }}>SPM Sumatera</strong><br />
+                          • SPM / Admin Partner (MDI) / IOH → dari <strong style={{ color: t.hi }}>SPM Sumatera</strong><br />
                           • CSE → dari <strong style={{ color: t.hi }}>SPM Sumatera</strong><br />
                           • SDP User → dari <strong style={{ color: t.hi }}>SPM</strong> atau <strong style={{ color: t.hi }}>CSE</strong> cluster Anda<br />
                           • BSM → dari <strong style={{ color: t.hi }}>SPM Sumatera</strong>, scope per branch
