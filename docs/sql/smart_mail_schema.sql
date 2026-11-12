@@ -59,6 +59,9 @@ CREATE TABLE IF NOT EXISTS sm_mdi_template (
 );
 ALTER TABLE sm_mdi_template ADD COLUMN IF NOT EXISTS pengaturan TEXT;
 
+-- [SandraHub] Token acak untuk link approve/reject di email (lihat lib/smartMail/server.js).
+ALTER TABLE sm_approvals ADD COLUMN IF NOT EXISTS approval_token TEXT;
+
 -- Template email blast MDI (subject + body) yang disimpan user
 CREATE TABLE IF NOT EXISTS sm_mdi_email_template (
     nama TEXT PRIMARY KEY,
