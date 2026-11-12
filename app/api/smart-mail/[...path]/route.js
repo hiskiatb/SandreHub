@@ -14,6 +14,12 @@
 import { NextResponse } from "next/server";
 import { requireReportMergeAccess } from "../../../../lib/reportMerge/auth";
 import app from "../../../../lib/smartMail/server";
+import { MODE_LOKAL } from "../../../../lib/smartMail/db";
+import { EMAIL_LOKAL } from "../../../../lib/smartMail/kirim";
+
+// MODE LOKAL (hanya `npm run dev`, tidak pernah di Vercel): kalau kunci Supabase SandraHub
+// belum ada di .env.local, cek login dilewati supaya halaman bisa dicoba di localhost.
+const AUTH_LOKAL = process.env.NODE_ENV !== "production" && !process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,6 +29,10 @@ const PUBLIC = [/^\/approve-document$/, /^\/reject-document$/, /^\/submit-reject
 
 async function handle(req, ctx) {
   const { path: parts = [] } = await ctx.params;
+  // Info untuk banner "mode lokal" di halaman SDP/MDI.
+  if (parts.join("/") === "mode") {
+    return NextResponse.json({ lokal: AUTH_LOKAL || MODE_LOKAL || EMAIL_LOKAL, auth_lokal: AUTH_LOKAL, db_lokal: MODE_LOKAL, email_lokal: EMAIL_LOKAL });
+  }
   const sub = "/" + parts.map(encodeURIComponent).join("/");
   const viaApi = app.match(req.method, "/api" + sub) ? "/api" + sub : null;
   const target = viaApi || sub;
@@ -31,6 +41,7 @@ async function handle(req, ctx) {
   // hanya boleh untuk pengguna yang login (link dari email selalu membawa token).
   const simulasi = target === "/approve-document" && req.method === "GET" && !new URL(req.url).searchParams.get("token");
   if (simulasi || !PUBLIC.some((re) => re.test(target))) {
+    if (AUTH_LOKAL) return app.handle(req, target, { authed: true });
     const auth = await requireReportMergeAccess(req);
     if (!auth.ok) return NextResponse.json({ success: false, error: auth.message }, { status: auth.status });
     return app.handle(req, target, { authed: true });

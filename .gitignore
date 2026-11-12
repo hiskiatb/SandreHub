@@ -61,3 +61,4 @@ next-env.d.ts
 .env*.local
 .claude/settings.local.json
 .tmp_smart_mail_downloads/
+.tmp_smart_mail_db/

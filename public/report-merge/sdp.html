@@ -47,6 +47,19 @@
       if (window.parent !== window) window.parent.postMessage({ rmOpen: 'home' }, location.origin);
       else location.href = '/report-merge/home.html';
     }, true);
+    // 4) Banner "mode lokal" saat dibuka di localhost tanpa kunci server (lihat app/api/smart-mail/[...path]).
+    window.addEventListener('DOMContentLoaded', function () {
+      originalFetch('/api/smart-mail/mode').then(function (r) { return r.json(); }).then(function (m) {
+        if (!m || !m.lokal) return;
+        var info = [];
+        if (m.db_lokal) info.push('data disimpan di database lokal');
+        if (m.email_lokal) info.push('email TIDAK benar-benar dikirim (hanya dicatat)');
+        var b = document.createElement('div');
+        b.textContent = '🧪 Mode lokal (localhost): ' + info.join(', ') + '. Di Vercel semuanya berjalan normal.';
+        b.style.cssText = 'position:sticky;top:0;z-index:99999;background:#FFCB05;color:#4D4D4F;font:600 12.5px Segoe UI,Arial,sans-serif;padding:7px 14px;text-align:center;';
+        document.body.insertBefore(b, document.body.firstChild);
+      }).catch(function () {});
+    });
   })();
 </script>
 
