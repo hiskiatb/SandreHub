@@ -30,6 +30,10 @@ const PUBLIC = [/^\/approve-document$/, /^\/reject-document$/, /^\/submit-reject
 async function handle(req, ctx) {
   const { path: parts = [] } = await ctx.params;
   // Info untuk banner "mode lokal" di halaman SDP/MDI.
+  // MODE LOKAL: daftar email yang "terkirim" (tidak benar-benar dikirim) + link approve/reject-nya.
+  if (parts.join("/") === "email-lokal" && EMAIL_LOKAL) {
+    return NextResponse.json({ success: true, data: globalThis.__smartMailEmailLokal || [] });
+  }
   if (parts.join("/") === "mode") {
     return NextResponse.json({ lokal: AUTH_LOKAL || MODE_LOKAL || EMAIL_LOKAL, auth_lokal: AUTH_LOKAL, db_lokal: MODE_LOKAL, email_lokal: EMAIL_LOKAL });
   }
