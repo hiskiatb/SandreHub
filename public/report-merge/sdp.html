@@ -1586,6 +1586,7 @@
             btn.style.opacity = "0.7";
 
             // 2. Lakukan looping data rekan dengan BATCH (Kelompok)
+            const mitraGagal = []; // [SandraHub] daftar mitra yang PDF-nya gagal dibuat
             const batchSize = 5; // Kirim 5 data sekaligus per request ke Vercel (bisa diubah 3-10)
             for (let i = 0; i < dataRekan.length; i += batchSize) {
                 const kelompokData = dataRekan.slice(i, i + batchSize);
@@ -1602,11 +1603,26 @@
                 };
 
                 try {
-                    const response = await fetch('/api/generate-surat', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
+                    // [SandraHub] Batas waktu 100 detik per kelompok + 1x coba ulang otomatis, supaya
+                    // satu kelompok yang macet tidak membuat tombol berputar selamanya.
+                    const kirimKelompok = async () => {
+                        const ctrl = new AbortController();
+                        const timer = setTimeout(() => ctrl.abort(), 100000);
+                        try {
+                            return await fetch('/api/generate-surat', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload),
+                                signal: ctrl.signal
+                            });
+                        } finally { clearTimeout(timer); }
+                    };
+                    let response;
+                    try { response = await kirimKelompok(); } catch (e) { response = null; }
+                    if (!response || !response.ok) {
+                        btn.innerText = `Mengulang kelompok ${progressData} dari ${dataRekan.length}...`;
+                        response = await kirimKelompok();
+                    }
                     
                     if (response.ok) {
                         const result = await response.json();
@@ -1619,10 +1635,12 @@
                     } else {
                         console.error("Gagal pada batch:", i, "Status:", response.status);
                         adaError = true;
+                        mitraGagal.push(...kelompokData.map(d => d.partner_name || d.id)); // [SandraHub]
                     }
                 } catch (error) {
                     console.error("Koneksi terputus pada batch:", i, error);
                     adaError = true;
+                    mitraGagal.push(...kelompokData.map(d => d.partner_name || d.id)); // [SandraHub]
                 }
             }
 
@@ -1643,6 +1661,7 @@
 
                 let successMsg = "✅ Selesai! Berhasil membuat " + hasilGenerateLengkap.length + " Surat.";
                 if (adaError) successMsg += " (Beberapa data mungkin gagal diproses)";
+                if (mitraGagal.length) successMsg += "<br><br><span style='color:#721c24;'>❌ <b>" + mitraGagal.length + " surat gagal dibuat</b> (server tidak merespons / error). Pilih ulang mitra ini lalu klik Buat Ulang Surat:</span><ul style='text-align:left;font-size:12px;max-height:150px;overflow:auto;'>" + mitraGagal.map(n => "<li>" + String(n).replace(/</g, "&lt;") + "</li>").join("") + "</ul>"; // [SandraHub]
                 showCustomAlert(successMsg);
 
                 document.getElementById("previewSection").style.display = "flex";
