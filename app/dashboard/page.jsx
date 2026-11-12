@@ -47,9 +47,9 @@ import MenuAccessManager from "./components/MenuAccessManager";
 import PTS_Module        from "./components/PTS_Module";
 import ReportMerge_Module from "./components/ReportMerge_Module";
 import PNL_MPX_Menu       from "./components/PNL_MPX_Menu";
-import SDP_DseDatabase    from "./components/SDP_DseDatabase";
 import AdminMcMapping     from "./components/AdminMcMapping";
 import AdminAreaMapping   from "./components/AdminAreaMapping";
+import AdminLevelMapping  from "./components/AdminLevelMapping";
 import CombinedEmailExport from "./components/CombinedEmailExport";
 import RoleAccessMatrix from "./components/RoleAccessMatrix";
 import RoleDebugLookup from "./components/RoleDebugLookup";
@@ -260,8 +260,10 @@ const HIDE_DATE_PICKER_VIEWS    = new Set(["overview","control-center","pivot-su
 const USER_MGMT_ROLES = [
   { k: "admin_mc",                    label: "District Admin",                ready: true },
   { k: "admin_area",                  label: "Admin Area",                    ready: true },
+  { k: "admin_partner",               label: "Partner Level",                 ready: true },
+  { k: "admin_circle",                label: "Circle",                        ready: true },
+  { k: "admin_region",                label: "Region Level",                  ready: true },
   { k: "spm_sumatera",                label: "SPM Sumatera",                  ready: false },
-  { k: "circle",                      label: "Circle",                        ready: false },
   { k: "marketing_sumatera_program",  label: "Marketing Sumatera Program",    ready: false },
   { k: "ioh_north_sumatera",          label: "IOH North Sumatera",            ready: false },
   { k: "ioh_central_sumatera",        label: "IOH Central Sumatera",          ready: false },
@@ -616,6 +618,12 @@ export default function DashboardPage() {
   // dia akses (Prod. & AR, khususnya tab HoA AR). isAdminArea ditambahkan
   // eksplisit supaya kedua arah itu dibenerin.
   const isAdminArea = hasRole(profile, "admin_area");
+  // Partner Level/Circle/Region Level (permintaan user - "Tambahkan
+  // Partner Level, Circle, Region Level dari data dse itu juga") - READ-
+  // ONLY, cuma lihat Prod. & AR scoped ke pt_name/circle/region masing2
+  // (RLS di DB), tidak dapat gate edit (canEditPendapatan/canEdit) spt
+  // isMPX/isAdminArea, dan tidak dapat akses Payout Tracker/PNL MPX.
+  const isAdminLevel = hasAnyRole(profile, ["admin_partner", "admin_circle", "admin_region"]);
   const isIOHAny    = IOH_ROLES.has(profile?.role);
   const isSFM       = SFM_ROLES.has(profile?.role);
   const canMfts     = isSPM || isIOHAny || isSFM;
@@ -943,7 +951,7 @@ export default function DashboardPage() {
 
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 14px 24px", display: "flex", flexDirection: "column", gap: 26 }}>
         {/* Filter laporan (hanya tampil untuk role yang akses PNL) */}
-        {!hideSidebarFilter && !isSDPMember && !isAdminArea && (
+        {!hideSidebarFilter && !isSDPMember && !isAdminArea && !isAdminLevel && (
           <div>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 2px", marginBottom: 14 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
@@ -1084,7 +1092,7 @@ export default function DashboardPage() {
                       "Mapping Admin MC" yg terpisah DIHAPUS - fitur yg sama
                       skrg jadi tab "User Management" DI DALAM DSE Prod. &
                       AR itu sendiri (lihat DSE_ProdAR.jsx). */}
-                  {(isSPM || isMPX || isAdminArea) && (
+                  {(isSPM || isMPX || isAdminArea || isAdminLevel) && (
                     <>
                       <button onClick={() => setProdArOpen(v => !v)}
                         style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", background: (view === "dse-prod-ar") ? t.blueBg : "transparent", border: "none", borderRadius: 8, cursor: "pointer", padding: "9px 11px", color: (view === "dse-prod-ar") ? t.blue : t.mid, fontFamily: "inherit", fontSize: 13.5, fontWeight: (view === "dse-prod-ar") ? 600 : 500 }}>
@@ -1125,7 +1133,6 @@ export default function DashboardPage() {
                           {(isSPM || isPICRegion || isSFM || isCSE) && <SNavItem icon={<Store size={14} />} label="Promotor Tracking" active={view === "promotor-tracking"} onClick={() => navigate("promotor-tracking")} />}
                           {isSPM        && <SNavItem icon={<Wrench size={14} />}      label="Kelola Menu"          active={view === "menu-access"}    onClick={() => navigate("menu-access")} />}
                           {isSPM        && <SNavItem icon={<MapPin size={14} />}           label="MC/Cluster Mapping" active={view === "mc-cluster"}       onClick={() => navigate("mc-cluster")} />}
-                          {isSPM        && <SNavItem icon={<Database size={14} />}         label="Database DSE"      active={view === "dse-database"}     onClick={() => navigate("dse-database")} />}
                           {isSPM        && <SNavItem icon={<Key size={14} />}              label="Kode Otoritas"      active={view === "kode-otoritas"}    onClick={() => navigate("kode-otoritas")} />}
                           {isSPM        && <SNavItem icon={<Shield size={14} />}            label="Kode Otoritas MPX"  active={view === "admin-panel"}      onClick={() => navigate("admin-panel")} />}
                           {canReportMerge && <SNavItem icon={<Mail size={14} />}         label="Report Merge"       active={view === "report-merge"}     onClick={() => navigate("report-merge")} />}
@@ -1356,10 +1363,10 @@ export default function DashboardPage() {
                       DSE Prod & AR, DSO/DSP AR, HoA AR), jadi title/desc
                       kartu di dashboard ini ga boleh nyebut "DSE" doang
                       lagi supaya ga menyesatkan. */}
-                  {(isSPM || isMPX || isAdminArea) && (
+                  {(isSPM || isMPX || isAdminArea || isAdminLevel) && (
                     <DashCard icon={<Wallet size={20} />} title="Prod. & AR"
                       desc="Upload penjualan harian & kelola AR/piutang outstanding — level DSE, DSO/DSP, maupun HoA."
-                      tag={isMPX ? "Admin MC" : isAdminArea ? "Admin Area" : "SPM"} active={true} onClick={() => navigate("dse-prod-ar")} t={t} d={d}
+                      tag={isMPX ? "Admin MC" : isAdminArea ? "Admin Area" : isAdminLevel ? "Level" : "SPM"} active={true} onClick={() => navigate("dse-prod-ar")} t={t} d={d}
                       accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.11)" : "rgba(26,158,144,0.07)", bd: d ? "rgba(50,188,173,0.28)" : "rgba(26,158,144,0.20)", shadow: "rgba(26,158,144,0.16)" }} />
                   )}
 
@@ -1446,13 +1453,6 @@ export default function DashboardPage() {
                             desc="Atur ketersediaan tiap sub-menu per role. Tandai menu 'dalam pemeliharaan' — role tetap melihatnya dengan pemberitahuan."
                             tag="Pengaturan" active={true} onClick={() => navigate("menu-access")} t={t} d={d}
                             accent={{ color: d ? "#FFB020" : "#B7791F", bg: d ? "rgba(255,176,32,0.12)" : "rgba(183,121,31,0.08)", bd: d ? "rgba(255,176,32,0.30)" : "rgba(183,121,31,0.22)", shadow: "rgba(183,121,31,0.16)" }} />
-                        )}
-
-                        {isSPM && (
-                          <DashCard icon={<Database size={20} />} title="Database DSE"
-                            desc="Upload file List DS/DSE per HOA (bisa banyak sekaligus), pilih Region, lalu export hasilnya ke Excel."
-                            tag="SPM" active={true} onClick={() => navigate("dse-database")} t={t} d={d}
-                            accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.11)" : "rgba(26,158,144,0.07)", bd: d ? "rgba(50,188,173,0.28)" : "rgba(26,158,144,0.20)", shadow: "rgba(26,158,144,0.16)" }} />
                         )}
 
                         {isSPM && (
@@ -1587,16 +1587,8 @@ export default function DashboardPage() {
               </motion.div>
             )}
 
-            {/* ── Database DSE ── */}
-            {view === "dse-database" && isSPM && (
-              <motion.div key="dse-db" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
-                <SDP_DseDatabase theme={theme} profile={profile} />
-              </motion.div>
-            )}
-
             {/* ── DSE Prod. & AR ── */}
-            {view === "dse-prod-ar" && (isSPM || isMPX || isAdminArea) && (
+            {view === "dse-prod-ar" && (isSPM || isMPX || isAdminArea || isAdminLevel) && (
               <motion.div key="dse-prod-ar" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <DSE_ProdAR theme={theme} profile={profile} onBack={() => navigate("overview")} category={dseCategory} setCategory={setDseCategory} />
               </motion.div>
@@ -1650,6 +1642,15 @@ export default function DashboardPage() {
                   <AdminMcMapping theme={theme} roleValue={umRole} roleOptions={USER_MGMT_ROLES} onRoleChange={setUmRole} />
                 ) : umRole === "admin_area" ? (
                   <AdminAreaMapping theme={theme} roleValue={umRole} roleOptions={USER_MGMT_ROLES} onRoleChange={setUmRole} />
+                ) : umRole === "admin_partner" ? (
+                  <AdminLevelMapping theme={theme} roleValue={umRole} roleOptions={USER_MGMT_ROLES} onRoleChange={setUmRole}
+                    col="pt_name" roleKey="admin_partner" label="Partner Level" maxSlots={6} />
+                ) : umRole === "admin_circle" ? (
+                  <AdminLevelMapping theme={theme} roleValue={umRole} roleOptions={USER_MGMT_ROLES} onRoleChange={setUmRole}
+                    col="circle" roleKey="admin_circle" label="Circle" maxSlots={10} />
+                ) : umRole === "admin_region" ? (
+                  <AdminLevelMapping theme={theme} roleValue={umRole} roleOptions={USER_MGMT_ROLES} onRoleChange={setUmRole}
+                    col="region" roleKey="admin_region" label="Region Level" maxSlots={6} />
                 ) : (
                   <>
                     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>

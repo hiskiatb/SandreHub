@@ -234,7 +234,16 @@ const FORM_DEFS={
     pk:["dse_code"],
     table:"mf_dse_database",
     conflictKey:"dse_code",
-    notNullDefaults:{},
+    // BUGFIX (laporan user - upload gagal "null value in column dse_status
+    // ... violates not-null constraint" utk DSE Code yg BENAR-BENAR BARU,
+    // belum pernah ada di mf_dse_database): kolom dse_status NOT NULL tanpa
+    // default di DB, tapi form ini ga punya field dse_status sama sekali
+    // (status diisi terpisah lewat tab Penjualan DSE / Control Center) -
+    // jadi baris baru hasil upload kosong dse_status-nya & kena tolak DB.
+    // Default "Active" dipilih krn itu status mayoritas (>95%) DSE existing
+    // di database - admin tetap bisa ubah manual lewat menu lain kalau DSE
+    // baru itu ternyata belum aktif/masih interview.
+    notNullDefaults:{dse_status:"Active"},
     // Field dipersempit sesuai permintaan user, 9 kolom persis — mapping manual
     // via drag & drop dari header sheet terpilih. "DSE Code IM3" dipakai sbg
     // kunci UPSERT (dse_code); "DSE Code 3ID" & "MDI" disimpan di kolom baru
@@ -528,6 +537,27 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
   // — sama persis dgn pola Database DSE, dipakai juga utk Mapping & User
   // Management (admin_mc_mapping).
   const simpleWizard=formType==="dse_database"||formType==="admin_mc_mapping";
+  // UPDATE (permintaan user - "lanjut development untuk bisa melakukan
+  // pemilihan periode ini"): Database DSE sekarang punya histori per-bulan
+  // (tabel mf_dse_database_periods, terpisah dari mf_dse_database yg tetap
+  // live/current spt sebelumnya - carry-forward behavior utk bulan yg ga
+  // diupload TETAP jalan persis sama). Setiap kali upload utk form ini,
+  // selain upsert ke live table, baris hasil merge-nya JUGA dibekukan ke
+  // snapshot periode yg dipilih di dropdown (default bulan berjalan) -
+  // supaya "mapping bulan X" bisa dilihat lagi nanti walau sudah ketimpa
+  // upload bulan berikutnya di tabel live.
+  const isDseDb=formType==="dse_database";
+  const DSE_PERIOD_START_YEAR=2026;
+  const dsePeriodOptions=(()=>{
+    const now=new Date();const curY=now.getFullYear(),curM=now.getMonth();
+    const opts=[];
+    for(let y=DSE_PERIOD_START_YEAR;y<=curY;y++){
+      const maxM=y===curY?curM:11;
+      for(let m=0;m<=maxM;m++)opts.push({value:`${y}-${String(m+1).padStart(2,"0")}`,label:`${ID_MONTHS[m]} ${y}`});
+    }
+    return opts;
+  })();
+  const[dsePeriod,setDsePeriod]=useState(()=>dsePeriodOptions[dsePeriodOptions.length-1]?.value||"");
 
   /* ── mapping ── */
   const[mapping,setMapping]=useState({});
@@ -857,8 +887,29 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
     try{
       const filterField=formPK[0];
       const filterVals=[...new Set(v.map(r=>String(r[filterField]||"").trim()).filter(Boolean))];
-      let{data,error}=await sb.from(formTable).select("*").in(filterField,filterVals);
-      if(!error&&(!data||!data.length)&&filterVals.length&&!isSDP){
+      // BUGFIX (laporan user - upload Database DSE >1000 baris salah hitung
+      // "Baru" vs "Sama", krn PostgREST project ini membatasi max 1000 baris
+      // per response APAPUN .select()-nya, diam2 kepotong tanpa error):
+      // .in(filterField, filterVals) dulu SEKALI jalan - kalau baris yg
+      // match di DB > 1000, sisanya ilang dari hasil, jadi baris yg
+      // SEBENARNYA sudah ada di DB keliru dianggap "Baru". Sekarang
+      // filterVals dipecah per CHUNK (1000 ID per query, aman di bawah
+      // limit URL/IN-list juga) DAN tiap query hasilnya di-paginasi pakai
+      // .range() (pola sama spt fetchRows/handleDownload) sampai halaman
+      // balik < 1000 baris - jadi SEMUA existing row ikut termuat berapa
+      // pun jumlahnya.
+      const CHUNK=1000;
+      let data=[],error=null;
+      for(let i=0;i<filterVals.length&&!error;i+=CHUNK){
+        const batchVals=filterVals.slice(i,i+CHUNK);
+        for(let from=0;;from+=CHUNK){
+          const{data:page,error:e}=await sb.from(formTable).select("*").in(filterField,batchVals).range(from,from+CHUNK-1);
+          if(e){error=e;break;}
+          data=data.concat(page||[]);
+          if(!page||page.length<CHUNK)break;
+        }
+      }
+      if(!error&&!data.length&&filterVals.length&&!isSDP){
         const orF=filterVals.map(p=>`${filterField}.ilike.${p}`).join(",");
         ({data,error}=await sb.from(formTable).select("*").or(orF));
       }
@@ -1075,6 +1126,27 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
           if(error){fail+=Math.min(50,rows.length-i);errs.push(error.message);}
           else ok+=Math.min(50,rows.length-i);
           setImportProgress({done:Math.min(i+50,rows.length),total:rows.length});
+        }
+        // UPDATE (permintaan user - "lanjut development untuk bisa
+        // melakukan pemilihan periode ini"): khusus Database DSE, selain
+        // upsert ke live table (mf_dse_database, di atas - TIDAK diubah),
+        // bekukan JUGA hasil merge-nya ke mf_dse_database_periods utk
+        // periode yg dipilih (dsePeriod) - best-effort, kegagalan di sini
+        // TIDAK membatalkan/mengubah hasil upsert live di atas (sudah
+        // selesai duluan), cuma dicatat sbg warning di errs.
+        if(isDseDb&&dsePeriod){
+          const snapRows=rows.map(r=>({
+            dse_code:r.dse_code,period:dsePeriod,
+            dse_category:r.dse_category||null,dse_code_3id:r.dse_code_3id||null,
+            mdi:r.mdi||null,pt_name:r.pt_name||null,mc:r.mc||null,
+            branch:r.branch||null,region:r.region||null,circle:r.circle||null,
+            snapshot_source:"upload",updated_at:new Date().toISOString(),
+          }));
+          for(let i=0;i<snapRows.length;i+=50){
+            const{error:snapErr}=await sb.from("mf_dse_database_periods")
+              .upsert(snapRows.slice(i,i+50),{onConflict:"dse_code,period"});
+            if(snapErr){errs.push("Gagal simpan histori periode: "+snapErr.message);break;}
+          }
         }
       }else{
         await onImport?.(rows,formType);ok=rows.length;
@@ -1874,6 +1946,17 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
                 )}
               </div>
             </div>
+            {isDseDb&&(
+              <label title="Data upload ini akan dibekukan sbg histori mapping utk periode ini (selain tetap jadi data current/live spt biasa)"
+                style={{display:"flex",alignItems:"center",gap:5,fontSize:10,color:t.t2,fontWeight:600}}>
+                <Clock size={11}/>
+                <select value={dsePeriod} onChange={e=>setDsePeriod(e.target.value)}
+                  style={{fontSize:10,fontWeight:600,fontFamily:FF,padding:"4px 6px",
+                    borderRadius:6,border:`1px solid ${t.line}`,background:t.card,color:t.hi,cursor:"pointer"}}>
+                  {dsePeriodOptions.map(o=>(<option key={o.value} value={o.value}>{o.label}</option>))}
+                </select>
+              </label>
+            )}
             <button className="gbtn" title="Simpan mapping" onClick={saveMapping} style={{fontSize:10}}>
               <Save size={10}/>Simpan
             </button>

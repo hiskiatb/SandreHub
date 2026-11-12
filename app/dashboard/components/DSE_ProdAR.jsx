@@ -1864,6 +1864,12 @@ function ArPiutangInput({ t, dseCode, dseCode3id, dseName, mc, branch, entryDate
   // inline per-item, bukan form terpisah).
   const [editItemOpen, setEditItemOpen] = useState(false);
   const [editItemTotal, setEditItemTotal] = useState(0);
+  // BARU (permintaan user - "tambahkan fitur untuk pengeditan tanggal
+  // transaksi yang sudah diinputnya"): dulu form edit item cuma bisa ubah
+  // Jumlah/Jatuh Tempo/Catatan, tanggal_transaksi (tanggal "Piutang Baru"
+  // diinput) cuma tampil read-only. Sekarang ikut bisa diedit, sama pola
+  // dgn editTanggal di form edit pembayaran (startEditPayment) di atas.
+  const [editItemTanggal, setEditItemTanggal] = useState("");
   const [editItemJatuhTempo, setEditItemJatuhTempo] = useState("");
   const [editItemCatatan, setEditItemCatatan] = useState("");
 
@@ -2147,18 +2153,19 @@ function ArPiutangInput({ t, dseCode, dseCode3id, dseName, mc, branch, entryDate
   // cuma bisa dibuat. Warn (bukan block keras) kalau total baru < yg sudah
   // dibayar - itu kondisi aneh (piutang jadi "lebih dari lunas") tapi bukan
   // error teknis, jadi tetap diizinkan dgn pesan jelas supaya user sadar.
-  const startEditItem = (item) => { setEditItemTotal(item.total); setEditItemJatuhTempo(item.jatuh_tempo || ""); setEditItemCatatan(item.catatan || ""); setEditItemOpen(true); setActionErr(""); };
+  const startEditItem = (item) => { setEditItemTotal(item.total); setEditItemTanggal(item.tanggal_transaksi || ""); setEditItemJatuhTempo(item.jatuh_tempo || ""); setEditItemCatatan(item.catatan || ""); setEditItemOpen(true); setActionErr(""); };
   const cancelEditItem = () => setEditItemOpen(false);
 
   const confirmEditItem = async (item) => {
     if (fRaw(editItemTotal) <= 0) { setActionErr("Jumlah piutang harus lebih dari 0."); return; }
+    if (!editItemTanggal) { setActionErr("Tanggal transaksi wajib diisi."); return; }
     if (!editItemJatuhTempo) { setActionErr("Jatuh tempo wajib diisi."); return; }
     if (!editItemCatatan.trim()) { setActionErr("Catatan wajib diisi."); return; }
     setActionErr("");
     setBusy(true);
     try {
       const patch = {
-        total: fRaw(editItemTotal), jatuh_tempo: editItemJatuhTempo, catatan: editItemCatatan.trim(),
+        total: fRaw(editItemTotal), tanggal_transaksi: editItemTanggal, jatuh_tempo: editItemJatuhTempo, catatan: editItemCatatan.trim(),
         updated_at: new Date().toISOString(),
       };
       const { data: updated, error } = await supabase.from(itemsTable).update(patch).eq("id", item.id).select(`*, ${paymentsTable}(*)`).single();
@@ -2888,8 +2895,13 @@ function ArPiutangInput({ t, dseCode, dseCode3id, dseName, mc, branch, entryDate
 
       {editItemOpen ? (
         <div style={{ padding: 12, borderRadius: 10, border: `1px solid ${t.teal}`, marginBottom: 12 }}>
-          <div style={labelStyle}>Jumlah Piutang</div>
-          <MoneyInput t={t} value={editItemTotal} onChange={setEditItemTotal} accent={t.red} prefix="Rp" />
+          <div style={labelStyle}>Tanggal Transaksi</div>
+          <input type="date" onClick={(ev) => { if (!ev.currentTarget.disabled) ev.currentTarget.showPicker?.(); }} value={editItemTanggal} onChange={(ev) => setEditItemTanggal(ev.target.value)}
+            style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12.5, fontWeight: 600, fontFamily: FONT, outline: "none", boxSizing: "border-box" }} />
+          <div style={{ marginTop: 8 }}>
+            <div style={labelStyle}>Jumlah Piutang</div>
+            <MoneyInput t={t} value={editItemTotal} onChange={setEditItemTotal} accent={t.red} prefix="Rp" />
+          </div>
           {fRaw(editItemTotal) < selectedItem.paid && (
             <div style={{ marginTop: 6, fontSize: 10.5, color: t.amber, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
               <AlertTriangle size={10} /> Jumlah baru lebih kecil dari yg sudah dibayar (Rp {fmtID(selectedItem.paid)}).
@@ -5413,6 +5425,15 @@ export function getCategoryOptionsForRole(role) {
   // admin_mc akan jatuh ke cabang default di bawah (dse+dso+HOA), padahal
   // harusnya TIDAK dapat tab "hoa" (sama seperti admin_partner_mdi).
   if (role === "admin_partner_mdi" || role === "finance_mpx" || role === "admin_mc") return CATEGORY_OPTIONS.filter((o) => o.k !== "hoa" && o.k !== "control-center");
+  // ROLE BARU (permintaan user - "Partner Level, Circle, Region Level...
+  // view levelnya akan berbeda, sesuai dengan levelnya"): 3 role baru ini
+  // CUMA dapat tab "dse" (Prod & AR, read-only - lihat dseEditLocked di
+  // komponen utama) - TIDAK dapat tab "dso"/"hoa" krn kedua tab itu
+  // konsepnya per-District/per-Area (bukan per-Partner/Circle/Region) &
+  // ArDsoHoaPanel selalu <ArPiutangInput readOnly={false}/> (akan gagal
+  // kena RLS kalau role read-only ini coba edit) - drpd expose tombol
+  // edit yg bakal error, tab ini disembunyikan saja utk role ini.
+  if (role === "admin_partner" || role === "admin_circle" || role === "admin_region") return CATEGORY_OPTIONS.filter((o) => o.k === "dse");
   if (role === "spm_sumatera") return CATEGORY_OPTIONS; // SPM Sumatera: semua kategori termasuk Control Center
   return CATEGORY_OPTIONS.filter((o) => o.k !== "control-center"); // role lain yg lolos gate di page.jsx: semua KECUALI Control Center
 }
@@ -5835,10 +5856,16 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // DB sama2 tetap jalan tanpa ada jendela waktu kehilangan akses.
   const isMPX = hasAnyRole(profile, ["admin_partner_mdi", "finance_mpx", "admin_mc"]);
   const isAdminArea = hasRole(profile, "admin_area");
+  // ROLE BARU (permintaan user - Partner Level/Circle/Region Level):
+  // read-only murni (cuma SELECT di RLS 9 tabel inti, lihat migration) -
+  // dipakai di bawah utk forceLock tab "dse" ke view-only, SAMA seperti
+  // Admin Area tapi TANPA exception "kalau ada role lain yg bisa edit"
+  // (role2 ini belum pernah dikombinasikan dgn role edit manapun).
+  const isAdminLevel = hasAnyRole(profile, ["admin_partner", "admin_circle", "admin_region"]);
   // Admin Area dipaksa view-only utk tab "dse" HANYA kalau dia TIDAK juga
   // punya role lain yg berhak edit (admin_partner_mdi/spm_sumatera) - "kalau
   // terdaftar di dua role, salah satunya bisa edit, maka dia bisa edit".
-  const dseEditLocked = isAdminArea && !isMPX && !isSPM;
+  const dseEditLocked = (isAdminArea && !isMPX && !isSPM) || isAdminLevel;
 
   // UPDATE (permintaan user - satu email Admin District sekarang bisa dipasang ke
   // lebih dari 1 District lewat mf_dse_admin_mc_mapping): dulu lockedMc cuma 1
@@ -5974,6 +6001,13 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   const [tab, setTab] = useState("input"); // input | ar | riwayat
   const dseInputMode = tab === "ar" ? "ar" : "sales"; // dipakai DseInputRow - lihat UPDATE di tabs array
   const [toast, setToast] = useState(null);
+  // UPDATE (permintaan user - "buat dia di dalam menu control center
+  // saja"): sub-tab Database DSE dipindah ke DALAM kategori "Control
+  // Center" (bukan lagi menu tersendiri di sidebar/overview - itu sudah
+  // dihapus di page.jsx). State ini pilih sub-tab aktif di dalam kategori
+  // control-center: "monitor" (DSE_ControlCenter, default) atau "database"
+  // (SDP_DseDatabase).
+  const [ccSubTab, setCcSubTab] = useState("monitor");
   const showToast = (msg, type = "ok") => setToast({ msg, type });
 
   // ── Tab "Input Harian" ────────────────────────────────────────────────────
@@ -6386,7 +6420,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // District(s) miliknya sendiri (myMcNames dari RPC mf_dse_admin_mc_my_mcs,
   // sudah diambil di atas) - bukan semua District se-Sumatera kayak SPM.
   useEffect(() => {
-    if (!isSPM && !isMPX && !isAdminArea) return;
+    if (!isSPM && !isMPX && !isAdminArea && !isAdminLevel) return;
     (async () => {
       if (isMPX && myMcNames.length === 0) { setDseMeta([]); return; }
       // FIX AKSES (audit user - Admin Area sebelumnya ga ke-handle sama
@@ -6398,10 +6432,14 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       let q = supabase.from("mf_dse_database").select("region, branch, mdi, mc, hoa_name").eq("is_revoked", false).not("mc", "is", null);
       if (isMPX) q = q.in("mc", myMcNames);
       if (isAdminArea) q = q.in("branch", myBranchNames);
+      // isAdminLevel (Partner/Circle/Region): TIDAK ada .in() tambahan di
+      // sini - RLS select policy mf_dse_admin_<role>_* yg sudah membatasi
+      // baris mf_dse_database yg kebaca, SAMA pola spt isSPM (unrestricted
+      // query, scoping murni di level DB).
       const { data } = await q;
       setDseMeta(data || []);
     })();
-  }, [isSPM, isMPX, isAdminArea, myMcNames, myBranchNames]);
+  }, [isSPM, isMPX, isAdminArea, isAdminLevel, myMcNames, myBranchNames]);
 
   // Urutan hierarki cascading: Partner -> Region -> Area -> District. Partner
   // DI ATAS Region (bukan di bawah) karena 1 Partner (mdi) bisa beroperasi
@@ -8064,7 +8102,26 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
         {!isSPM ? (
           <div style={{ padding: 40, textAlign: "center", color: t.mid, fontSize: 13 }}>Fitur ini khusus untuk role SPM Sumatera.</div>
         ) : (
-          <DSE_ControlCenter theme={theme} profile={profile} />
+          <>
+            {/* UPDATE (permintaan user - "buat dia di dalam menu control
+                center saja"): toggle sub-tab Monitoring / Database DSE,
+                di atas konten kategori Control Center. */}
+            <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+              <button onClick={() => setCcSubTab("monitor")}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 9, border: `1px solid ${ccSubTab === "monitor" ? t.blue : t.inputBd}`, background: ccSubTab === "monitor" ? t.blueBg : t.inputBg, color: ccSubTab === "monitor" ? t.blue : t.mid, fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: FONT }}>
+                <Layers size={14} /> Monitoring
+              </button>
+              <button onClick={() => setCcSubTab("database")}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 9, border: `1px solid ${ccSubTab === "database" ? t.blue : t.inputBd}`, background: ccSubTab === "database" ? t.blueBg : t.inputBg, color: ccSubTab === "database" ? t.blue : t.mid, fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: FONT }}>
+                <Database size={14} /> Database DSE
+              </button>
+            </div>
+            {ccSubTab === "database" ? (
+              <SDP_DseDatabase theme={theme} profile={profile} />
+            ) : (
+              <DSE_ControlCenter theme={theme} profile={profile} />
+            )}
+          </>
         )}
       </div>
     );

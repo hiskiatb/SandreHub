@@ -1,5 +1,11 @@
-const parser = require("@babel/parser");
+const babel = require("@babel/core");
 const fs = require("fs");
-const code = fs.readFileSync(process.argv[2], "utf-8");
-parser.parse(code, { sourceType: "module", plugins: ["jsx"] });
-console.log("PARSE_OK");
+const file = process.argv[2];
+const code = fs.readFileSync(file, "utf-8");
+try {
+  babel.parse(code, { presets: ["next/babel"], filename: file });
+  console.log("PARSE_OK");
+} catch (e) {
+  console.error("PARSE_FAIL:", e.message);
+  process.exit(1);
+}

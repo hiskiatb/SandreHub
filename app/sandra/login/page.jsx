@@ -12,7 +12,7 @@ const TEAL  = "#32BCAD";
 const RED   = "#ED1C24";
 const MAGA  = "#C6168D";
 
-const ROLE_LABEL = { cse_rse: "CSE / RSE", bsm: "BSM", pic_region: "PIC Region", spm_sumatera: "SPM Sumatera", internal_ioh: "Internal IOH", admin_mc: "Admin MC", admin_area: "Admin Area" };
+const ROLE_LABEL = { cse_rse: "CSE / RSE", bsm: "BSM", pic_region: "PIC Region", spm_sumatera: "SPM Sumatera", internal_ioh: "Internal IOH", admin_mc: "Admin MC", admin_area: "Admin Area", admin_partner: "Partner Level", admin_circle: "Circle", admin_region: "Region Level" };
 
 const mk = (d) => ({
   bg:      d ? "#0A0A0B" : "#F4F4F6",
@@ -114,7 +114,27 @@ function SandraLoginInner() {
         setStage("otp");
         return;
       }
-    } catch { /* bukan Admin MC/Area / RPC gagal — lanjut cek jalur password di bawah */ }
+      // UPDATE (permintaan user - "Tambahkan Partner Level, Circle, Region
+      // Level dari data dse itu juga"): sama persis pola Admin MC/Area di
+      // atas, tapi scoped ke pt_name/circle/region (bukan mc/branch) - akses
+      // data READ-ONLY (lihat RLS mf_dse_admin_{role}_has_access* di DB).
+      for (const lvl of [
+        { rpc: "mf_dse_admin_partner_lookup", source: "admin_partner", role: "admin_partner" },
+        { rpc: "mf_dse_admin_circle_lookup", source: "admin_circle", role: "admin_circle" },
+        { rpc: "mf_dse_admin_region_lookup", source: "admin_region", role: "admin_region" },
+      ]) {
+        const { data: lvlLookup } = await supabase.rpc(lvl.rpc, { p_email: email });
+        if (lvlLookup?.found) {
+          setDetected({ source: lvl.source, role: lvl.role, items: lvlLookup.items || [] });
+          const otpRes = await fetch("/api/send-otp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }) });
+          const otpJson = await otpRes.json();
+          if (!otpRes.ok || !otpJson.success) { setErrMsg(otpJson.error || "Gagal mengirim kode OTP."); setCheckingEmail(false); return; }
+          setCheckingEmail(false);
+          setStage("otp");
+          return;
+        }
+      }
+    } catch { /* bukan role OTP manapun / RPC gagal — lanjut cek jalur password di bawah */ }
     try {
       const { data } = await supabase.rpc("sdp_login_lookup", { p_email: email });
       setDetected(data && !data.error ? { source: "sdp", ...data } : null);
@@ -169,6 +189,9 @@ function SandraLoginInner() {
       // Admin Area, jadi aman dipanggil berdampingan dgn apply Admin MC
       // di atas tanpa perlu tau persis `detected.source`-nya duluan.
       try { await supabase.rpc("mf_dse_admin_area_login_apply", { p_email: email }); } catch { /* best-effort */ }
+      try { await supabase.rpc("mf_dse_admin_partner_login_apply", { p_email: email }); } catch { /* best-effort */ }
+      try { await supabase.rpc("mf_dse_admin_circle_login_apply", { p_email: email }); } catch { /* best-effort */ }
+      try { await supabase.rpc("mf_dse_admin_region_login_apply", { p_email: email }); } catch { /* best-effort */ }
       router.refresh();
       router.push("/dashboard");
     } catch (e) { console.error("[handleVerifyOtp]", e); setErrMsg("Terjadi gangguan pada sistem: " + (e?.message || e)); }
