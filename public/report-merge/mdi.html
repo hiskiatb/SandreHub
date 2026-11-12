@@ -56,7 +56,7 @@
         if (m.email_lokal) info.push('email TIDAK benar-benar dikirim (hanya dicatat)');
         var b = document.createElement('div');
         b.textContent = '🧪 Mode lokal (localhost): ' + info.join(', ') + '. Di Vercel semuanya berjalan normal.';
-        b.style.cssText = 'position:sticky;top:0;z-index:99999;background:#FFCB05;color:#4D4D4F;font:600 12.5px Segoe UI,Arial,sans-serif;padding:7px 14px;text-align:center;';
+        b.style.cssText = 'position:relative;z-index:5;background:#FFCB05;color:#4D4D4F;font:600 12.5px Segoe UI,Arial,sans-serif;padding:7px 14px;text-align:center;';
         document.body.insertBefore(b, document.body.firstChild);
       }).catch(function () {});
     });
