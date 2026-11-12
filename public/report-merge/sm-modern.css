@@ -196,5 +196,8 @@ iframe { border: 1px solid var(--sm-line) !important; border-radius: 14px !impor
   .form-row { flex-direction: column; gap: 0; }
   #previewSection { flex-direction: column !important; }
   #sidebarList, #previewPane { width: 100% !important; }
-  .top-actions { position: static !important; justify-content: flex-end; margin: 36px 0 10px; }
+  .top-actions { position: static !important; justify-content: flex-end; margin: 12px 0 10px; }
+  /* Tombol Beranda & Kelola Template / Riwayat di SDP diposisikan absolut oleh halaman asli: di HP dibuat mengalir */
+  .card > a[href="/"], .btn-back { position: static !important; margin-bottom: 10px; }
+  .card > div:has(> #btnOpenTemplateManager) { position: static !important; justify-content: flex-start; flex-wrap: wrap; margin-bottom: 14px; }
 }
