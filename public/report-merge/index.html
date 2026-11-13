@@ -823,6 +823,8 @@
 
 <div class="topbar">
   <div class="brand">
+    <!-- [SandraHub] Tombol kembali ke halaman pilih menu Report Merge (permintaan Saila 2026-11-13). -->
+    <button class="theme-toggle labeled" type="button" title="Kembali ke halaman pilih menu Report Merge (Blast Email Report / Partner SDP / Partner MDI)." onclick="if(window.parent!==window){window.parent.postMessage({rmOpen:'home'},location.origin)}else{location.href='/report-merge/home.html'}">← Kembali</button>
     <div class="mark"><svg viewBox="0 0 36 36" width="36" height="36" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Sales &amp; Distribution Sumatera">
         <defs>
           <linearGradient id="rmLogoGrad" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
@@ -862,7 +864,6 @@
          pindah ke dalam panel Tahap 1, tempat kerjanya memang dimulai, dan
          di sana pakai label teks yang jelas. -->
     <div class="topbar-tools">
-      <button class="theme-toggle labeled" type="button" title="Kembali ke halaman pilih menu Report Merge." onclick="if(window.parent!==window){window.parent.postMessage({rmOpen:'home'},location.origin)}else{location.href='/report-merge/home.html'}">☰ Pilih menu</button>
       <button class="theme-toggle labeled" id="btnOpenSuratSettings" type="button" style="display:none;" title="Atur alamat email approver dan gambar tanda tangan yang dipakai untuk semua surat." onclick="openSuratSettingsModal()">⚙️ Pengaturan</button>
       <button class="theme-toggle labeled" id="btnOpenArchive" type="button" title="Riwayat semua proses kirim yang sudah selesai, dikelompokkan per Judul &amp; Periode." onclick="openArchiveModal()">🗂️ Arsip</button>
       <button class="theme-toggle" id="themeToggle" type="button" title="Ganti tampilan gelap/terang">🌙</button>
