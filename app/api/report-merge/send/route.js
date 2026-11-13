@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { Resend } from "resend";
 import { requireReportMergeAccess } from "../../../../lib/reportMerge/auth";
+import { parseEmailAttachment } from "../../../../lib/reportMerge/emailAttachment";
 
 const RESEND_API_KEY = (process.env.RESEND_API_KEY || "").trim();
 const SENDER_EMAIL = (process.env.SENDER_EMAIL || "snd@spmsumatera.site").trim();
@@ -28,6 +29,11 @@ export async function POST(req) {
 
   if (!to) {
     return NextResponse.json({ ok: false, error: "Alamat To kosong." }, { status: 400 });
+  }
+
+  const { attachments, error: attachmentError } = parseEmailAttachment(body.attachment);
+  if (attachmentError) {
+    return NextResponse.json({ ok: false, error: attachmentError }, { status: 400 });
   }
 
   const toList = to.split(";").map((s) => s.trim()).filter(Boolean);
@@ -61,13 +67,14 @@ export async function POST(req) {
       cc: finalCc.length ? finalCc : undefined,
       subject: finalSubject,
       html: fullHtml,
+      attachments: attachments.length ? attachments : undefined,
     });
 
     if (result.error) {
       throw new Error(result.error.message || JSON.stringify(result.error));
     }
 
-    return NextResponse.json({ ok: true, mode });
+    return NextResponse.json({ ok: true, mode, attachmentCount: attachments.length });
   } catch (e) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
   }
