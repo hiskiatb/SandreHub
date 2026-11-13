@@ -33,19 +33,47 @@ const kbd = (fn) => ({
   onKeyDown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fn(); } },
 });
 
-const SLA_P = [
-  { key:"reva_po",   label:"Reva → PO",                sla:2, from:["reva date","reva"],                 to:["po date","po number"] },
-  { key:"po_surat",  label:"PO → Surat Pemberitahuan",       sla:1, from:["po date"],                         to:["surat pemberitahuan date","surat pemberitahuan","surat"] },
-  { key:"surat_inv", label:"Surat Pemberitahuan → Invoice",  sla:2, from:["surat pemberitahuan date","surat"], to:["invoice submission","invoice"] },
-  { key:"inv_clv",   label:"Invoice → CLV",             sla:2, from:["invoice submission","invoice"],     to:["clv date","clv"] },
-  { key:"clv_clear", label:"CLV → Bank Clearing",       sla:3, from:["clv date","clv"],                   to:["clearing date","clearing"] },
-];
-const SLA_A = [
-  { key:"req_po",    label:"Req → PO",                  sla:2, from:["req date","reva date"],             to:["po date","po number"] },
-  { key:"po_inv",    label:"PO → Invoice",               sla:2, from:["po date"],                         to:["invoice submission","invoice"] },
-  { key:"inv_clv",   label:"Invoice → CLV",              sla:2, from:["invoice submission","invoice"],    to:["clv date","clv"] },
-  { key:"clv_clear", label:"CLV → Bank Clearing",        sla:3, from:["clv date","clv"],                  to:["clearing date","clearing"] },
-];
+// Hint kolom. Prefix "=" → hanya exact match (hindari "invoice" ikut cocok ke "Invoice Number").
+const H_REVA  = ["reva date","=reva","req date","=req"];
+// Agency: BAST dikirim agency → disetujui penuh IOH → invoice (via OneDrive) disubmit ke Coupa
+const H_BAST_RCV = ["bast received date","bast date","=bast received","=bast"];
+const H_BAST_APP = ["bast approved date","bast approval date","=bast approved","approval date","=approval date"];
+const H_INV   = ["invoice submission","invoice submission date","inv submission","invoice date","=invoice"];
+const H_CLV   = ["clv date","=clv"];
+const H_CLR   = ["clearing date","clearing bank date","=clearing","clearing bank"];
+const H_SURAT = ["surat pemberitahuan date","surat pemberitahuan","=surat"];
+const H_EST   = ["estimation date","estimasi"];
+const H_STAT  = ["=status","=payment status","status"];
+
+// Flow sejak Coupa go-live 11 Oct 2026: PO (Req → PO → Invoice) atau Direct Invoice (tanpa Req/PO).
+const FLOW_PO = "PO", FLOW_DI = "Direct Invoice";
+
+// Saklar fitur dokumen: tab "Document Upload & Merge", tab "Partner Letters" & kolom Documents di Raw Data.
+// false = disembunyikan untuk semua role & tidak ada fetch dokumen. Komponen, API, tabel & data tetap ada;
+// ubah ke true untuk mengaktifkan kembali.
+const SHOW_DOCUMENT_TABS = false;
+
+// SLA per step (hari kerja), satu alur tanpa PO. Reva → Surat = Reva→PO (2) + PO→Surat (1) lama;
+// Agency: BAST Received → BAST Approved (IOH) → Invoice Submission (Coupa) → CLV → Bank Clearing.
+const SLA_STEPS = {
+  partner: [
+    { key:"reva_surat", label:"Reva → Surat Pemberitahuan",    sla:3, from:H_REVA,  to:H_SURAT },
+    { key:"surat_inv",  label:"Surat Pemberitahuan → Invoice", sla:2, from:H_SURAT, to:H_INV },
+    { key:"inv_clv",    label:"Invoice → CLV",                 sla:2, from:H_INV,   to:H_CLV },
+    { key:"clv_clr",    label:"CLV → Bank Clearing",           sla:3, from:H_CLV,   to:H_CLR },
+  ],
+  agency: [
+    { key:"bast_app",   label:"BAST Received → BAST Approved",       sla:2, from:H_BAST_RCV, to:H_BAST_APP },
+    { key:"app_inv",    label:"BAST Approved → Invoice Submission",  sla:2, from:H_BAST_APP, to:H_INV },
+    { key:"inv_clv",    label:"Invoice → CLV",                 sla:2, from:H_INV,   to:H_CLV },
+    { key:"clv_clr",    label:"CLV → Bank Clearing",           sla:3, from:H_CLV,   to:H_CLR },
+  ],
+};
+const slaText = (isAg) => SLA_STEPS[isAg?"agency":"partner"].map(x=>x.sla).join("/");
+
+// Accrual Agency: kategori yang tidak di-accrue & agency yang dikecualikan
+const ACCRUAL_SKIP_PROG   = ["SALARYUUCK","THR","INCENTIVEMEUGANG"];
+const ACCRUAL_SKIP_AGENCY = ["ADHITAMA MITRA NUSANTARA"];
 
 function unique(arr) { return [...new Set(arr.filter(v => v != null && v !== ""))]; }
 
@@ -64,6 +92,7 @@ function monthKey(m) {
 function fmtMoney(n, short=true) {
   if (n == null || n === "") return "—";
   n = Number(n); if (isNaN(n)) return "—";
+  return short ? fmtRpWord(n) : fmtRpFull(n);
   if (!short) return "IDR " + n.toLocaleString("id-ID");
   const f1 = v => v.toFixed(1).replace(".", ",");
   if (Math.abs(n)>=1e12) return "IDR "+f1(n/1e12)+" Tn";
@@ -73,23 +102,27 @@ function fmtMoney(n, short=true) {
   return "IDR "+n.toFixed(0);
 }
 
+// Tanggal Excel yang dibaca SheetJS di zona WIB bergeser ~12 detik ke belakang (offset historis LMT +7:07:12),
+// mis. 1 Jan 2026 00:00 terbaca 31 Des 2025 23:59:48 → bulan/tanggal mundur satu. Bulatkan ke menit terdekat.
+const snapMin = (d) => { const ms = d.getTime(); if (isNaN(ms)) return d; const r = Math.round(ms/60000)*60000; return r===ms ? d : new Date(r); };
+
 function fmtDate(x) {
   if (!x) return "—";
-  const d = x instanceof Date ? x : new Date(x);
+  const d = snapMin(x instanceof Date ? x : new Date(x));
   if (isNaN(d)) return String(x);
-  return d.toLocaleDateString("en-GB", { day:"2-digit", month:"short", year:"2-digit" });
+  return d.toLocaleDateString("en-GB", { day:"2-digit", month:"short", year:"2-digit" }).replace("Sept","Sep");
 }
 
 function toDate(x) {
   if (!x && x!==0) return null;
-  if (x instanceof Date) return isNaN(x)?null:x;
+  if (x instanceof Date) return isNaN(x)?null:snapMin(x);
   if (typeof x==="number" && x>1000 && x<200000) {
     const d = new Date(new Date(1899,11,30).getTime()+x*86400000);
     return isNaN(d)?null:d;
   }
   if (typeof x==="string") {
     if (!x.trim()) return null;
-    const d = new Date(x); if (!isNaN(d)) return d;
+    const d = new Date(x); if (!isNaN(d)) return snapMin(d);
     const p = x.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
     if (p) { let y=+p[3]; if(y<100)y+=2000; const d2=new Date(y,+p[2]-1,+p[1]); return isNaN(d2)?null:d2; }
   }
@@ -99,11 +132,11 @@ function toDate(x) {
 // hanya parse nilai yang JELAS tanggal (Date / serial Excel / ISO / dd-mm-yyyy 4 digit).
 // Teks ambigu seperti "Jun-25" sengaja TIDAK diubah agar tak salah tafsir tahun.
 function toRealDate(x) {
-  if (x instanceof Date) return isNaN(x) ? null : x;
+  if (x instanceof Date) return isNaN(x) ? null : snapMin(x);
   if (typeof x==="number" && x>1000 && x<200000) { const d=new Date(new Date(1899,11,30).getTime()+x*86400000); return isNaN(d)?null:d; }
   if (typeof x==="string") {
     const s=x.trim();
-    if (/^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2})?/.test(s)) { const d=new Date(s); return isNaN(d)?null:d; }
+    if (/^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2})?/.test(s)) { const d=new Date(s); return isNaN(d)?null:snapMin(d); }
     const p=s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/); if (p) { const d=new Date(+p[3],+p[2]-1,+p[1]); return isNaN(d)?null:d; }
   }
   return null;
@@ -120,27 +153,45 @@ function fmtMonthYear(x) {
   if (!x && x!==0) return "";
   const d = toRealDate(x);
   if (!d) return typeof x==="string" ? x : String(x ?? "");
-  return d.toLocaleDateString("en-GB", { month:"short", year:"numeric" });
+  return d.toLocaleDateString("en-GB", { month:"short", year:"numeric" }).replace("Sept","Sep");
 }
 
-function daysBetween(a, b) {
+// Hari kerja (Senin–Jumat) dari a (eksklusif) s.d. b (inklusif). Negatif → null.
+function workDaysBetween(a, b) {
   const d1=toDate(a), d2=toDate(b);
   if (!d1||!d2) return null;
-  return Math.round((d2-d1)/86400000);
+  const s=new Date(d1.getFullYear(),d1.getMonth(),d1.getDate()), e=new Date(d2.getFullYear(),d2.getMonth(),d2.getDate());
+  const total=Math.round((e-s)/86400000);
+  if (total<0) return null;
+  const weeks=Math.floor(total/7);
+  let wd=weeks*5;
+  for (let i=1, dow=s.getDay(); i<=total%7; i++) { const x=(dow+i)%7; if (x!==0&&x!==6) wd++; }
+  return wd;
 }
 
+const normKey = (s) => String(s).toLowerCase().replace(/\s+/g," ").trim();
+// Cache resolusi kolom per (header set, hints) — findCol dipanggil per baris × per hint.
+const _colCache = new Map();
 function findCol(row, hints) {
   if (!row) return null;
   const ks = Object.keys(row);
-  for (const h of hints) {
-    const hh = h.toLowerCase().replace(/\s+/g," ").trim();
-    for (const k of ks) if (k.toLowerCase().replace(/\s+/g," ").trim()===hh) return k;
+  const ck = ks.join("\x01")+"\x03"+hints.join("\x02");
+  const hit = _colCache.get(ck);
+  if (hit!==undefined) return hit;
+  let res = null;
+  const nks = ks.map(normKey);
+  outer: for (const h of hints) {
+    const hh = normKey(h.startsWith("=") ? h.slice(1) : h);
+    for (let i=0;i<ks.length;i++) if (nks[i]===hh) { res=ks[i]; break outer; }
   }
-  for (const h of hints) {
-    const hh = h.toLowerCase().replace(/\s+/g," ").trim();
-    for (const k of ks) if (k.toLowerCase().replace(/\s+/g," ").trim().includes(hh)) return k;
+  if (!res) outer2: for (const h of hints) {
+    if (h.startsWith("=")) continue;
+    const hh = normKey(h);
+    for (let i=0;i<ks.length;i++) if (nks[i].includes(hh)) { res=ks[i]; break outer2; }
   }
-  return null;
+  if (_colCache.size>2000) _colCache.clear();
+  _colCache.set(ck,res);
+  return res;
 }
 
 const gcell = (row,hints,fb="") => { const k=findCol(row,hints); return k&&row[k]!=null ? row[k] : fb; };
@@ -148,11 +199,86 @@ const gnum  = (row,hints)       => { const v=gcell(row,hints,0); if(typeof v==="
 const gstr  = (row,hints)       => String(gcell(row,hints,"")||"").trim();
 const pct   = (a,b)             => b ? Math.round((a/b)*100) : 0;
 
+// ── Status: label lama Agency disamakan ke label baru ──
+const STATUS_ALIAS = {
+  "on process payment":"Payment Process", "payment process":"Payment Process", "on payment process":"Payment Process",
+  "awaiting inv submission":"Invoice Not Submitted", "awaiting invoice submission":"Invoice Not Submitted", "invoice not submitted":"Invoice Not Submitted",
+};
+function normalizeStatus(v) {
+  const s = String(v ?? "").trim();
+  if (!s) return s;
+  const k = s.toLowerCase().replace(/\s+/g," ");
+  if (STATUS_ALIAS[k]) return STATUS_ALIAS[k];
+  if (/^paid\b/.test(k)) return "PAID";
+  return s;
+}
+const isPaidStatus    = (s) => s==="PAID";
+const isProcessStatus = (s) => s==="Payment Process";
+const isNotSubStatus  = (s) => s==="Invoice Not Submitted";
+
+function normalizeFlow(v) {
+  const s = String(v ?? "").trim().toLowerCase();
+  if (!s) return "";
+  if (s.includes("direct") || s.startsWith("inv") || s==="di" || s.includes("non po") || s.includes("non-po")) return FLOW_DI;
+  if (s.startsWith("po")) return FLOW_PO;
+  return "";
+}
+
+/*
+  Lengkapi tiap baris dengan Flow, PO Number, Invoice Number & status ternormalisasi.
+  • File baru : kolom "Flow", "PO Number", "Invoice Number" terpisah.
+  • File lama : satu kolom "PO Number / Inv Number" + "Ref Type" (PO/Invoice);
+                tanpa Ref Type → nomor diawali "481" = PO, selain itu Direct Invoice.
+  Field turunan disimpan di _flow/_po/_inv/_status; kolom "Flow" & "Invoice Number"
+  ditambahkan bila belum ada supaya tampil di Raw Data & export.
+*/
+function enrichRow(r) {
+  const o = { ...r };
+  const ks = Object.keys(r);
+  const flowK  = findCol(r,["=flow","=payment flow","=flow type"]);
+  const refK   = findCol(r,["=ref type","=reference type"]);
+  const combK  = ks.find(k=>{ const n=normKey(k); return n.includes("po") && n.includes("inv") && (n.includes("/")||n.includes("number")) && !n.includes("date") && !n.includes("submission"); }) || null;
+  const poK    = findCol(r,["=po number","=po #","=no po","=po no","=po"]);
+  const invK   = findCol(r,["=invoice number","=inv number","=invoice no","=invoice no.","=invoice #","=no invoice","=no. invoice","=nomor invoice","=inv no"]);
+  const invIdK = findCol(r,["=invoice id","=inv id","=id invoice","=invoice_id","=invoiceid"]);
+  const statK  = findCol(r,H_STAT);
+  // Placeholder "0" / "-" = belum ada nomor
+  const num = (v) => { const s = String(v ?? "").trim(); return /^(0|-+|—|n\/?a)$/i.test(s) ? "" : s; };
+  let po  = poK  && poK!==combK  ? num(r[poK])  : "";
+  let inv = invK && invK!==combK ? num(r[invK]) : "";
+  let flow = flowK ? normalizeFlow(r[flowK]) : "";
+  const refFlow = refK ? normalizeFlow(r[refK]) : "";
+  if (combK) {
+    const val = num(r[combK]);
+    if (val) {
+      const f = refFlow || (val.startsWith("481") ? FLOW_PO : FLOW_DI);
+      if (f===FLOW_PO) { if (!po) po = val; } else if (!inv) inv = val;
+      if (!flow) flow = f;
+    }
+  }
+  if (!flow) flow = refFlow || (po ? FLOW_PO : inv ? FLOW_DI : FLOW_PO);
+  const status = statK ? normalizeStatus(r[statK]) : "";
+  if (statK) o[statK] = status;
+  if (flowK) o[flowK] = flow;
+  if (!invK) o["Invoice Number"] = inv || null;
+  o._flow = flow; o._po = po; o._inv = inv; o._invId = invIdK ? num(r[invIdK]) : ""; o._status = status;
+  return o;
+}
+// Identitas tagihan: Invoice Number + Invoice ID (tanpa PO)
+const refNo = (r) => r._inv || r._invId || "";
+const invLabel = (inv, id) => [inv, id && id!==inv ? `ID ${id}` : ""].filter(Boolean).join(" · ") || "—";
+// Entity "MPX" ditampilkan sebagai "MDI" (nilai data tidak diubah)
+const entLabel = (v) => String(v??"").trim().toUpperCase()==="MPX" ? "MDI" : v;
+// Kolom PO/Requisition & Flow dari file lama: tetap dibaca, tapi tidak ditampilkan/diekspor
+const isPoOnlyCol = (k) => /^(#?\s*req\b|req id|req date|requisition|po\b|po #|po number|po date|no po|ref type|flow$)/.test(normKey(k));
+const rowStatus = (r) => r._status ?? normalizeStatus(gstr(r,H_STAT));
+const rowFlow   = (r) => r._flow || FLOW_PO;
+
 function sumRows(rows) {
   return rows.reduce((acc,r)=>({
-    n:acc.n+(r.n||0), po:acc.po+(r.po||0), surat:acc.surat+(r.surat||0),
+    n:acc.n+(r.n||0), reva:acc.reva+(r.reva||0), bastR:acc.bastR+(r.bastR||0), bastA:acc.bastA+(r.bastA||0), surat:acc.surat+(r.surat||0),
     inv:acc.inv+(r.inv||0), clv:acc.clv+(r.clv||0), clr:acc.clr+(r.clr||0), amt:acc.amt+(r.amt||0),
-  }), {n:0,po:0,surat:0,inv:0,clv:0,clr:0,amt:0});
+  }), {n:0,reva:0,bastR:0,bastA:0,surat:0,inv:0,clv:0,clr:0,amt:0});
 }
 
 const DATE_COLS = ["clv date","clv","clearing date","clearing","invoice submission","invoice","surat pemberitahuan date","po date","reva date","req date","estimation date"];
@@ -189,14 +315,16 @@ function buildAgg(rows, src) {
     const prog  = gstr(r,["program type","programtype"]);
     if (!month) return;
     const key = [month,entity,ptype,prog].join("\x00");
-    if (!groups[key]) groups[key]={ month,entity,ptype,prog,src,n:0,po:0,surat:0,inv:0,clv:0,clr:0,amt:0 };
+    if (!groups[key]) groups[key]={ month,entity,ptype,prog,src,n:0,reva:0,bastR:0,bastA:0,surat:0,inv:0,clv:0,clr:0,amt:0 };
     const g = groups[key];
     g.n++;
-    if (gcell(r,["po number","po #","no po","po date"])) g.po++;
-    if (!ag && gcell(r,["surat pemberitahuan date","surat pemberitahuan","surat"])) g.surat++;
-    if (gcell(r,["invoice submission","invoice"])) g.inv++;
-    if (gcell(r,["clv date","clv"])) g.clv++;
-    if (gcell(r,["clearing date","clearing"])) g.clr++;
+    if (gcell(r,H_REVA)) g.reva++;
+    if (ag && gcell(r,H_BAST_RCV)) g.bastR++;
+    if (ag && gcell(r,H_BAST_APP)) g.bastA++;
+    if (!ag && gcell(r,H_SURAT)) g.surat++;
+    if (gcell(r,H_INV)) g.inv++;
+    if (gcell(r,H_CLV)) g.clv++;
+    if (gcell(r,H_CLR)) g.clr++;
     g.amt += gnum(r,["amount","nilai"]);
   });
   return Object.values(groups);
@@ -205,12 +333,6 @@ function buildAgg(rows, src) {
 function parseRows(raw, src) {
   const rows = raw.filter(r=>isRawRow(r,src));
   return { raw: rows, agg: buildAgg(rows,src) };
-}
-
-function heatClr(p) {
-  if (p>=95) return C.tealDp; if (p>=80) return C.tealD; if (p>=65) return C.teal;
-  if (p>=45) return C.yellow; if (p>=25) return C.yellowD; if (p>0) return "#b27c00";
-  return C.grey;
 }
 
 function normalizeName(s) {
@@ -292,14 +414,18 @@ async function dbSave(payload) {
   }
 }
 
+// Melempar error bila gagal baca — dipakai publish agar "gagal baca" tidak dianggap "data kosong".
+async function dbFetch() {
+  const { data, error } = await supabase.from("payout_data")
+    .select("*").order("created_at",{ascending:false}).limit(1).maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return { fileName:data.file_name||"", rowCount:data.row_count||0, publishedAt:data.published_at||"", rows:data.raw_data||[] };
+}
+
 async function dbLoad() {
-  try {
-    const { data, error } = await supabase.from("payout_data")
-      .select("*").order("created_at",{ascending:false}).limit(1).maybeSingle();
-    if (error) throw error;
-    if (!data) return null;
-    return { fileName:data.file_name||"", rowCount:data.row_count||0, publishedAt:data.published_at||"", rows:data.raw_data||[] };
-  } catch (e) { console.error(e); return null; }
+  try { return await dbFetch(); }
+  catch (e) { console.error(e); return null; }
 }
 
 async function dbDelete() {
@@ -307,42 +433,76 @@ async function dbDelete() {
   catch { return false; }
 }
 
-async function readXLSX(file, src) {
+// Workbook baru punya banyak sheet (Panduan, Temuan, Outstanding Payment, Accrual Summary,
+// Lists, Coupa_*, SAP…). Ambil sheet "Partner Prepaid"/"Agency Prepaid": exact → startsWith → includes.
+// Tidak ketemu → null (bukan sheet pertama): sheet yang salah bisa mengganti data live.
+function pickSheet(names, src) {
+  const want = src==="agency" ? "agency prepaid" : "partner prepaid";
+  // Sheet "… MDI" dibaca terpisah (lihat mdiSheet), jangan sampai terambil sebagai sheet utama
+  const n = names.map(s=>({ s, k:normKey(s) })).filter(x=>!/\bmdi\b/.test(x.k));
+  const hit = n.find(x=>x.k===want)
+    || n.find(x=>x.k.startsWith(want))
+    || n.find(x=>x.k.includes(want) && !/coupa|sap|accrual|outstanding|summary|list|panduan|temuan/.test(x.k));
+  return hit ? hit.s : null;
+}
+
+// Sheet Direct Invoice sejak Coupa: "Partner Prepaid MDI" / "Agency Prepaid MDI"
+function mdiSheet(names, src) {
+  const want = src==="agency" ? "agency prepaid" : "partner prepaid";
+  const n = names.map(s=>({ s, k:normKey(s) }));
+  const hit = n.find(x=>x.k===want+" mdi") || n.find(x=>x.k.startsWith(want) && /\bmdi\b/.test(x.k));
+  return hit ? hit.s : null;
+}
+
+function sheetRows(XLSX, ws, src, forceFlow) {
+  const arr = XLSX.utils.sheet_to_json(ws,{header:1,defval:""});
+  const hints = src==="agency"
+    ? ["agency name","program type","amount","status","bast","invoice date","invoice submission","clv date","clearing","#req","po number","invoice number","flow"]
+    : ["partner name","program type","amount","status","reva date","surat pemberitahuan","invoice date","clv date","clearing","#req","po number","invoice number","flow"];
+  let hdr = 0;
+  for (let i=0;i<Math.min(arr.length,12);i++) {
+    const row = arr[i].map(c=>String(c).toLowerCase()).join(" ");
+    if (hints.filter(h=>row.includes(h)).length>=2) { hdr=i; break; }
+  }
+  const rawRows = XLSX.utils.sheet_to_json(ws,{defval:null,range:hdr});
+  return rawRows.map(row=>{
+    const clean={};
+    Object.keys(row).forEach(k=>{
+      const v=row[k];
+      clean[k.trim()] = v instanceof Date ? (isNaN(v)?null:snapMin(v).toISOString()) : v;
+    });
+    if (forceFlow) clean.Flow = forceFlow; // semua baris sheet MDI = Direct Invoice
+    clean._source=src;
+    return clean;
+  }).filter(r=>isRawRow(r,src)); // baris Total/kosong tidak ikut dipublish
+}
+
+// Baca satu workbook → { partner:{sheet,rows}|null, agency:{sheet,rows}|null }.
+// File satu sheet tanpa nama yang cocok (mis. CSV) dikenali dari header kolomnya.
+async function readWorkbook(file) {
   const XLSX = await getXLSX();
-  return new Promise((resolve,reject)=>{
-    const rd = new FileReader();
-    rd.onload = e => {
-      try {
-        const wb  = XLSX.read(e.target.result,{type:"array",cellDates:true});
-        let sn    = wb.SheetNames[0];
-        const ms  = wb.SheetNames.find(n=>n.toLowerCase().includes(src));
-        if (ms) sn = ms;
-        const ws  = wb.Sheets[sn];
-        const arr = XLSX.utils.sheet_to_json(ws,{header:1,defval:""});
-        const hints = src==="agency"
-          ? ["agency name","program type","#req","amount","po number","status"]
-          : ["partner name","program type","#req","amount","po number","status","reva date"];
-        let hdr = 0;
-        for (let i=0;i<Math.min(arr.length,12);i++) {
-          const row = arr[i].map(c=>String(c).toLowerCase()).join(" ");
-          if (hints.filter(h=>row.includes(h)).length>=2) { hdr=i; break; }
-        }
-        const rawRows = XLSX.utils.sheet_to_json(ws,{defval:null,range:hdr});
-        const processed = rawRows.map(row=>{
-          const clean={};
-          Object.keys(row).forEach(k=>{
-            const v=row[k];
-            clean[k.trim()] = v instanceof Date ? (isNaN(v)?null:v.toISOString()) : v;
-          });
-          clean._source=src;
-          return clean;
-        });
-        resolve(processed);
-      } catch(err) { reject(err); }
-    };
-    rd.onerror = ()=>reject(new Error("File could not be read"));
-    rd.readAsArrayBuffer(file);
-  });
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf,{type:"array",cellDates:true});
+  const names = wb.SheetNames;
+  const found = { partner:pickSheet(names,"partner"), agency:pickSheet(names,"agency") };
+  if (!found.partner && !found.agency && names.length===1 && !mdiSheet(names,"partner") && !mdiSheet(names,"agency")) {
+    const head = XLSX.utils.sheet_to_json(wb.Sheets[names[0]],{header:1,defval:""}).slice(0,12).flat().map(c=>normKey(c));
+    if (head.includes("agency name")) found.agency = names[0];
+    else if (head.includes("partner name")) found.partner = names[0];
+  }
+  const side = (src) => {
+    const mdi = mdiSheet(names, src);
+    const base = found[src] ? sheetRows(XLSX, wb.Sheets[found[src]], src) : [];
+    const di = mdi ? sheetRows(XLSX, wb.Sheets[mdi], src, FLOW_DI) : [];
+    const rows = [...base, ...di];
+    if (!rows.length) return null;
+    // Baris yang muncul di dua sheet (pemilik + nomor invoice sama) → kemungkinan dobel
+    const key = (r) => { const e = enrichRow(r); return e._inv ? normalizeName(ownerName(r))+"|"+e._inv.toUpperCase() : null; };
+    const baseKeys = new Set(base.map(key).filter(Boolean));
+    const dup = di.filter(r=>{ const k=key(r); return k && baseKeys.has(k); }).length;
+    return { sheet:[found[src],mdi].filter(Boolean).join(" + "), rows, dup };
+  };
+  return { partner:side("partner"), agency:side("agency") };
 }
 
 const LIGHT = {
@@ -359,6 +519,7 @@ const LIGHT = {
   shadow1:"0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.05)",
   shadow2:"0 4px 16px rgba(0,0,0,0.09), 0 1px 4px rgba(0,0,0,0.05)",
   shadow3:"0 12px 40px rgba(0,0,0,0.14), 0 4px 12px rgba(0,0,0,0.06)",
+  chartA:"#32BCAD",chartB:"#C6168D", // seri chart Sales Team / Partner (dicek: lightness, CVD, kontras)
 };
 
 const DARK = {
@@ -375,6 +536,7 @@ const DARK = {
   shadow1:"0 1px 2px rgba(0,0,0,0.45), 0 1px 2px rgba(0,0,0,0.30)",
   shadow2:"0 6px 18px rgba(0,0,0,0.55), 0 1px 4px rgba(0,0,0,0.35)",
   shadow3:"0 20px 48px rgba(0,0,0,0.65), 0 4px 12px rgba(0,0,0,0.45)",
+  chartA:"#28AA9B",chartB:"#BA1384", // versi gelap, dicek terpisah terhadap permukaan gelap
 };
 
 function resolveTheme(themeProp) {
@@ -408,14 +570,18 @@ function useTheme(themeProp) {
   return dark ? DARK : LIGHT;
 }
 
+// Lebar area Payout Tracker (bukan jendela): di dashboard ada sidebar, jadi breakpoint
+// harus mengikuti ruang yang benar-benar tersedia. Diisi oleh ThemeWrapper lewat ResizeObserver.
+const WidthCtx = React.createContext(null);
 function useWidth() {
+  const box = React.useContext(WidthCtx);
   const [w, setW] = useState(typeof window!=="undefined"?window.innerWidth:1200);
   useEffect(()=>{
     const fn = ()=>setW(window.innerWidth);
     window.addEventListener("resize",fn,{passive:true});
     return ()=>window.removeEventListener("resize",fn);
   },[]);
-  return w;
+  return box ?? w;
 }
 
 function useHover() {
@@ -476,7 +642,7 @@ function Card({ children, style={}, t, pad=true }) {
 }
 
 function CardHead({ title, sub, accent, right, t }) {
-  const ac = accent || C.teal;
+  const ac = C.teal; // satu warna aksen untuk semua judul kartu
   return (
     <div style={{padding:"14px 20px",borderBottom:`1px solid ${t.line}`,display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12,flexWrap:"wrap",background:t.surf2}}>
       <div>
@@ -484,25 +650,25 @@ function CardHead({ title, sub, accent, right, t }) {
           <span style={{width:4,height:18,borderRadius:2,background:ac,display:"block",flexShrink:0}}/>
           <span style={{fontWeight:700,fontSize:14,letterSpacing:"-0.02em",color:t.ink}}>{title}</span>
         </div>
-        {sub&&<div style={{marginTop:4,marginLeft:14,fontFamily:MONO,fontSize:10.5,color:t.muted}}>{sub}</div>}
+        {sub&&<div style={{marginTop:4,marginLeft:14,fontSize:12.5,lineHeight:1.45,color:t.muted}}>{sub}</div>}
       </div>
       {right&&<div style={{flexShrink:0}}>{right}</div>}
     </div>
   );
 }
 
-function MsOption({o,checked,onToggle,t}) {
+function MsOption({o,label,checked,onToggle,t}) {
   const [hov,hE]=useHover();
   return (
     <label {...hE} style={{display:"flex",alignItems:"center",gap:9,padding:"7px 12px",cursor:"pointer",background:hov?t.surf3:checked?`${C.teal}10`:"transparent",borderTop:`1px solid ${t.line}`,transition:"background .1s"}}>
       <input type="checkbox" checked={checked} onChange={onToggle} style={{width:14,height:14,accentColor:C.teal,cursor:"pointer",flexShrink:0,margin:0}}/>
-      <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontSize:12.5,fontWeight:checked?600:400,color:t.ink}}>{o}</span>
-      {checked&&<span style={{color:C.teal,fontSize:11,fontWeight:700,flexShrink:0}}>✓</span>}
+      <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontSize:12.5,fontWeight:checked?600:400,color:t.ink}}>{label??o}</span>
+      {checked&&<span style={{color:C.teal,fontSize:12,fontWeight:700,flexShrink:0}}>✓</span>}
     </label>
   );
 }
 
-function MultiSel({ values, options, onChange, placeholder, t }) {
+function MultiSel({ values, options, onChange, placeholder, t, labelOf=(v)=>v }) {
   const [open,setOpen]=useState(false);
   const [hov,hE]=useHover();
   const boxRef=useRef(null);
@@ -516,25 +682,25 @@ function MultiSel({ values, options, onChange, placeholder, t }) {
   },[open]);
   const toggle=v=>onChange(values.includes(v)?values.filter(x=>x!==v):[...values,v]);
   const active=values.length>0;
-  const label=!active?placeholder:values.length<=2?values.join(", "):`${values.length} selected`;
+  const label=!active?placeholder:values.length<=2?values.map(labelOf).join(", "):`${values.length} selected`;
   return (
     <div ref={boxRef} style={{position:"relative",minWidth:110,flex:"1 1 110px"}}>
       <button type="button" onClick={()=>setOpen(o=>!o)} {...hE}
         style={{width:"100%",display:"flex",alignItems:"center",gap:7,padding:"7px 11px",fontSize:12.5,borderRadius:10,border:`1px solid ${active?C.teal:(hov||open)?C.tealD:t.line2}`,background:t.surf2,color:active?t.ink:t.muted,fontFamily:"inherit",cursor:"pointer",outline:"none",boxShadow:active||open?`0 0 0 3px ${C.teal}26`:"none",transition:"border-color .15s, box-shadow .15s",textAlign:"left",boxSizing:"border-box"}}>
         <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label}</span>
-        {active&&<span style={{fontFamily:MONO,fontSize:10,fontWeight:700,padding:"1px 7px",borderRadius:99,background:C.teal,color:"#fff",flexShrink:0}}>{values.length}</span>}
+        {active&&<span style={{fontVariantNumeric:"tabular-nums",fontSize:12,fontWeight:700,padding:"1px 7px",borderRadius:99,background:C.teal,color:"#fff",flexShrink:0}}>{values.length}</span>}
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{flexShrink:0,transform:open?"rotate(180deg)":"none",transition:"transform .15s",opacity:.7}}><path d="m6 9 6 6 6-6"/></svg>
       </button>
       {open&&(
         <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,minWidth:"100%",width:"max-content",maxWidth:"min(280px, calc(100vw - 32px))",zIndex:400,background:t.surf,border:`1px solid ${t.line2}`,borderRadius:12,boxShadow:t.shadow3,overflow:"hidden"}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"7px 12px",background:t.surf2,fontFamily:MONO,fontSize:9.5,letterSpacing:"0.1em",textTransform:"uppercase",color:active?C.tealD:t.muted}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"7px 12px",background:t.surf2,fontSize:12,letterSpacing:"0.01em",color:active?C.tealD:t.muted}}>
             <span>Selected: {values.length} item{values.length!==1?"s":""}</span>
-            {active&&<button type="button" onClick={()=>onChange([])} style={{border:"none",background:"transparent",color:t.bad,cursor:"pointer",fontFamily:"inherit",fontSize:9.5,letterSpacing:"0.1em",textTransform:"uppercase",padding:0}}>Clear</button>}
+            {active&&<button type="button" onClick={()=>onChange([])} style={{border:"none",background:"transparent",color:t.bad,cursor:"pointer",fontFamily:"inherit",fontSize:12,letterSpacing:"0.01em",padding:0}}>Clear</button>}
           </div>
           <div style={{maxHeight:220,overflowY:"auto"}}>
             {options.length===0
               ? <div style={{padding:"10px 12px",fontSize:12,color:t.muted,fontStyle:"italic"}}>No options available</div>
-              : options.map(o=><MsOption key={o} o={o} checked={values.includes(o)} onToggle={()=>toggle(o)} t={t}/>)}
+              : options.map(o=><MsOption key={o} o={o} label={labelOf(o)} checked={values.includes(o)} onToggle={()=>toggle(o)} t={t}/>)}
           </div>
         </div>
       )}
@@ -547,7 +713,7 @@ function PctBadge({ val, t }) {
   const bg=ok?t.goodBg:mid?t.warnBg:t.badBg, bd=ok?t.goodBd:mid?t.warnBd:t.badBd;
   const clr=ok?t.goodDark:mid?t.warnDark:t.badDark, dot=ok?t.good:mid?t.warn:t.bad;
   return (
-    <span style={{display:"inline-flex",alignItems:"center",gap:5,padding:"3px 9px",borderRadius:99,fontFamily:MONO,fontSize:11,fontWeight:700,background:bg,color:clr,border:`1px solid ${bd}`}}>
+    <span style={{display:"inline-flex",alignItems:"center",gap:5,padding:"1px 8px",borderRadius:99,fontSize:12,lineHeight:"18px",fontVariantNumeric:"tabular-nums",fontWeight:700,background:bg,color:clr,border:`1px solid ${bd}`}}>
       <span style={{width:7,height:7,borderRadius:"50%",background:dot,flexShrink:0}}/>{val}%
     </span>
   );
@@ -557,67 +723,9 @@ function StatusBadge({ val, t }) {
   const s = String(val||"").toLowerCase();
   let bg=t.surf3, c=t.muted, bd=t.line;
   if (s.includes("paid")&&!s.includes("not")&&!s.includes("un")) { bg=t.goodBg; c=t.goodDark; bd=t.goodBd; }
-  else if (s.includes("process")) { bg=t.infoBg; c=t.info; bd=t.infoBd; }
-  else if (s.includes("not")||s.includes("pending")||s.includes("awaiting")||s.includes("unpaid")) { bg=t.warnBg; c=t.warnDark; bd=t.warnBd; }
-  return <span style={{display:"inline-flex",padding:"2px 8px",borderRadius:6,fontFamily:MONO,fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em",background:bg,color:c,border:`1px solid ${bd}`}}>{val}</span>;
-}
-
-function DonutChart({ pieces, t, size=144 }) {
-  if (!pieces.length) return null;
-  const total = pieces.reduce((a,b)=>a+b.v,0);
-  const cx=size/2, cy=size/2, R=size/2-7, r2=R*0.75;
-  let ang = -Math.PI/2;
-  const paths = pieces.map((p,i)=>{
-    const sh=p.v/total, nx=ang+sh*2*Math.PI, lg=sh>0.5?1:0;
-    const x1=cx+R*Math.cos(ang),y1=cy+R*Math.sin(ang);
-    const x2=cx+R*Math.cos(nx), y2=cy+R*Math.sin(nx);
-    const x3=cx+r2*Math.cos(nx),y3=cy+r2*Math.sin(nx);
-    const x4=cx+r2*Math.cos(ang),y4=cy+r2*Math.sin(ang);
-    ang=nx;
-    return <path key={i} d={`M${x1},${y1} A${R},${R} 0 ${lg} 1 ${x2},${y2} L${x3},${y3} A${r2},${r2} 0 ${lg} 0 ${x4},${y4} Z`} fill={p.color} stroke={t.surf} strokeWidth="2"><title>{p.label}: {p.v.toLocaleString()}</title></path>;
-  });
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{display:"block",margin:"0 auto",flexShrink:0}}>
-      {paths}
-      <text x={cx} y={cy+2} textAnchor="middle" fontSize={size*0.16} fontWeight="800" fill={t.ink} fontFamily="inherit">{total.toLocaleString()}</text>
-      <text x={cx} y={cy+18} textAnchor="middle" fontSize={9} fill={t.muted} fontFamily={MONO}>TOTAL</text>
-    </svg>
-  );
-}
-
-function BarChart({ series, t }) {
-  if (!series.length) return null;
-  const W=480,H=200,pL=36,pR=8,pT=12,pB=40;
-  const cW=W-pL-pR, cH=H-pT-pB;
-  const gW=cW/series.length, bW=Math.max(6,Math.min(gW*0.35,22)), gap=2;
-  const yF=v=>pT+cH-(Math.min(100,Math.max(0,v))/100)*cH;
-  const xC=i=>pL+i*gW+gW/2, bot=yF(0);
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",height:"auto",display:"block"}} preserveAspectRatio="xMidYMid meet">
-      <rect x={pL} y={pT} width={cW} height={cH} fill={t.surf2} rx={6}/>
-      {[0,25,50,75,100].map(v=>{
-        const y=yF(v);
-        return <g key={v}><line x1={pL} y1={y} x2={W-pR} y2={y} stroke={t.line} strokeWidth={v?1:1.5} strokeDasharray={v?"4 3":"0"}/><text x={pL-4} y={y+3.5} textAnchor="end" fontSize={9} fill={t.muted} fontFamily={MONO}>{v}%</text></g>;
-      })}
-      {series.map((s,i)=>{
-        const xc=xC(i), xI=xc-bW-gap/2, xCl=xc+gap/2;
-        const yI=yF(s.inv), hI=Math.max(2,bot-yI);
-        const yCl=yF(s.clr), hCl=Math.max(2,bot-yCl);
-        let lbl=String(s.month||"");
-        lbl=lbl.replace(/([A-Za-z]{3})[a-z]*[\s\-](\d{2,4})/,(_,m,y)=>m+"'"+(y.length===4?y.slice(-2):y));
-        lbl=lbl.replace(/^(\d{4})[\/\-](\d{1,2})$/,(_,y,mo)=>{ const ms=["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]; return (ms[+mo]||mo)+"'"+y.slice(-2); });
-        return (
-          <g key={i}>
-            <rect x={xI} y={yI} width={bW} height={hI} fill={t.yellow} rx="3"><title>{s.month} Invoice: {s.inv.toFixed(1)}%</title></rect>
-            {s.inv>=8&&hI>16&&<text x={xI+bW/2} y={yI-3} textAnchor="middle" fontSize={8} fontWeight="700" fill={t.yellowD} fontFamily={MONO}>{Math.round(s.inv)}%</text>}
-            <rect x={xCl} y={yCl} width={bW} height={hCl} fill={C.teal} rx="3"><title>{s.month} Clearing: {s.clr.toFixed(1)}%</title></rect>
-            {s.clr>=8&&hCl>16&&<text x={xCl+bW/2} y={yCl-3} textAnchor="middle" fontSize={8} fontWeight="700" fill={C.tealD} fontFamily={MONO}>{Math.round(s.clr)}%</text>}
-            <text x={xc} y={H-pB+14} textAnchor="middle" fontSize={8.5} fill={t.muted} fontFamily={MONO}>{lbl}</text>
-          </g>
-        );
-      })}
-    </svg>
-  );
+  else if (s.includes("process")) { bg=t.warnBg; c=t.warnDark; bd=t.warnBd; }
+  else if (s.includes("not")||s.includes("pending")||s.includes("awaiting")||s.includes("unpaid")) { bg=t.badBg; c=t.badDark; bd=t.badBd; }
+  return <span style={{display:"inline-flex",padding:"2px 8px",borderRadius:6,fontSize:12,fontWeight:600,letterSpacing:"0.01em",background:bg,color:c,border:`1px solid ${bd}`}}>{val}</span>;
 }
 
 export default function PayoutTracker({
@@ -656,26 +764,26 @@ export default function PayoutTracker({
   const [screen, setScreen]          = useState("loading");
   const [src, setSrc]                = useState("partner");
   const [activeTab, setActiveTab]    = useState("dash");
-  const [heatMetric, setHeatMetric]  = useState("clr");
   const [loading, setLoading]        = useState(false);
   const [loadText, setLoadText]      = useState("Loading…");
   const [toast, setToast]            = useState({ msg:"", type:"", show:false });
   const [allRaw, setAllRaw]          = useState([]);
   const [pubMeta, setPubMeta]        = useState(null);
-  const [adminPartnerRaw, setAdminPartnerRaw] = useState([]);
-  const [adminAgencyRaw,  setAdminAgencyRaw]  = useState([]);
-  const [partnerFile, setPartnerFile] = useState("");
-  const [agencyFile,  setAgencyFile]  = useState("");
+  // Hasil upload per sisi: { file, sheet, rows } atau null
+  const [upload, setUpload] = useState({ partner:null, agency:null });
 
   const [showAllCols, setShowAllCols] = useState(false);
 
+  // Data lama di DB tetap jalan: Flow/Invoice Number/status diturunkan saat load.
+  const enrichedRaw = useMemo(() => allRaw.map(enrichRow), [allRaw]);
+
   const { partnerRaw, agencyRaw } = useMemo(() => {
-    const pAll = allRaw.filter(r => r._source === "partner" || !r._source);
-    const aAll = allRaw.filter(r => r._source === "agency");
+    const pAll = enrichedRaw.filter(r => r._source === "partner" || !r._source);
+    const aAll = enrichedRaw.filter(r => r._source === "agency");
     const pR = applySidebarFilter(pAll, partnerName, filterMpxType, effectiveRegion, masterData, "partner");
     const aR = applySidebarFilter(aAll, null, null, effectiveRegion, masterData, "agency");
     return { partnerRaw: pR, agencyRaw: aR };
-  }, [allRaw, partnerName, filterMpxType, effectiveRegion, masterData]);
+  }, [enrichedRaw, partnerName, filterMpxType, effectiveRegion, masterData]);
 
   const { partnerAgg, agencyAgg } = useMemo(() => {
     const { agg: pAgg } = parseRows(partnerRaw, "partner");
@@ -685,27 +793,20 @@ export default function PayoutTracker({
 
   const [filters, setFilters]         = useState({ month:[], entity:[], ptype:[], prog:[], status:[], q:"" });
   const [searchInput, setSearchInput] = useState("");
-  const [tblSort, setTblSort]         = useState({ col:"month", dir:"desc" });
   const [rawSort, setRawSort]         = useState({ col:null, dir:"asc" });
   const [rawPage, setRawPage]         = useState(1);
   const [rawPageSize]                 = useState(100);
-  // Status collapse Monthly Summary: { sig, map } — map hanya berlaku untuk set bulan (sig) saat itu.
-  const [collapseState, setCollapseState] = useState({ sig:null, map:{} });
-  const [dragOver, setDragOver]       = useState({ partner:false, agency:false });
   const [searchFocus, setSearchFocus] = useState(false);
   const [searchIdx, setSearchIdx]     = useState(-1);
   const searchRef                     = useRef(null);
-  const [funnelExp, setFunnelExp]     = useState(null);
-  const [donutExp, setDonutExp]       = useState(null);
   const [bnExp, setBnExp]             = useState(null);
-  const [tpExp, setTpExp]             = useState(null);
   const realtimeCh = useRef(null);
   const toastTmr   = useRef(null);
 
   const isAg   = src === "agency";
   const curRaw = isAg ? agencyRaw  : partnerRaw;
   const curAgg = isAg ? agencyAgg  : partnerAgg;
-  const slaSet = isAg ? SLA_A : SLA_P;
+  const slaSet = isAg ? SLA_STEPS.agency : SLA_STEPS.partner;
 
   const showToast = useCallback((msg,type="")=>{
     clearTimeout(toastTmr.current);
@@ -764,23 +865,39 @@ export default function PayoutTracker({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
 
-  async function handleFile(file, s) {
+  async function handleFile(file) {
     if (!file) return;
     try {
-      const rows = await readXLSX(file, s);
-      if (s==="partner") { setAdminPartnerRaw(rows); setPartnerFile(file.name); }
-      else               { setAdminAgencyRaw(rows);  setAgencyFile(file.name); }
-      showToast(`${s==="partner"?"Partner":"Agency"} file read: ${rows.length.toLocaleString()} rows`,"success");
+      const res = await readWorkbook(file);
+      if (!res.partner && !res.agency) { showToast('No "Partner Prepaid" or "Agency Prepaid" sheet with data found in this file',"error"); return; }
+      // Sisi yang tidak ada di file ini tetap dari upload sebelumnya → dua file terpisah tetap bisa
+      setUpload(u=>({
+        partner: res.partner ? { ...res.partner, file:file.name } : u.partner,
+        agency:  res.agency  ? { ...res.agency,  file:file.name } : u.agency,
+      }));
+      const lbl = [res.partner&&`Partner ${res.partner.rows.length.toLocaleString()}`, res.agency&&`Agency ${res.agency.rows.length.toLocaleString()}`].filter(Boolean).join(" · ");
+      showToast(`File read: ${lbl} rows`,"success");
     } catch(e) { showToast("Failed to read file: "+e.message,"error"); }
   }
 
   async function publish() {
-    const total = adminPartnerRaw.length + adminAgencyRaw.length;
-    if (!total) { showToast("Please upload a file first","error"); return; }
-    const merged = [...adminPartnerRaw.map(r=>({...r,_source:"partner"})),...adminAgencyRaw.map(r=>({...r,_source:"agency"}))];
-    const ts = new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});
-    const fnames = [partnerFile,agencyFile].filter(Boolean).join(", ")||"Data";
+    const { partner, agency } = upload;
+    if (!partner && !agency) { showToast("Please upload a file first","error"); return; }
     startLoad("Uploading to cloud…");
+    // Semua data tersimpan di SATU baris payout_data, dan dbSave mengganti baris itu.
+    // Sisi yang tidak di-upload disalin dari data live supaya tidak ikut hilang.
+    let keepPartner = [], keepAgency = [], kept = "";
+    if (!partner || !agency) {
+      let live;
+      try { live = await dbFetch(); }
+      catch (e) { stopLoad(); showToast("Could not read live data, nothing was published: "+(e?.message||e),"error"); return; }
+      const liveRows = live?.rows || [];
+      if (!partner) { keepPartner = liveRows.filter(r=>r._source==="partner"||!r._source); kept = "Partner"; }
+      else          { keepAgency  = liveRows.filter(r=>r._source==="agency"); kept = "Agency"; }
+    }
+    const merged = [...(partner?partner.rows:keepPartner),...(agency?agency.rows:keepAgency)];
+    const ts = new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}).replace("Sept","Sep");
+    const fnames = unique([partner?.file,agency?.file]).join(", ")+(kept?` (${kept} unchanged)`:"");
     const res = await dbSave({ fileName:fnames, rowCount:merged.length, publishedAt:ts, rows:merged });
     stopLoad();
     if (res.ok) { const meta={fileName:fnames,rowCount:merged.length,publishedAt:ts}; setPubMeta(meta); setCache({...meta,rows:merged}); setAllRaw(merged); showToast("✓ Published — all viewers auto-updated","success"); }
@@ -807,7 +924,7 @@ export default function PayoutTracker({
       entities: unique(curAgg.map(r=>r.entity)).sort(),
       ptypes:   unique(curAgg.map(r=>r.ptype)).sort(),
       progs:    unique(curAgg.map(r=>r.prog)).sort(),
-      statuses: unique(curRaw.map(r=>gstr(r,["status","payment status"]))).sort(),
+      statuses: unique(curRaw.map(rowStatus)).sort(),
     };
   },[curAgg,curRaw]);
 
@@ -827,8 +944,8 @@ export default function PayoutTracker({
       if (entSel.length>0   && !entSel.includes(gstr(r,["entity"]))) return false;
       if (ptypeSel.length>0 && !ptypeSel.includes(gstr(r,["partner type","agency name"]))) return false;
       if (progSel.length>0  && !progSel.includes(gstr(r,["program type"]))) return false;
-      if (statusSel.length>0 && !statusSel.includes(gstr(r,["status","payment status"]))) return false;
-      if (ql) { const blob=[gstr(r,["partner name","agency name"]),gstr(r,["project title"]),gstr(r,["po number","po #"]),gstr(r,["#req id"])].join(" ").toLowerCase(); if (!blob.includes(ql)) return false; }
+      if (statusSel.length>0 && !statusSel.includes(rowStatus(r))) return false;
+      if (ql) { const blob=[gstr(r,["partner name","agency name"]),gstr(r,["project title"]),r._inv,r._invId].join(" ").toLowerCase(); if (!blob.includes(ql)) return false; }
       return true;
     });
     if (statusSel.length>0||ql) agg = buildAgg(raw, src);
@@ -841,66 +958,22 @@ export default function PayoutTracker({
     return unique(filtRaw.map(r=>gstr(r,["partner name","agency name"]))).length;
   },[filtRaw]);
 
-  const funnelStages = useMemo(()=>{
-    const g = grand;
-    if (isAg) return [{key:"po",label:"PO Issued",val:g.po,color:C.tealDp},{key:"inv",label:"Invoice Submitted",val:g.inv,color:C.teal},{key:"clv",label:"CLV",val:g.clv,color:C.yellow},{key:"clr",label:"Bank Cleared",val:g.clr,color:C.yellowD}];
-    return [{key:"po",label:"PO Issued",val:g.po,color:C.tealDp},{key:"surat",label:"Surat Pemberitahuan",val:g.surat,color:C.tealD},{key:"inv",label:"Invoice Submitted",val:g.inv,color:C.teal},{key:"clv",label:"CLV",val:g.clv,color:C.yellow},{key:"clr",label:"Bank Cleared",val:g.clr,color:C.yellowD}];
-  },[grand,isAg]);
-
-  const trendSeries = useMemo(()=>{
-    return unique(filtAgg.map(r=>r.month)).sort((a,b)=>monthKey(a)-monthKey(b)).map(m=>{
-      const g = sumRows(filtAgg.filter(r=>r.month===m));
-      return { month:m, inv:g.n?(g.inv/g.n)*100:0, clr:g.n?(g.clr/g.n)*100:0 };
-    });
-  },[filtAgg]);
+  // Kolom BAST ada di data Agency yang di-upload?
+  const bastCols = useMemo(()=>{
+    const r0 = isAg ? curRaw[0] : null;
+    return { rcv: !!(r0 && findCol(r0,H_BAST_RCV)), app: !!(r0 && findCol(r0,H_BAST_APP)) };
+  },[isAg,curRaw]);
 
   const bnResults = useMemo(()=>{
     if (!filtRaw.length) return [];
     return slaSet.map(p=>{
       const details=[];
-      filtRaw.forEach(r=>{ const d=daysBetween(gcell(r,p.from),gcell(r,p.to)); if(d==null||d<0)return; details.push({days:d,po:gstr(r,["po number","po #"]),name:gstr(r,["partner name","agency name"]),title:gstr(r,["project title"])||"—",month:gstr(r,["program date","month"]),amt:gnum(r,["amount"])}); });
+      // Tiap step hanya menghitung baris dari flow-nya (step PO tidak ikut menghitung Direct Invoice, dan sebaliknya)
+      filtRaw.forEach(r=>{ const d=workDaysBetween(gcell(r,p.from),gcell(r,p.to)); if(d==null)return; details.push({days:d,po:refNo(r),name:gstr(r,["partner name","agency name"]),title:gstr(r,["project title"])||"—",month:(mk=>mk?ymLabel(mk):"—")(rowMonthKey(r)),amt:gnum(r,["amount"])}); });
       const ds=details.map(d=>d.days);
-      return {...p,avg:ds.length?ds.reduce((a,b)=>a+b,0)/ds.length:0,n:ds.length,details:details.sort((a,b)=>b.days-a.days)};
+      return {...p,avg:ds.length?ds.reduce((a,b)=>a+b,0)/ds.length:0,n:ds.length,ok:ds.filter(d=>d<=p.sla).length,details:details.sort((a,b)=>b.days-a.days)};
     });
   },[filtRaw,slaSet]);
-
-  const topPartners = useMemo(()=>{
-    if (!filtRaw.length) return [];
-    const agg={};
-    filtRaw.forEach(r=>{ const n=gstr(r,["partner name","agency name"]); if(!n)return; if(!agg[n])agg[n]={name:n,amt:0,n:0,clr:0,progs:[]}; agg[n].amt+=gnum(r,["amount"]); agg[n].n++; if(gcell(r,["clearing date","clearing"]))agg[n].clr++; agg[n].progs.push({po:gstr(r,["po number"]),title:gstr(r,["project title"])||"—",month:gstr(r,["program date","month"]),amt:gnum(r,["amount"]),cleared:!!gcell(r,["clearing date","clearing"])}); });
-    return Object.values(agg).sort((a,b)=>b.amt-a.amt).slice(0,10);
-  },[filtRaw]);
-
-  const donutPieces = useMemo(()=>{
-    const cm={"PAID H+3":C.teal,"Payment Process":C.tealD,"Invoice Not Submitted":C.yellow,"Awaiting Inv Submission":C.yellowD,"On Process Payment":C.magenta,"Unknown":C.grey};
-    const cnt={};
-    filtRaw.forEach(r=>{ const s=gstr(r,["status","payment status"])||"Unknown"; cnt[s]=(cnt[s]||0)+1; });
-    return Object.entries(cnt).map(([label,v])=>({label,v,color:cm[label]||C.pink}));
-  },[filtRaw]);
-
-  const heatData = useMemo(()=>{
-    const months=unique(filtAgg.map(r=>r.month)).sort((a,b)=>monthKey(b)-monthKey(a));
-    const ptypes=unique(filtAgg.map(r=>r.ptype)).filter(Boolean).sort();
-    const cells={};
-    filtAgg.forEach(r=>{ const k=r.month+"\x00"+r.ptype; if(!cells[k])cells[k]={n:0,inv:0,clv:0,clr:0}; const c=cells[k]; c.n+=r.n; c.inv+=r.inv; c.clv+=r.clv; c.clr+=r.clr; });
-    return { months, ptypes, cells };
-  },[filtAgg]);
-
-  const sortedMonths = useMemo(()=>unique(filtAgg.map(r=>r.month)).sort((a,b)=>{ const d=monthKey(a)-monthKey(b); return tblSort.dir==="asc"?d:-d; }),[filtAgg,tblSort]);
-  // Default Monthly Summary (semua user): hanya bulan terakhir terbuka, lainnya collapse.
-  // Default dipakai ulang setiap set bulan berubah (load data, ganti Partner/Agency, filter);
-  // toggle manual user tetap dipertahankan selama set bulannya sama. Arah sort tidak berpengaruh.
-  const monthsSig = useMemo(()=>src+"|"+unique(filtAgg.map(r=>r.month)).sort((a,b)=>monthKey(a)-monthKey(b)).join("¦"),[filtAgg,src]);
-  const defaultCollapsed = useMemo(()=>{
-    const ms=unique(filtAgg.map(r=>r.month)); if(!ms.length) return {};
-    const latest=ms.reduce((a,b)=>monthKey(b)>monthKey(a)?b:a);
-    const map={}; ms.forEach(m=>{ if(m!==latest) map[m]=true; }); return map;
-  },[filtAgg]);
-  const collapsed = collapseState.sig===monthsSig ? collapseState.map : defaultCollapsed;
-  const setCollapsed = useCallback(upd=>setCollapseState(st=>{
-    const base = st.sig===monthsSig ? st.map : defaultCollapsed;
-    return { sig:monthsSig, map: typeof upd==="function" ? upd(base) : upd };
-  }),[monthsSig,defaultCollapsed]);
 
   async function exportSummary(fmt) {
     if (!filtAgg.length) { showToast("No data available","error"); return; }
@@ -908,12 +981,13 @@ export default function PayoutTracker({
     if (fmt==="xlsx") {
       const XLSX=await getXLSX();
       const wb=XLSX.utils.book_new();
-      const ws=XLSX.utils.json_to_sheet(filtAgg.map(r=>({"Program Date":fmtMonthYear(r.month),"Entity":r.entity,"Partner/Agency Type":r.ptype,"Program Type":r.prog,"#Records":r.n,"PO":r.po,"Surat Pemberitahuan":r.surat,"Invoice":r.inv,"CLV":r.clv,"Clearing":r.clr,"% Invoice":r.n?+(r.inv/r.n*100).toFixed(1):0,"% CLV":r.n?+(r.clv/r.n*100).toFixed(1):0,"% Clearing":r.n?+(r.clr/r.n*100).toFixed(1):0})));
+      const ws=XLSX.utils.json_to_sheet(filtAgg.map(r=>({"Program Date":fmtMonthYear(r.month),"Entity":r.entity,"Partner/Agency Type":r.ptype,"Program Type":r.prog,"#Records":r.n,"Reva":r.reva,"Surat Pemberitahuan":r.surat,"Invoice":r.inv,"CLV":r.clv,"Clearing":r.clr,"% Invoice":r.n?+(r.inv/r.n*100).toFixed(1):0,"% CLV":r.n?+(r.clv/r.n*100).toFixed(1):0,"% Clearing":r.n?+(r.clr/r.n*100).toFixed(1):0})));
       XLSX.utils.book_append_sheet(wb,ws,"Summary"); XLSX.writeFile(wb,`${pref}_summary_${stamp}.xlsx`);
       showToast("Filtered summary downloaded — Excel","success");
     } else {
-      const hdr="Program Date,Entity,Partner Type,Program Type,#Rec,PO,Surat Pemberitahuan,Invoice,CLV,Clearing,% Invoice,% CLV,% Clearing";
-      const body=filtAgg.map(r=>[fmtMonthYear(r.month),r.entity,r.ptype,r.prog,r.n,r.po,r.surat,r.inv,r.clv,r.clr,r.n?+(r.inv/r.n*100).toFixed(1):0,r.n?+(r.clv/r.n*100).toFixed(1):0,r.n?+(r.clr/r.n*100).toFixed(1):0].join(",")).join("\n");
+      const hdr="Program Date,Entity,Partner Type,Program Type,#Rec,Reva,Surat Pemberitahuan,Invoice,CLV,Clearing,% Invoice,% CLV,% Clearing";
+      const csv=v=>{ const s=String(v??""); return /[",\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s; };
+      const body=filtAgg.map(r=>[fmtMonthYear(r.month),r.entity,r.ptype,r.prog,r.n,r.reva,r.surat,r.inv,r.clv,r.clr,r.n?+(r.inv/r.n*100).toFixed(1):0,r.n?+(r.clv/r.n*100).toFixed(1):0,r.n?+(r.clr/r.n*100).toFixed(1):0].map(csv).join(",")).join("\n");
       const a=document.createElement("a"); a.href="data:text/csv;charset=utf-8,\uFEFF"+encodeURIComponent(hdr+"\n"+body); a.download=`${pref}_${stamp}.csv`; a.click();
       showToast("Filtered summary downloaded — CSV","success");
     }
@@ -922,7 +996,7 @@ export default function PayoutTracker({
   async function exportRaw() {
     if (!filtRaw.length) { showToast("No data available","error"); return; }
     const XLSX=await getXLSX();
-    const allKeys=Object.keys(filtRaw[0]).filter(k=>k!=="_source");
+    const allKeys=Object.keys(filtRaw[0]).filter(k=>!k.startsWith("_")&&!isPoOnlyCol(k));
     // urutan kolom mengikuti tampilan front-end (rawKeys), sisanya menyusul di belakang
     const seen=new Set(), keys=[];
     for (const k of rawKeys) if (allKeys.includes(k) && !seen.has(k)) { keys.push(k); seen.add(k); }
@@ -950,7 +1024,7 @@ export default function PayoutTracker({
     const q=(searchInput||"").toLowerCase().trim();
     if (!q||q.length<2||!curRaw.length) return {partners:[],pos:[],projects:[]};
     const pCnt={},poCnt={},prCnt={};
-    curRaw.forEach(r=>{ const n=gstr(r,["partner name","agency name"]); if(n)pCnt[n]=(pCnt[n]||0)+1; const po=gstr(r,["po number","po #"]); if(po)poCnt[po]=(poCnt[po]||0)+1; const pr=gstr(r,["project title"]); if(pr)prCnt[pr]=(prCnt[pr]||0)+1; });
+    curRaw.forEach(r=>{ const n=gstr(r,["partner name","agency name"]); if(n)pCnt[n]=(pCnt[n]||0)+1; [r._inv,r._invId].forEach(po=>{ if(po)poCnt[po]=(poCnt[po]||0)+1; }); const pr=gstr(r,["project title"]); if(pr)prCnt[pr]=(prCnt[pr]||0)+1; });
     return {
       partners:Object.entries(pCnt).filter(([k])=>k.toLowerCase().includes(q)).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([k,v])=>({label:k,count:v,type:"partner"})),
       pos:     Object.entries(poCnt).filter(([k])=>k.toLowerCase().includes(q)).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,v])=>({label:k,count:v,type:"po"})),
@@ -962,34 +1036,51 @@ export default function PayoutTracker({
   useEffect(()=>{ if(filters.q==="") setSearchInput(""); },[filters.q]);
   useEffect(()=>{ setRawPage(1); },[filters]);
 
-  const MAIN_RAW_GROUPS = [
-    ["Program Date","program date","month","Month","bulan","Bulan","Periode"],
-    ["Partner Type","partner type","partnertype","partner_type","PartnerType","Agency Name","agency name"],
-    ["Project Title","project title","ProjectTitle"],
-    ["Partner Name","partner name","partner_name","partnerName","Agency Name","agency name"],
-    ["Amount","amount","Nilai","nilai"],
-    ["PO Number","po number","PO #","po #","No PO","no po"],
-    ["Invoice Submission","invoice submission","Invoice","invoice"],
-    ["Clearing Bank","clearing date","Clearing Date","clearing","Clearing","Cleared Bank","cleared bank"],
-    ["Estimation Date","estimation date","Estimasi","estimasi"],
-    ["Status","status","Payment Status","payment status"],
-  ];
+  const G = {
+    month:["Program Date","program date","month","Month","bulan","Bulan","Periode"],
+    ptype:["Partner Type","partner type","partnertype","partner_type","PartnerType","Agency Name","agency name"],
+    entity:["Entity","entity"],
+    title:["Project Title","project title","ProjectTitle"],
+    name:["Partner Name","partner name","partner_name","partnerName","Agency Name","agency name"],
+    amount:["Amount","amount","Nilai","nilai"],
+    flow:["Flow","flow"],
+    req:["#Req ID","#req id","req id"],
+    po:["PO Number","po number","PO #","po #","No PO","no po"],
+    reqDate:["Reva Date","reva date","Req Date","req date"],
+    reva:["Reva Date","reva date"],
+    invId:["Invoice ID","invoice id","Inv ID","ID Invoice"],
+    bastR:["BAST Received Date","bast received date","BAST Date","bast date"],
+    bastA:["BAST Approved Date","bast approved date","BAST Approval Date","Approval Date","approval date"],
+    poDate:["PO Date","po date"],
+    surat:["Surat Pemberitahuan Date","surat pemberitahuan date","surat pemberitahuan"],
+    inv:["Invoice Number","invoice number","Inv Number","inv number","Invoice No"],
+    invDate:["Invoice Date","invoice date"],
+    invSub:["Invoice Submission","invoice submission","Invoice Date","invoice date","Invoice","invoice"],
+    clv:["Clv Date","clv date","CLV"],
+    clr:["Clearing Bank Date","clearing bank date","Clearing Bank","clearing date","Clearing Date","clearing","Clearing","Cleared Bank","cleared bank"],
+    est:["Estimation Date","estimation date","Estimasi","estimasi"],
+    status:["Status","status","Payment Status","payment status"],
+  };
+  // Kolom utama: identitas invoice + tanggal tahap
+  const MAIN_RAW_GROUPS = isAg
+    ? [G.month,G.ptype,G.title,G.amount,G.invId,G.inv,G.bastR,G.bastA,G.invSub,G.clv,G.clr,G.est,G.status]
+    : [G.month,G.ptype,G.title,G.name,G.amount,G.invId,G.inv,G.reva,G.surat,G.invSub,G.clv,G.clr,G.est,G.status];
 
-  const RAW_COL_ORDER = ["Program Date","program date","Entity","entity","Partner Type","partner type","partnertype","partner_type","Project Title","project title","#Req ID","#req id","req id","Partner Name","partner name","partner_name","Amount","amount","PO Number","po number","PO #","po #","Reva Date","reva date","PO Date","po date","Surat Pemberitahuan Date","surat pemberitahuan date","surat pemberitahuan","Invoice Submission","invoice submission","invoice","CLV Date","clv date","clv","Estimation Date","estimation date","Status","status","Payment Status","payment status"];
+  const RAW_COL_ORDER = ["Program Date","program date","Entity","entity","Partner Type","partner type","partnertype","partner_type","Project Title","project title","#Req ID","#req id","req id","Partner Name","partner name","partner_name","Amount","amount","Invoice ID","invoice id","Invoice Number","invoice number","Reva Date","reva date","PO Date","po date","Surat Pemberitahuan Date","surat pemberitahuan date","surat pemberitahuan","Invoice Submission","invoice submission","invoice","CLV Date","clv date","clv","Estimation Date","estimation date","Status","status","Payment Status","payment status"];
 
   const rawKeysAll = useMemo(()=>{
     if (!curRaw.length) return [];
-    const allKeys=Object.keys(curRaw[0]).filter(k=>k!=="_source");
+    const allKeys=Object.keys(curRaw[0]).filter(k=>!k.startsWith("_"));
     const seen=new Set(), ordered=[];
     for (const p of RAW_COL_ORDER) { const f=allKeys.find(k=>k.toLowerCase().trim()===p.toLowerCase().trim()); if(f&&!seen.has(f)){ordered.push(f);seen.add(f);} }
     for (const k of allKeys) { if(!seen.has(k))ordered.push(k); }
-    return ordered;
+    return ordered.filter(k=>!isPoOnlyCol(k));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[curRaw]);
 
   const rawKeysMain = useMemo(()=>{
     if (!curRaw.length) return [];
-    const allKeys=Object.keys(curRaw[0]).filter(k=>k!=="_source");
+    const allKeys=Object.keys(curRaw[0]).filter(k=>!k.startsWith("_"));
     const norm = s => s.toLowerCase().replace(/\s+/g," ").trim();
     const seen=new Set(), ordered=[];
     for (const group of MAIN_RAW_GROUPS) {
@@ -998,9 +1089,9 @@ export default function PayoutTracker({
       if(!found) for (const cand of group) { const f=allKeys.find(k=>norm(k).includes(norm(cand))); if(f){found=f;break;} }
       if(found && !seen.has(found)){ ordered.push(found); seen.add(found); }
     }
-    return ordered;
+    return ordered.filter(k=>!isPoOnlyCol(k));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[curRaw]);
+  },[curRaw,isAg]);
 
   const rawKeys = showAllCols ? rawKeysAll : (rawKeysMain.length ? rawKeysMain : rawKeysAll);
 
@@ -1016,12 +1107,13 @@ export default function PayoutTracker({
   const isLeftCol     = k => { const kk=k.toLowerCase().replace(/\s+/g,""); return kk.includes("name")||kk.includes("title")||kk.includes("entity")||kk.includes("type")||kk.includes("project")||kk==="remarks"; };
 
   const fmtCellT = (val,key,t) => {
-    if (val==null||val==="") return <span style={{fontFamily:MONO,fontStyle:"italic",fontSize:10.5,color:t.muted2}}>—</span>;
+    if (val==null||val==="") return <span style={{fontVariantNumeric:"tabular-nums",fontStyle:"italic",fontSize:12,color:t.muted2}}>—</span>;
     if (isMonthKey(key)) return fmtMonthYear(val);
     if (isDateKey(key)) { const d=toDate(val); if(d) return fmtDate(d); }
     const kl=key.toLowerCase().replace(/\s+/g,"");
+    if (kl==="entity") return String(entLabel(val));
     if (kl==="status"||kl==="paymentstatus") return <StatusBadge val={String(val)} t={t}/>;
-    if (kl==="amount"||kl.includes("amount")) { const n=typeof val==="number"?val:parseFloat(String(val).replace(/[^\d.-]/g,"")); if(!isNaN(n)&&n!==0)return <span style={{fontFamily:MONO,fontSize:11.5,textAlign:"right",display:"block",color:t.ink}}>{fmtMoney(n,false)}</span>; }
+    if (kl==="amount"||kl.includes("amount")) { const n=typeof val==="number"?val:parseFloat(String(val).replace(/[^\d.-]/g,"")); if(!isNaN(n)&&n!==0)return <span style={{fontVariantNumeric:"tabular-nums",textAlign:"right",display:"block",color:t.ink}}>{fmtMoney(n,false)}</span>; }
     return String(val);
   };
 
@@ -1030,18 +1122,17 @@ export default function PayoutTracker({
     regionView,setRegionView,regionOptions,
     partnerName,filterMpxType,regionFilter:effectiveRegion,
     screen,setScreen,loading,loadText,toast,
-    partnerRaw:adminPartnerRaw,agencyRaw:adminAgencyRaw,
+    upload,setUpload,
     viewPartnerRaw:partnerRaw, viewAgencyRaw:agencyRaw,
-    partnerFile,agencyFile,setPartnerRaw:setAdminPartnerRaw,setAgencyRaw:setAdminAgencyRaw,
-    setPartnerFile,setAgencyFile,pubMeta,
-    filters,setFilters,opts,tblSort,setTblSort,rawSort,setRawSort,
-    rawPage,setRawPage,rawPageSize,collapsed,setCollapsed,
-    dragOver,setDragOver,searchFocus,setSearchFocus,searchIdx,setSearchIdx,
+    pubMeta,
+    filters,setFilters,opts,rawSort,setRawSort,
+    rawPage,setRawPage,rawPageSize,
+    searchFocus,setSearchFocus,searchIdx,setSearchIdx,
     searchRef,searchSuggestions,allSuggestions,searchInput,setSearchInput,
-    funnelExp,setFunnelExp,donutExp,setDonutExp,bnExp,setBnExp,tpExp,setTpExp,
-    src,setSrc,activeTab,setActiveTab,heatMetric,setHeatMetric,
+    bnExp,setBnExp,
+    src,setSrc,activeTab,setActiveTab,
     curRaw,curAgg,filtAgg,filtRaw,grand,grandPartnerCount,
-    funnelStages,trendSeries,donutPieces,heatData,bnResults,topPartners,sortedMonths,
+    bnResults,bastCols,
     rawKeys,rawKeysAll,rawKeysMain,showAllCols,setShowAllCols,
     pageRaw,curRawPage,totalRawPages,fmtCellT,isLeftCol,
     handleFile,publish,viewDash,clearData,exportSummary,exportRaw,showToast,
@@ -1053,18 +1144,28 @@ export default function PayoutTracker({
 function ThemeWrapper(props) {
   const t = useTheme(props.themeProp);
   useKeyframes();
+  const rootRef = useRef(null);
+  const [boxW, setBoxW] = useState(null);
+  useEffect(()=>{
+    const el = rootRef.current;
+    if (!el || typeof ResizeObserver==="undefined") return;
+    const ro = new ResizeObserver(es=>{ const cw = Math.round(es[0].contentRect.width); if (cw>0) setBoxW(cw); });
+    ro.observe(el);
+    return ()=>ro.disconnect();
+  },[]);
   const { loading, loadText, toast, screen } = props;
   const toastBg    = toast.type==="success"?t.goodBg :toast.type==="error"?t.badBg :t.surf;
   const toastColor = toast.type==="success"?t.goodDark:toast.type==="error"?t.badDark:t.ink;
   const toastBd    = toast.type==="success"?t.goodBd :toast.type==="error"?t.badBd :t.line;
   return (
-    <div style={{fontFamily:"-apple-system,'DM Sans','Plus Jakarta Sans',BlinkMacSystemFont,'SF Pro Text',sans-serif",fontSize:14,lineHeight:1.45,color:t.ink,WebkitFontSmoothing:"antialiased",minHeight:"100%",background:"transparent"}}>
+    <WidthCtx.Provider value={boxW}>
+    <div ref={rootRef} style={{fontFamily:"-apple-system,'DM Sans','Plus Jakarta Sans',BlinkMacSystemFont,'SF Pro Text',sans-serif",fontSize:14,lineHeight:1.45,color:t.ink,WebkitFontSmoothing:"antialiased",minHeight:"100%",background:"transparent"}}>
       {loading && <LoadingBar/>}
       {loading && (
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:9998,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(8px)",padding:16}}>
           <div style={{background:t.surf,border:`1px solid ${t.line}`,borderRadius:20,padding:"24px 32px",display:"flex",alignItems:"center",gap:16,boxShadow:t.shadow3,maxWidth:"calc(100vw - 32px)"}}>
             <Spinner size={28} color={C.teal}/>
-            <span style={{fontFamily:MONO,fontSize:13,color:t.muted}}>{loadText}</span>
+            <span style={{fontVariantNumeric:"tabular-nums",fontSize:13,color:t.muted}}>{loadText}</span>
           </div>
         </div>
       )}
@@ -1072,30 +1173,40 @@ function ThemeWrapper(props) {
       <div style={{position:"fixed",bottom:20,right:16,left:"auto",zIndex:9997,padding:"13px 18px",borderRadius:14,background:toastBg,color:toastColor,border:`1px solid ${toastBd}`,boxShadow:t.shadow3,fontWeight:600,fontSize:13,transition:"opacity .25s, transform .25s",opacity:toast.show?1:0,transform:toast.show?"translateY(0)":"translateY(16px)",pointerEvents:"none",maxWidth:"min(360px, calc(100vw - 32px))"}}>
         {toast.msg}
       </div>
-      {screen==="loading"   && <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:300,gap:12,color:t.muted,flexDirection:"column"}}><Spinner size={32} color={C.teal}/><span style={{fontFamily:MONO,fontSize:13}}>Loading data…</span></div>}
+      {screen==="loading"   && <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:300,gap:12,color:t.muted,flexDirection:"column"}}><Spinner size={32} color={C.teal}/><span style={{fontVariantNumeric:"tabular-nums",fontSize:13}}>Loading data…</span></div>}
       {screen==="empty"     && <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:320,gap:16,textAlign:"center",padding:"0 24px"}}><div style={{fontSize:52}}>📭</div><div style={{fontWeight:800,fontSize:22,letterSpacing:"-0.03em",color:t.ink}}>No data available</div><div style={{color:t.muted,maxWidth:360,lineHeight:1.65,fontSize:14}}>No data has been published by Admin yet. This page updates automatically when data becomes available.</div></div>}
       {screen==="admin"     && <AdminScreen {...props} t={t}/>}
       {screen==="dashboard" && <DashScreen  {...props} t={t}/>}
     </div>
+    </WidthCtx.Provider>
   );
 }
 
-function AdminScreen({ t, pubMeta, partnerFile, agencyFile, partnerRaw, agencyRaw, setPartnerRaw, setAgencyRaw, setPartnerFile, setAgencyFile, dragOver, setDragOver, handleFile, publish, viewDash, clearData }) {
+function AdminScreen({ t, pubMeta, upload, setUpload, handleFile, publish, viewDash, clearData }) {
   const w = useWidth();
   const [confirmDel, setConfirmDel] = useState(false);
+  const [confirmPub, setConfirmPub] = useState(false);
+  const [drag, setDrag] = useState(false);
+  const sides = useMemo(()=>[["partner","Partner Prepaid",C.teal],["agency","Agency Prepaid",C.teal]].map(([k,label,ac])=>{
+    const u = upload[k];
+    return { k, label, ac, u, n:u?u.rows.length:0, amt:u?u.rows.reduce((a,r)=>a+gnum(r,["amount","nilai"]),0):0 };
+  }),[upload]);
+  const ready = sides.filter(x=>x.u), missing = sides.filter(x=>!x.u);
+  const confirmText = `This will replace ${ready.map(x=>`${x.label} (${plural(x.n,"row")})`).join(" and ")} for everyone.${missing.length&&ready.length?` ${missing[0].label} stays as it is.`:""}`;
+  const pick = (file) => { setConfirmPub(false); handleFile(file); };
   return (
     <div style={{maxWidth:1200,margin:"0 auto",padding:w<480?"18px 14px 44px":w<768?"20px 16px 48px":"24px 20px 56px"}}>
       <div style={{marginBottom:28}}>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
-          <span style={{fontFamily:MONO,fontSize:10,letterSpacing:"0.18em",textTransform:"uppercase",color:t.muted}}>Admin · Payout Tracker</span>
+          <span style={{fontSize:12,letterSpacing:"0.01em",color:t.muted}}>Admin · Payout Tracker</span>
           <span style={{width:5,height:5,borderRadius:"50%",background:C.teal,display:"inline-block"}}/>
-          <span style={{fontFamily:MONO,fontSize:10,color:C.teal,letterSpacing:"0.1em"}}>Realtime</span>
+          <span style={{fontSize:12,color:t.goodDark,fontWeight:600}}>Realtime</span>
         </div>
         <h1 style={{fontWeight:800,fontSize:"clamp(1.8rem,4vw,2.8rem)",letterSpacing:"-0.03em",color:t.ink,margin:"0 0 8px",lineHeight:1.05}}>Upload &amp; Publish Data</h1>
-        <p style={{color:t.muted,fontSize:14,maxWidth:"52ch",lineHeight:1.65,margin:0}}>Upload Partner Prepaid &amp; Agency Prepaid files, then publish. All viewers update automatically via realtime sync.</p>
+        <p style={{color:t.muted,fontSize:14,maxWidth:"60ch",lineHeight:1.65,margin:0}}>Upload one workbook. The &ldquo;Partner Prepaid&rdquo; and &ldquo;Agency Prepaid&rdquo; sheets are read together; other sheets are ignored. All viewers update automatically after you publish.</p>
         <div style={{display:"flex",gap:8,marginTop:14,flexWrap:"wrap"}}>
-          {[{l:"Partner SLA 2/1/2/2/3 WD (Working Days)",c:C.teal},{l:"Agency SLA 2/2/2/3 WD (Working Days)",c:C.magenta}].map((b,i)=>(
-            <span key={i} style={{display:"inline-flex",alignItems:"center",padding:"5px 12px",borderRadius:99,background:`${b.c}18`,color:b.c,border:`1px solid ${b.c}40`,fontFamily:MONO,fontSize:10.5,fontWeight:600}}>{b.l}</span>
+          {[{l:`Partner SLA ${slaText(false)} working days (Reva → Surat → Invoice → CLV → Bank)`},{l:`Agency SLA ${slaText(true)} working days (BAST received → BAST approved → Invoice submission → CLV → Bank)`}].map((b,i)=>(
+            <span key={i} style={{display:"inline-flex",alignItems:"center",padding:"4px 11px",borderRadius:99,background:t.surf2,color:t.ink2,border:`1px solid ${t.line}`,fontSize:12,fontWeight:600}}>{b.l}</span>
           ))}
         </div>
       </div>
@@ -1106,8 +1217,8 @@ function AdminScreen({ t, pubMeta, partnerFile, agencyFile, partnerRaw, agencyRa
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
             </div>
             <div style={{minWidth:0}}>
-              <div style={{fontWeight:700,fontSize:13.5,color:t.goodDark}}>Data published successfully — all viewers auto-updated</div>
-              <div style={{fontFamily:MONO,fontSize:10.5,color:t.muted,marginTop:2,wordBreak:"break-word"}}>{pubMeta.fileName} · {(pubMeta.rowCount||0).toLocaleString()} rows · {pubMeta.publishedAt}</div>
+              <div style={{fontWeight:700,fontSize:13.5,color:t.goodDark}}>Live data · visible to all viewers</div>
+              <div style={{fontSize:12.5,color:t.muted,marginTop:2,wordBreak:"break-word"}}>{pubMeta.fileName} · {plural(pubMeta.rowCount||0,"row")} · published {pubMeta.publishedAt}</div>
             </div>
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
@@ -1116,7 +1227,7 @@ function AdminScreen({ t, pubMeta, partnerFile, agencyFile, partnerRaw, agencyRa
               ? <Btn t={t} variant="danger" sm onClick={()=>setConfirmDel(true)}>Delete Data</Btn>
               : (
                 <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",padding:"6px 10px",background:t.badBg,border:`1px solid ${t.badBd}`,borderRadius:12}}>
-                  <span style={{fontSize:11.5,color:t.badDark,fontWeight:600}}>All viewers will immediately lose access. Are you sure?</span>
+                  <span style={{fontSize:12,color:t.badDark,fontWeight:600}}>All viewers will immediately lose access. Are you sure?</span>
                   <Btn t={t} variant="danger" sm onClick={()=>{setConfirmDel(false);clearData();}}>Yes, Delete Permanently</Btn>
                   <Btn t={t} variant="ghost" sm onClick={()=>setConfirmDel(false)}>Cancel</Btn>
                 </div>
@@ -1124,60 +1235,60 @@ function AdminScreen({ t, pubMeta, partnerFile, agencyFile, partnerRaw, agencyRa
           </div>
         </div>
       )}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",gap:14,marginBottom:16}}>
-        {["partner","agency"].map(s=>{
-          const fname=s==="partner"?partnerFile:agencyFile, rws=s==="partner"?partnerRaw:agencyRaw, ac=s==="partner"?C.teal:C.magenta, drag=dragOver[s];
-          return (
-            <div key={s}
-              style={{background:drag?`${ac}12`:fname?t.goodBg:t.surf,border:`2px dashed ${drag?ac:fname?t.goodBd:t.line2}`,borderRadius:18,padding:w<480?"26px 18px 22px":"32px 24px 26px",textAlign:"center",cursor:"pointer",position:"relative",transition:"all .18s",boxShadow:t.shadow1}}
-              onDrop={e=>{e.preventDefault();setDragOver(d=>({...d,[s]:false}));handleFile(e.dataTransfer.files[0],s);}}
-              onDragOver={e=>{e.preventDefault();setDragOver(d=>({...d,[s]:true}));}}
-              onDragLeave={()=>setDragOver(d=>({...d,[s]:false}))}
-              onClick={()=>document.getElementById(`pt-f-${s}`).click()}
-              {...kbd(()=>document.getElementById(`pt-f-${s}`).click())}>
-              <span style={{position:"absolute",top:14,left:14,display:"inline-flex",padding:"3px 10px",borderRadius:99,background:`${ac}18`,color:ac,border:`1px solid ${ac}40`,fontFamily:MONO,fontSize:9.5,letterSpacing:"0.1em",textTransform:"uppercase"}}>{s==="partner"?"Partner Prepaid":"Agency Prepaid"}</span>
-              <div style={{width:54,height:54,borderRadius:15,background:ac,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}>
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              </div>
-              <div style={{fontWeight:700,fontSize:15,color:t.ink,marginBottom:5}}>{s==="partner"?"Drop Partner file here":"Drop Agency file here"}</div>
-              <div style={{fontFamily:MONO,fontSize:10.5,color:t.muted}}>or click to browse · .xlsx · .xls · .csv</div>
-              <input type="file" id={`pt-f-${s}`} accept=".xlsx,.xls,.csv" onChange={e=>handleFile(e.target.files[0],s)} style={{display:"none"}}/>
-              {fname&&(
-                <div style={{marginTop:14,padding:"7px 14px",background:t.goodBg,color:t.goodDark,border:`1px solid ${t.goodBd}`,borderRadius:10,fontSize:11.5,fontWeight:600,display:"inline-flex",alignItems:"center",gap:7,maxWidth:"100%",wordBreak:"break-all",lineHeight:1.3}}>
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
-                  {fname} · {rws.length.toLocaleString()} rows
-                </div>
-              )}
-            </div>
-          );
-        })}
+      <div
+        style={{background:drag?`${C.teal}12`:t.surf,border:`2px dashed ${drag?C.teal:ready.length?t.goodBd:t.line2}`,borderRadius:18,padding:w<480?"26px 18px 22px":"32px 24px 26px",textAlign:"center",cursor:"pointer",transition:"all .18s",boxShadow:t.shadow1,marginBottom:14}}
+        onDrop={e=>{e.preventDefault();setDrag(false);pick(e.dataTransfer.files[0]);}}
+        onDragOver={e=>{e.preventDefault();setDrag(true);}}
+        onDragLeave={()=>setDrag(false)}
+        onClick={()=>document.getElementById("pt-f-upload").click()}
+        {...kbd(()=>document.getElementById("pt-f-upload").click())}>
+        <div style={{width:54,height:54,borderRadius:15,background:C.teal,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
+        <div style={{fontWeight:700,fontSize:15,color:t.ink,marginBottom:5}}>Drop the payout workbook here</div>
+        <div style={{fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted}}>or click to browse · .xlsx · .xls · .csv</div>
+        <input id="pt-f-upload" type="file" accept=".xlsx,.xls,.csv" onClick={e=>e.stopPropagation()} onChange={e=>{pick(e.target.files[0]);e.target.value="";}} style={{display:"none"}}/>
       </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",gap:14,marginBottom:10}}>
+        {sides.map(x=>(
+          <div key={x.k} style={{background:x.u?t.goodBg:t.surf,borderTop:`1px solid ${x.u?t.goodBd:t.line}`,borderRight:`1px solid ${x.u?t.goodBd:t.line}`,borderBottom:`1px solid ${x.u?t.goodBd:t.line}`,borderLeft:`3px solid ${x.ac}`,borderRadius:14,padding:"12px 16px",minWidth:0}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+              <span style={{fontWeight:700,fontSize:13.5,color:t.ink}}>{x.label}</span>
+              <span style={{fontVariantNumeric:"tabular-nums",fontSize:12,fontWeight:600,color:x.u?t.goodDark:t.muted}}>{x.u?"✓ Found":"Not found"}</span>
+            </div>
+            {x.u
+              ? <>
+                  <div style={{fontWeight:800,fontSize:18,color:t.ink,marginTop:4}}>{plural(x.n,"row")} · {fmtRpWord(x.amt)}</div>
+                  <div style={{fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted,marginTop:2,wordBreak:"break-word"}}>{fmtRpFull(x.amt)} · sheet &ldquo;{x.u.sheet}&rdquo; · {x.u.file}</div>
+                  {x.u.dup>0&&<div style={{fontSize:12,color:t.badDark,fontWeight:600,marginTop:4}}>⚠ {x.u.dup} row{x.u.dup!==1?"s":""} from the &ldquo;… MDI&rdquo; sheet repeat an invoice number from the main sheet — check for double counting.</div>}
+                </>
+              : <div style={{fontSize:12.5,color:t.muted,marginTop:4,lineHeight:1.5}}>{ready.length?"Live data for this side stays unchanged. You can also drop a second file for it.":"Waiting for a file."}</div>}
+          </div>
+        ))}
+      </div>
+      {confirmPub&&ready.length>0&&(
+        <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",padding:"10px 14px",background:t.warnBg,border:`1px solid ${t.warnBd}`,borderRadius:12,marginBottom:12}}>
+          <span style={{flex:"1 1 260px",fontSize:13,fontWeight:600,color:t.ink}}>{confirmText}</span>
+          <Btn t={t} variant="primary" sm onClick={()=>{setConfirmPub(false);publish();}}>Yes, Publish</Btn>
+          <Btn t={t} variant="ghost" sm onClick={()=>setConfirmPub(false)}>Cancel</Btn>
+        </div>
+      )}
       <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:12}}>
-        <Btn t={t} variant="primary" onClick={publish}>
+        <Btn t={t} variant="primary" disabled={!ready.length} style={ready.length?{}:{opacity:.5,cursor:"not-allowed"}} onClick={()=>setConfirmPub(true)}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
           Publish to Cloud
         </Btn>
-        <Btn t={t} variant="outline" onClick={viewDash}>Preview Dashboard</Btn>
-        <Btn t={t} variant="ghost" onClick={()=>{setPartnerRaw([]);setAgencyRaw([]);setPartnerFile("");setAgencyFile("");}}>Reset Upload</Btn>
+        {!pubMeta&&<Btn t={t} variant="outline" onClick={viewDash}>View Live Dashboard</Btn>}
+        <Btn t={t} variant="ghost" onClick={()=>{setConfirmPub(false);setUpload({partner:null,agency:null});}}>Reset Upload</Btn>
       </div>
-      {(partnerRaw.length>0||agencyRaw.length>0)&&(
-        <div style={{fontFamily:MONO,fontSize:11,color:t.muted,padding:"8px 14px",background:t.surf2,borderRadius:10,border:`1px solid ${t.line}`,marginTop:2,wordBreak:"break-word"}}>
-          Ready to publish: {[partnerRaw.length&&`Partner ${partnerRaw.length.toLocaleString()}`,agencyRaw.length&&`Agency ${agencyRaw.length.toLocaleString()}`].filter(Boolean).join(" · ")} · Total {(partnerRaw.length+agencyRaw.length).toLocaleString()} rows
-        </div>
-      )}
     </div>
   );
 }
 
-function NoteCard({n,t}) {
-  const [hov,hE]=useHover();
-  return <div {...hE} style={{padding:"10px 14px",borderRadius:12,background:hov?t.surf3:t.surf2,borderTop:`1px solid ${hov?t.line2:t.line}`,borderRight:`1px solid ${hov?t.line2:t.line}`,borderBottom:`1px solid ${hov?t.line2:t.line}`,borderLeft:`3px solid ${n.c}`,transition:"all .15s"}}><div style={{fontFamily:MONO,fontSize:9.5,letterSpacing:"0.12em",textTransform:"uppercase",color:t.muted,marginBottom:4}}>{n.l}</div><div style={{fontSize:12,color:t.ink2,lineHeight:1.45}}>{n.txt}</div></div>;
-}
-
 function SegBtn({s,active,disabled,count,label,onClick,t}) {
   const [hov,hE]=useHover();
-  const ac=s==="partner"?C.teal:C.magenta;
-  return <button {...hE} onClick={onClick} disabled={disabled} style={{fontWeight:600,fontSize:12.5,padding:"8px 18px",borderRadius:10,border:0,background:active?ac:hov?t.surf3:"transparent",color:active?"#fff":hov?t.ink:t.muted,cursor:disabled?"default":"pointer",display:"inline-flex",alignItems:"center",gap:8,transition:"all .15s",whiteSpace:"nowrap",opacity:disabled?.38:1,pointerEvents:disabled?"none":"auto"}}>{label}<span style={{fontFamily:MONO,fontSize:10,padding:"2px 7px",borderRadius:99,background:active?"rgba(255,255,255,.22)":t.surf4,color:active?"#fff":t.ink2}}>{count}</span></button>;
+  const ac=C.teal;
+  return <button {...hE} onClick={onClick} disabled={disabled} style={{fontWeight:600,fontSize:12.5,padding:"8px 18px",borderRadius:10,border:0,background:active?ac:hov?t.surf3:"transparent",color:active?"#fff":hov?t.ink:t.muted,cursor:disabled?"default":"pointer",display:"inline-flex",alignItems:"center",gap:8,transition:"all .15s",whiteSpace:"nowrap",opacity:disabled?.38:1,pointerEvents:disabled?"none":"auto"}}>{label}<span style={{fontVariantNumeric:"tabular-nums",fontSize:12,padding:"2px 7px",borderRadius:99,background:active?"rgba(255,255,255,.22)":t.surf4,color:active?"#fff":t.ink2}}>{count}</span></button>;
 }
 
 function TabBtn({label,count,active,onClick,t}) {
@@ -1185,294 +1296,131 @@ function TabBtn({label,count,active,onClick,t}) {
   return (
     <button {...hE} onClick={onClick} style={{background:"transparent",border:0,fontWeight:600,fontSize:13,padding:"10px 0 14px",color:active?t.ink:hov?t.ink2:t.muted,cursor:"pointer",position:"relative",display:"inline-flex",alignItems:"center",gap:8,whiteSpace:"nowrap",flexShrink:0,transition:"color .15s"}}>
       {label}
-      {count!==undefined&&<span style={{fontFamily:MONO,fontSize:10,padding:"2px 7px",borderRadius:99,background:active?`${C.magenta}18`:t.surf3,color:active?C.magenta:t.muted,border:`1px solid ${active?`${C.magenta}30`:t.line}`}}>{count.toLocaleString()}</span>}
-      {active&&<span style={{position:"absolute",left:0,right:0,bottom:-1,height:"2.5px",background:C.magenta,borderRadius:"2px 2px 0 0"}}/>}
+      {count!==undefined&&<span style={{fontSize:12,fontVariantNumeric:"tabular-nums",padding:"1px 8px",borderRadius:99,background:active?`${C.teal}1A`:t.surf3,color:active?t.goodDark:t.muted,border:`1px solid ${active?`${C.teal}40`:t.line}`}}>{count.toLocaleString()}</span>}
+      {active&&<span style={{position:"absolute",left:0,right:0,bottom:0,height:"2.5px",background:C.teal,borderRadius:"2px 2px 0 0"}}/>}
     </button>
   );
 }
 
 function SugItem({s,active,iconLabel,accentColor,onPick,t}) {
   const [hov,hE]=useHover();
-  return <div {...hE} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 14px",cursor:"pointer",background:active||hov?t.surf3:"transparent",borderTop:`1px solid ${t.line}`,transition:"background .1s"}} onMouseDown={onPick}><span style={{width:22,height:22,borderRadius:7,background:accentColor,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontFamily:MONO,fontSize:8,fontWeight:700,color:"#fff"}}>{iconLabel}</span><span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontSize:12.5,fontWeight:500,color:t.ink}}>{s.label}</span><span style={{fontFamily:MONO,fontSize:10,flexShrink:0,color:t.muted}}>{s.count}</span></div>;
-}
-
-function DonutRow({p,total,isExp,onToggle,filtRaw,t}) {
-  const [hov,hE]=useHover();
-  const recs=isExp?filtRaw.filter(r=>(gstr(r,["status","payment status"])||"Unknown")===p.label).slice(0,30):[];
-  return (
-    <div>
-      <div {...hE} {...kbd(onToggle)} onClick={onToggle} aria-expanded={isExp} style={{display:"grid",gridTemplateColumns:"1fr auto 20px",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:10,background:isExp?`${C.teal}12`:hov?t.surf3:t.surf2,border:`1px solid ${isExp?C.teal:hov?t.line2:t.line}`,cursor:"pointer",transition:"all .15s"}}>
-        <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}><span style={{width:10,height:10,borderRadius:"50%",background:p.color,flexShrink:0}}/><span style={{fontWeight:600,fontSize:12,color:t.ink,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.label}</span></div>
-        <div style={{display:"flex",alignItems:"baseline",gap:5}}><span style={{fontFamily:MONO,fontWeight:600,fontSize:12,color:t.ink}}>{p.v.toLocaleString()}</span><span style={{fontFamily:MONO,fontSize:10,color:t.muted}}>({Math.round(p.v/(total||1)*100)}%)</span></div>
-        <span style={{fontSize:9,color:isExp?C.teal:t.muted,display:"inline-block",transform:isExp?"rotate(180deg)":"none",transition:"transform .2s"}}>▼</span>
-      </div>
-      {isExp&&recs.length>0&&<div style={{marginTop:4,background:t.surf2,border:`1px solid ${t.line}`,borderRadius:10,overflow:"hidden",maxHeight:200,overflowY:"auto"}}>{recs.map((r,j)=><DetailRow key={j} po={gstr(r,["po number","po #"])||"No PO"} name={gstr(r,["project title"])||gstr(r,["partner name","agency name"])||"—"} meta={fmtMoney(gnum(r,["amount"]))} t={t}/>)}</div>}
-      {isExp&&recs.length===0&&<div style={{marginTop:4,padding:"8px 12px",background:t.surf2,border:`1px solid ${t.line}`,borderRadius:10,fontSize:11.5,fontStyle:"italic",color:t.muted}}>No records match the current filters.</div>}
-    </div>
-  );
-}
-
-function DetailRow({po,name,meta,t}) {
-  const [hov,hE]=useHover();
-  return <div {...hE} style={{display:"grid",gridTemplateColumns:"auto 1fr auto",gap:8,padding:"7px 12px",borderBottom:`1px solid ${t.line}`,fontSize:11.5,alignItems:"center",background:hov?t.surf3:"transparent",transition:"background .1s"}}><span style={{fontFamily:MONO,fontSize:10,fontWeight:600,background:t.surf3,padding:"2px 7px",borderRadius:5,border:`1px solid ${t.line}`,whiteSpace:"nowrap",color:t.ink}}>{po}</span><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{name}</span><span style={{fontFamily:MONO,fontSize:10,color:t.muted,textAlign:"right",whiteSpace:"nowrap"}}>{meta}</span></div>;
-}
-
-function HeatBtn({m,active,onClick,t}) {
-  const [hov,hE]=useHover();
-  return <button {...hE} onClick={onClick} style={{fontFamily:MONO,fontSize:10,letterSpacing:"0.06em",textTransform:"uppercase",padding:"5px 10px",borderRadius:8,border:`1px solid ${active?m.ac:hov?C.tealD:t.line}`,background:active?m.ac:hov?t.surf3:t.surf2,color:active?(m.dark?"#1a1a1a":"#fff"):hov?t.ink:t.muted,cursor:"pointer",transition:"all .15s"}}>{m.l}</button>;
-}
-
-function HeatCell({bg,light,pp,v,n}) {
-  const [hov,hE]=useHover();
-  return <div {...hE} style={{borderRadius:8,padding:"9px 5px",textAlign:"center",background:bg,color:light?"#1a1a1a":"#fff",cursor:"default",transition:"transform .12s",transform:hov?"scale(1.05)":"scale(1)",position:"relative",zIndex:hov?2:0}}><div style={{fontWeight:700,fontSize:12,fontFamily:MONO,lineHeight:1}}>{pp}%</div><div style={{fontSize:9,opacity:.9,marginTop:2,fontFamily:MONO}}>{v}/{n}</div></div>;
-}
-
-function BnRow({r,isExp,onToggle,t}) {
-  const [hov,hE]=useHover();
-  const s=r.avg<=r.sla?"ok":r.avg<=r.sla*1.5?"warn":"breach";
-  const sc=s==="ok"?t.good:s==="warn"?t.warn:t.bad;
-  const sb=s==="ok"?t.goodBg:s==="warn"?t.warnBg:t.badBg;
-  const sbd=s==="ok"?t.goodBd:s==="warn"?t.warnBd:t.badBd;
-  const fill=Math.min(100,(r.avg/(r.sla*2))*100);
-  const clickable=r.n>0;
-  return (
-    <div {...hE} {...(clickable?kbd(onToggle):{})} onClick={clickable?onToggle:undefined} aria-expanded={isExp} style={{borderRadius:12,background:hov?t.surf3:t.surf2,border:`${isExp?"2":"1"}px solid ${isExp?C.magenta:hov?t.line2:t.line}`,padding:"11px 14px",transition:"all .15s",cursor:clickable?"pointer":"default"}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:8,flexWrap:"wrap"}}>
-        <div style={{fontWeight:700,fontSize:13,color:t.ink,display:"flex",alignItems:"center",gap:6}}>{r.label}{clickable&&<span style={{fontSize:9,color:isExp?C.magenta:t.muted,display:"inline-block",transform:isExp?"rotate(180deg)":"none",transition:"transform .2s"}}>▼</span>}</div>
-        <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <span style={{fontFamily:MONO,fontSize:9.5,fontWeight:600,padding:"3px 8px",borderRadius:6,background:sb,color:sc,border:`1px solid ${sbd}`,textTransform:"uppercase",letterSpacing:"0.08em"}}>{s==="ok"?"WITHIN SLA":s==="warn"?"APPROACHING SLA":"OVERDUE"}</span>
-          <span style={{fontFamily:MONO,fontWeight:700,fontSize:14}}><span style={{color:sc}}>{r.avg.toFixed(1)}d</span><span style={{fontSize:10,color:t.muted,fontWeight:400}}> / {r.sla} WD</span></span>
-        </div>
-      </div>
-      <div style={{display:"flex",alignItems:"center",gap:9}}>
-        <div style={{flex:1,height:7,borderRadius:4,background:t.surf4,position:"relative",overflow:"hidden"}}><div style={{position:"absolute",top:0,left:0,height:"100%",width:`${fill}%`,background:sc,borderRadius:4,transition:"width .4s"}}/><div style={{position:"absolute",top:-3,bottom:-3,left:"50%",width:2,background:t.ink,opacity:.25,borderRadius:1}}/></div>
-        <span style={{fontFamily:MONO,fontSize:10,color:t.muted,minWidth:40,textAlign:"right"}}>n={r.n}</span>
-      </div>
-      {isExp&&r.details.length>0&&(
-        <div style={{marginTop:10,background:t.surf,border:`1px solid ${t.line}`,borderRadius:10,overflow:"hidden"}}>
-          <div style={{padding:"7px 12px",background:t.badBg,borderBottom:`1px solid ${t.badBd}`,fontFamily:MONO,fontSize:9.5,color:t.bad,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Top {Math.min(r.details.length,20)} longest cases</div>
-          <div style={{maxHeight:250,overflowY:"auto"}}>{r.details.slice(0,20).map((d,j)=><BnDetailRow key={j} d={d} t={t}/>)}</div>
-        </div>
-      )}
-    </div>
-  );
+  return <div {...hE} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 14px",cursor:"pointer",background:active||hov?t.surf3:"transparent",borderTop:`1px solid ${t.line}`,transition:"background .1s"}} onMouseDown={onPick}><span style={{width:22,height:22,borderRadius:7,background:accentColor,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontVariantNumeric:"tabular-nums",fontSize:12,fontWeight:700,color:"#fff"}}>{iconLabel}</span><span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontSize:12.5,fontWeight:500,color:t.ink}}>{s.label}</span><span style={{fontVariantNumeric:"tabular-nums",fontSize:12,flexShrink:0,color:t.muted}}>{s.count}</span></div>;
 }
 
 function BnDetailRow({d,t}) {
   const [hov,hE]=useHover();
-  return <div {...hE} style={{display:"grid",gridTemplateColumns:"44px auto 1fr auto",gap:8,padding:"7px 12px",borderBottom:`1px solid ${t.line}`,fontSize:11,alignItems:"center",background:hov?t.surf2:"transparent",transition:"background .1s"}}><span style={{fontFamily:MONO,fontSize:11,fontWeight:700,color:t.bad,textAlign:"center",background:t.badBg,padding:"3px 5px",borderRadius:6}}>{d.days}d</span><span style={{fontFamily:MONO,fontSize:10,fontWeight:600,background:t.surf3,padding:"2px 7px",borderRadius:5,border:`1px solid ${t.line}`,whiteSpace:"nowrap",color:t.ink}}>{d.po||"No PO"}</span><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{d.title}</span><span style={{fontFamily:MONO,fontSize:10,color:t.muted,textAlign:"right",whiteSpace:"nowrap"}}>{d.month}{d.amt&&<><br/>{fmtMoney(d.amt)}</>}</span></div>;
-}
-
-function TpRow({p,i,maxAmt,isExp,onToggle,t}) {
-  const [hov,hE]=useHover();
-  const cr=p.n?Math.round(p.clr/p.n*100):0;
-  const clrC=cr>=80?t.good:cr>=50?t.warn:t.bad, clrBg=cr>=80?t.goodBg:cr>=50?t.warnBg:t.badBg, clrBd=cr>=80?t.goodBd:cr>=50?t.warnBd:t.badBd;
-  const grads=["linear-gradient(90deg,#EC008C,#C6168D)","linear-gradient(90deg,#FFCB05,#c49b00)","linear-gradient(90deg,#32BCAD,#1d8078)","linear-gradient(90deg,#32BCAD,#27a093)"];
-  return (
-    <div {...hE} {...kbd(onToggle)} onClick={onToggle} aria-expanded={isExp} style={{borderRadius:12,background:hov?t.surf3:t.surf2,border:`${isExp?"2":"1"}px solid ${isExp?C.magenta:hov?t.line2:t.line}`,padding:"10px 12px",cursor:"pointer",transition:"all .15s"}}>
-      <div style={{display:"flex",alignItems:"center",gap:9,marginBottom:7,flexWrap:"wrap"}}>
-        <span style={{fontFamily:MONO,fontSize:11,fontWeight:600,color:t.muted,width:22,flexShrink:0}}>#{i+1}</span>
-        <span style={{fontWeight:700,fontSize:12.5,flex:"1 1 120px",minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink}}>{p.name}</span>
-        <span style={{fontFamily:MONO,fontSize:9.5,fontWeight:600,padding:"2px 7px",borderRadius:6,background:clrBg,color:clrC,border:`1px solid ${clrBd}`,flexShrink:0}}>{cr}% cleared</span>
-        <span style={{fontWeight:700,fontSize:12.5,flexShrink:0,fontFamily:MONO,color:t.ink}}>{fmtMoney(p.amt)}</span>
-        <span style={{fontSize:9,color:isExp?C.magenta:t.muted,display:"inline-block",transform:isExp?"rotate(180deg)":"none",transition:"transform .2s",flexShrink:0}}>▼</span>
-      </div>
-      <div style={{height:5,borderRadius:3,background:t.surf4,overflow:"hidden"}}><div style={{height:"100%",width:`${(p.amt/maxAmt)*100}%`,background:grads[Math.min(i,3)],borderRadius:3,transition:"width .4s"}}/></div>
-      {isExp&&(
-        <div style={{marginTop:9,background:t.surf,border:`1px solid ${t.line}`,borderRadius:10,overflow:"hidden"}}>
-          <div style={{padding:"7px 12px",background:t.surf2,borderBottom:`1px solid ${t.line}`,display:"flex",justifyContent:"space-between",fontFamily:MONO,fontSize:9.5,color:C.magenta,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600,flexWrap:"wrap",gap:8}}>
-            <span>{p.progs.length} program{p.progs.length!==1?"s":""} · {p.clr} cleared</span><span>Total {fmtMoney(p.amt)}</span>
-          </div>
-          <div style={{maxHeight:260,overflowY:"auto"}}>{p.progs.sort((a,b)=>b.amt-a.amt).slice(0,20).map((pr,j)=><TpProgRow key={j} pr={pr} t={t}/>)}</div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function TpProgRow({pr,t}) {
-  const [hov,hE]=useHover();
-  return <div {...hE} style={{display:"grid",gridTemplateColumns:"auto 1fr auto auto",gap:8,padding:"7px 12px",borderBottom:`1px solid ${t.line}`,fontSize:11,alignItems:"center",background:hov?t.surf2:"transparent",transition:"background .1s"}}><span style={{fontFamily:MONO,fontSize:10,fontWeight:600,background:t.surf3,padding:"2px 7px",borderRadius:5,border:`1px solid ${t.line}`,whiteSpace:"nowrap",color:t.ink}}>{pr.po||"No PO"}</span><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{pr.title}</span><span style={{fontFamily:MONO,fontSize:11,fontWeight:600,color:t.ink}}>{fmtMoney(pr.amt)}</span><span style={{fontFamily:MONO,fontSize:9,fontWeight:600,padding:"3px 7px",borderRadius:5,textTransform:"uppercase",background:pr.cleared?t.goodBg:t.warnBg,color:pr.cleared?t.goodDark:t.warnDark,border:`1px solid ${pr.cleared?t.goodBd:t.warnBd}`}}>{pr.cleared?"✓ Clr":"Pending"}</span></div>;
-}
-
-function ThCell({col,sortState,setSort,t}) {
-  const [hov,hE]=useHover();
-  const active=sortState.col===col.k;
-  return <th {...hE} onClick={()=>setSort(s=>({col:col.k,dir:s.col===col.k&&s.dir==="desc"?"asc":"desc"}))} style={{position:"sticky",top:0,zIndex:2,fontFamily:MONO,fontSize:10,letterSpacing:"0.1em",textTransform:"uppercase",color:active?C.teal:hov?t.ink:t.muted,fontWeight:active?700:500,background:hov?t.surf3:t.surf2,padding:"9px",textAlign:col.left?"left":"center",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap",cursor:"pointer",transition:"all .15s"}}>{col.l}{active?(sortState.dir==="asc"?" ▲":" ▼"):""}</th>;
-}
-
-function SummaryDataRow({r,j,isAg,t}) {
-  const [hov,hE]=useHover();
-  return (
-    <tr {...hE} style={{borderBottom:`1px solid ${t.line}`,background:hov?t.rowHover:j%2===1?t.rowStripe:"transparent",transition:"background .1s"}}>
-      <td style={{padding:"8px 9px 8px 28px",textAlign:"left",fontSize:12,color:t.muted}}>{r.month}</td>
-      <td style={{padding:"8px 9px",textAlign:"left",fontSize:12,color:t.ink}}>{r.entity}</td>
-      <td style={{padding:"8px 9px",textAlign:"left",fontSize:12,fontWeight:600,color:t.ink}}>{r.ptype}</td>
-      <td style={{padding:"8px 9px",textAlign:"left",fontSize:12,color:t.muted}}>{r.prog}</td>
-      <td style={{textAlign:"center",padding:"8px 9px",color:t.ink}}>{r.n||""}</td>
-      <td style={{textAlign:"center",padding:"8px 9px",color:t.ink}}>{r.po||""}</td>
-      {!isAg&&<td style={{textAlign:"center",padding:"8px 9px",color:t.ink}}>{r.surat||""}</td>}
-      <td style={{textAlign:"center",padding:"8px 9px",color:t.ink}}>{r.inv||""}</td>
-      <td style={{textAlign:"center",padding:"8px 9px",color:t.ink}}>{r.clv||""}</td>
-      <td style={{textAlign:"center",padding:"8px 9px",color:t.ink}}>{r.clr||""}</td>
-      <td style={{textAlign:"center",padding:"8px 9px"}}>{r.n?<PctBadge val={pct(r.inv,r.n)} t={t}/>:""}</td>
-      <td style={{textAlign:"center",padding:"8px 9px"}}>{r.n?<PctBadge val={pct(r.clv,r.n)} t={t}/>:""}</td>
-      <td style={{textAlign:"center",padding:"8px 9px"}}>{r.n?<PctBadge val={pct(r.clr,r.n)} t={t}/>:""}</td>
-    </tr>
-  );
-}
-
-function MonthTotalRow({m,mT,isAg,isCol,colCount,onToggle,t}) {
-  const [hov,hE]=useHover();
-  return <tr {...hE} {...kbd(onToggle)} onClick={onToggle} aria-expanded={!isCol} style={{background:hov?`${C.teal}18`:t.monthBg,borderTop:`1px solid ${C.teal}30`,cursor:"pointer",transition:"background .1s"}}><td colSpan={colCount} style={{padding:"9px",textAlign:"left",fontWeight:700,fontSize:12.5,color:t.ink}}><span style={{display:"inline-block",width:14,marginRight:6,color:t.muted,transition:"transform .15s",transform:isCol?"rotate(-90deg)":"rotate(0deg)"}}>▼</span>TOTAL {fmtMonthYear(m)} · {mT.n} records · {pct(mT.clr,mT.n)}% cleared</td></tr>;
+  return <div {...hE} style={{display:"grid",gridTemplateColumns:"44px auto 1fr auto",gap:8,padding:"7px 12px",borderBottom:`1px solid ${t.line}`,fontSize:12,alignItems:"center",background:hov?t.surf2:"transparent",transition:"background .1s"}}><span style={{fontSize:12,fontWeight:700,color:t.bad,textAlign:"center",background:t.badBg,padding:"3px 5px",borderRadius:6}}>{d.days}d</span><span style={{fontSize:12,fontWeight:600,background:t.surf3,padding:"2px 7px",borderRadius:5,border:`1px solid ${t.line}`,whiteSpace:"nowrap",color:t.ink}}>{d.po||"—"}</span><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{d.title}</span><span style={{fontSize:12,color:t.muted,textAlign:"right",whiteSpace:"nowrap"}}>{d.month}{d.amt?<><br/>{fmtRpWord(d.amt)}</>:null}</span></div>;
 }
 
 function RawThCell({k,rawSort,setRawSort,setRawPage,isLeftCol,label,t}) {
   const [hov,hE]=useHover();
   const active=rawSort.col===k;
-  return <th {...hE} onClick={()=>{setRawSort(s=>({col:k,dir:s.col===k&&s.dir==="asc"?"desc":"asc"}));setRawPage(1);}} style={{position:"sticky",top:0,zIndex:2,fontFamily:MONO,fontSize:10,letterSpacing:"0.08em",textTransform:"uppercase",color:active?C.teal:hov?t.ink:t.muted,fontWeight:active?700:500,background:hov?t.surf3:t.surf2,padding:"9px",textAlign:isLeftCol(k)?"left":"center",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap",cursor:"pointer",transition:"all .15s"}}>{label||k}{active?(rawSort.dir==="asc"?" ▲":" ▼"):""}</th>;
+  return <th {...hE} onClick={()=>{setRawSort(s=>({col:k,dir:s.col===k&&s.dir==="asc"?"desc":"asc"}));setRawPage(1);}} style={{position:"sticky",top:0,zIndex:2,fontSize:12,letterSpacing:"0.01em",color:active?C.teal:hov?t.ink:t.muted,fontWeight:active?700:500,background:hov?t.surf3:t.surf2,padding:"9px",textAlign:isLeftCol(k)?"left":"center",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap",cursor:"pointer",transition:"all .15s"}}>{label||k}{active?(rawSort.dir==="asc"?" ▲":" ▼"):""}</th>;
 }
 
 function RawDataRow({r,i,rawKeys,isLeftCol,fmtCellT,t,docs,segment}) {
   const [hov,hE]=useHover();
-  return <tr {...hE} style={{borderBottom:`1px solid ${t.line}`,background:hov?t.rowHover:i%2===1?t.rowStripe:"transparent",transition:"background .1s"}}>{rawKeys.map(k=><td key={k} title={String(r[k]||"")} style={{padding:"8px 9px",textAlign:isLeftCol(k)?"left":"center",maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{fmtCellT(r[k],k,t)}</td>)}<td style={{padding:"6px 9px",textAlign:"center",whiteSpace:"nowrap"}}><DocsCell refId={refKey(gstr(r,DOC_REF_COLUMN))} partnerName={gstr(r,["partner name","agency name"])} segment={segment} title={gstr(r,["project title"])} amountText={fmtMoney(gnum(r,["amount"]),false)} docs={docs} t={t}/></td></tr>;
+  return <tr {...hE} style={{borderBottom:`1px solid ${t.line}`,background:hov?t.rowHover:i%2===1?t.rowStripe:"transparent",transition:"background .1s"}}>{rawKeys.map(k=><td key={k} title={String(r[k]||"")} style={{padding:"8px 9px",textAlign:isLeftCol(k)?"left":"center",maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{fmtCellT(r[k],k,t)}</td>)}{SHOW_DOCUMENT_TABS&&<td style={{padding:"6px 9px",textAlign:"center",whiteSpace:"nowrap"}}><DocsCell refId={refKey(gstr(r,DOC_REF_COLUMN))} partnerName={gstr(r,["partner name","agency name"])} segment={segment} title={gstr(r,["project title"])} amountText={fmtMoney(gnum(r,["amount"]),false)} docs={docs} t={t}/></td>}</tr>;
 }
 
-function FunnelRowItem({s,prevKey,drop,isExp,filtRaw,grand,onToggle,t}) {
-  const [hov,hE]=useHover();
-  const stH={po:["po number","po #","no po","po date"],surat:["surat pemberitahuan date","surat pemberitahuan","surat"],inv:["invoice submission","invoice"],clv:["clv date","clv"],clr:["clearing date","clearing"]};
-  const pending=isExp&&filtRaw.length?filtRaw.filter(r=>!gcell(r,stH[s.key]||[])&&(!prevKey||!!gcell(r,stH[prevKey]||[]))).map(r=>({po:gstr(r,["po number"]),name:gstr(r,["partner name","agency name"])||"—",month:gstr(r,["program date"]),amt:gnum(r,["amount"])})).sort((a,b)=>b.amt-a.amt):[];
-  return (
-    <div style={{borderBottom:`1px solid ${t.line}`,paddingBottom:6,marginBottom:6}}>
-      <div {...hE} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"5px 8px",borderRadius:8,background:hov?t.surf2:"transparent",transition:"background .1s"}}>
-        <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
-          <span style={{width:4,height:22,borderRadius:2,background:s.color,flexShrink:0}}/>
-          <div>
-            <div style={{fontWeight:600,fontSize:12.5,color:t.ink}}>{s.label}</div>
-            {drop>0&&(
-              <button onClick={e=>{e.stopPropagation();onToggle();}} aria-expanded={isExp}
-                style={{display:"inline-flex",alignItems:"center",gap:5,marginTop:4,fontFamily:MONO,fontSize:10,fontWeight:700,color:t.bad,background:t.badBg,border:`1px solid ${t.badBd}`,borderRadius:99,padding:"2px 9px",cursor:"pointer",lineHeight:1.4}}>
-                {drop} pending {isExp?"▲":"▼"}
-              </button>
-            )}
-          </div>
-        </div>
-        <div style={{textAlign:"right",flexShrink:0}}>
-          <div style={{fontWeight:700,fontSize:14,fontFamily:MONO,color:t.ink}}>{s.val.toLocaleString()}</div>
-          <div style={{fontSize:10,color:t.muted}}>{pct(s.val,grand.n)}%</div>
-        </div>
-      </div>
-      {isExp&&pending.length>0&&(
-        <div style={{marginTop:6,borderRadius:10,background:t.badBg,border:`1px solid ${t.badBd}`,borderLeft:`3px solid ${t.bad}`,padding:"8px 10px"}}>
-          <div style={{fontFamily:MONO,fontSize:9.5,color:t.bad,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontWeight:600}}>Pending · {pending.length} records</div>
-          <div style={{display:"flex",flexDirection:"column",gap:4,maxHeight:200,overflowY:"auto"}}>
-            {pending.slice(0,30).map((r,j)=>(
-              <div key={j} style={{display:"grid",gridTemplateColumns:"auto 1fr auto",gap:7,padding:"4px 6px",borderBottom:`1px solid ${t.badBd}`,fontSize:11,alignItems:"start"}}>
-                <span style={{fontFamily:MONO,fontSize:10,fontWeight:700,color:t.bad}}>{r.po||"No PO"}</span>
-                <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{r.name}</span>
-                <span style={{fontFamily:MONO,fontSize:10,color:t.muted,textAlign:"right",whiteSpace:"nowrap"}}>{r.month}{r.amt&&<><br/>{fmtMoney(r.amt)}</>}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      {isExp&&pending.length===0&&(
-        <div style={{marginTop:6,padding:"8px 10px",borderRadius:10,background:t.surf2,border:`1px solid ${t.line}`,fontSize:11.5,fontStyle:"italic",color:t.muted}}>No pending records match the current filters.</div>
-      )}
-    </div>
-  );
+// Milestone tercapai? (tanggal tahap terisi)
+/* ── Completion Funnel & Status Distribution ── */
+const STAGE_HINTS = { reva:H_REVA, bastR:H_BAST_RCV, bastA:H_BAST_APP, surat:H_SURAT, inv:H_INV, clv:H_CLV, clr:H_CLR };
+function stageDone(r, key) {
+  return key==="all" || !!gcell(r, STAGE_HINTS[key]||[]);
 }
+const recItem = (r) => { const mk = rowMonthKey(r); return { ref:invLabel(r._inv,r._invId), name:ownerName(r)||"—", title:gstr(r,["project title"])||"—", month:mk?ymLabel(mk):"—", amt:gnum(r,["amount"]) }; };
 
-/* ─────────────────────────────────────────────────────────────────────
-   GRAND TOTAL BANNER (v5.2-EN — fully responsive, all-English)
-   Hero summary: Total Amount · Total Transactions · Total Partners ·
-   Bank Cleared + milestone progress. 2-col grid on mobile, 4 on desktop.
-   ───────────────────────────────────────────────────────────────────── */
-function GrandTotalBanner({ grand, partnerCount, monthsCount = 0, groupCount = 0, isAg, w, t }) {
-  const invPct = pct(grand.inv, grand.n);
-  const clvPct = pct(grand.clv, grand.n);
-  const clrPct = pct(grand.clr, grand.n);
-  const isNarrow = w < 600;
-  const isTiny   = w < 400;
-  const pad      = isTiny ? "16px 14px 18px" : isNarrow ? "18px 18px 20px" : "24px 28px 24px";
-  const padLeft  = isTiny ? 18 : isNarrow ? 22 : 34;
-
-  const metricBox = (icon, label, value, sub, accent) => (
-    <div style={{
-      background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.13)",
-      borderRadius:14, padding:isTiny?"12px 13px":"14px 16px",
-      display:"flex", flexDirection:"column", gap:5, minWidth:0,
-    }}>
-      <div style={{display:"flex",alignItems:"center",gap:7,minWidth:0}}>
-        <span style={{width:24,height:24,borderRadius:7,background:accent||"rgba(255,255,255,0.18)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{icon}</span>
-        <span style={{fontFamily:MONO,fontSize:9.5,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(255,255,255,0.72)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label}</span>
-      </div>
-      <div style={{fontWeight:900,fontSize:isTiny?20:isNarrow?23:26,letterSpacing:"-0.03em",color:"#FFFFFF",lineHeight:1.05,wordBreak:"break-word"}}>{value}</div>
-      {sub&&<div style={{fontFamily:MONO,fontSize:9.5,color:"rgba(255,255,255,0.55)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sub}</div>}
-    </div>
-  );
-
+function RecList({ items, tone, empty, t }) {
+  if (!items.length) return <div style={{marginTop:6,padding:"8px 10px",borderRadius:10,background:t.surf2,border:`1px solid ${t.line}`,fontSize:12,color:t.muted}}>{empty}</div>;
   return (
-    <div style={{
-      position:"relative", overflow:"hidden", borderRadius:20, marginBottom:16,
-      background:`linear-gradient(135deg, ${C.grey} 0%, #15151a 40%, ${C.magenta} 150%)`,
-      boxShadow:t.shadow3, border:"1px solid rgba(255,255,255,0.10)",
-    }}>
-      {/* brand color accent bar on the left */}
-      <div style={{position:"absolute",top:0,bottom:0,left:0,width:6,background:`linear-gradient(180deg,${C.yellow},${C.teal},${C.magenta})`}}/>
-      {/* decorative transparent circle */}
-      <div style={{position:"absolute",right:-50,top:-50,width:220,height:220,borderRadius:"50%",background:"radial-gradient(circle,rgba(255,203,5,0.16),transparent 70%)",pointerEvents:"none"}}/>
-
-      <div style={{padding:pad,paddingLeft:padLeft,position:"relative",zIndex:1}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6,flexWrap:"wrap"}}>
-          <span style={{width:13,height:13,borderRadius:4,background:C.yellow,display:"inline-block",boxShadow:`0 0 12px ${C.yellow}`,flexShrink:0}}/>
-          <span style={{fontWeight:900,fontSize:isNarrow?17:22,letterSpacing:"-0.02em",color:"#FFFFFF"}}>GRAND TOTAL</span>
-          <span style={{fontFamily:MONO,fontSize:9.5,letterSpacing:"0.12em",textTransform:"uppercase",color:"rgba(255,255,255,0.62)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:99,padding:"3px 10px"}}>
-            {isAg?"Agency Prepaid":"Partner Prepaid"}
-          </span>
-        </div>
-        <div style={{fontFamily:MONO,fontSize:10.5,color:"rgba(255,255,255,0.55)",marginBottom:16,letterSpacing:"0.03em"}}>
-          {monthsCount} active month{monthsCount!==1?"s":""} · {groupCount} groups · {grand.n.toLocaleString()} records
-        </div>
-
-        <div style={{display:"grid",gridTemplateColumns:isNarrow?"repeat(2,1fr)":"repeat(4,1fr)",gap:isTiny?9:12}}>
-          {metricBox(
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#1a1a1d" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,
-            "Total Amount", fmtMoney(grand.amt), isTiny?null:fmtMoney(grand.amt,false), C.yellow
-          )}
-          {metricBox(
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>,
-            "Total Transactions", grand.n.toLocaleString(), `${grand.po.toLocaleString()} POs issued`, C.teal
-          )}
-          {metricBox(
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
-            isAg?"Total Agencies":"Total Partners", partnerCount.toLocaleString(), "unique entities", C.magenta
-          )}
-          {metricBox(
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#1a1a1d" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>,
-            "Bank Cleared", `${clrPct}%`, `${grand.clr.toLocaleString()} / ${grand.n.toLocaleString()} records`, clrPct>=80?C.teal:clrPct>=50?C.yellow:C.red
-          )}
-        </div>
-
-        {/* milestone progress bars */}
-        <div style={{display:"grid",gridTemplateColumns:isNarrow?"1fr":"repeat(3,1fr)",gap:isNarrow?12:14,marginTop:16}}>
-          {[
-            {l:"Invoice Sub.", v:invPct, c:C.yellow, desc:"Submitted to Coupa · AP verification"},
-            {l:"CLV", v:clvPct, c:C.teal, desc:"Checklist Verification · Finance approved"},
-            {l:"Bank Cleared", v:clrPct, c:"#7ee8e0", desc:"Fund transfer completed (3 WD)"},
-          ].map((m,i)=>(
-            <div key={i}>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:5,fontFamily:MONO,fontSize:10,color:"rgba(255,255,255,0.7)"}}>
-                <span style={{textTransform:"uppercase",letterSpacing:"0.08em"}}>{m.l}</span>
-                <span style={{fontWeight:700,color:"#fff"}}>{m.v}%</span>
-              </div>
-              <div style={{height:8,borderRadius:5,background:"rgba(255,255,255,0.14)",overflow:"hidden"}}>
-                <div style={{height:"100%",width:`${m.v}%`,background:m.c,borderRadius:5,transition:"width .5s"}}/>
-              </div>
-              <div style={{marginTop:6,fontFamily:MONO,fontSize:9.5,lineHeight:1.45,color:"rgba(255,255,255,0.5)"}}>{m.desc}</div>
+    <div style={{marginTop:6,borderRadius:10,border:`1px solid ${t.line}`,borderLeft:`3px solid ${tone}`,background:t.surf2}}>
+      <div style={{maxHeight:220,overflowY:"auto"}}>
+        {items.slice(0,50).map((r,j)=>(
+          <div key={j} style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) auto",gap:8,padding:"6px 10px",borderBottom:`1px solid ${t.line}`,fontSize:12,alignItems:"center"}}>
+            <div style={{minWidth:0}}>
+              <div style={{color:t.ink,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={r.title}>{r.title}</div>
+              <div style={{color:t.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.name} · {r.ref}</div>
             </div>
-          ))}
+            <div style={{textAlign:"right",whiteSpace:"nowrap",fontVariantNumeric:"tabular-nums"}}>
+              <div style={{color:t.ink2,fontWeight:600}} title={fmtRpFull(r.amt)}>{fmtRpWord(r.amt)}</div>
+              <div style={{color:t.muted}}>{r.month}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      {items.length>50&&<div style={{padding:"5px 10px",fontSize:12,color:t.muted}}>Showing 50 of {items.length} (largest first) — see Raw Data for all</div>}
+    </div>
+  );
+}
+
+function CompletionFunnel({ rows, isAg, bastCols, t }) {
+  const [exp, setExp] = useState(null);
+  const stages = useMemo(()=>{
+    const defs = isAg
+      ? [["all","Total"],...(bastCols?.rcv?[["bastR","BAST Received"]]:[]),...(bastCols?.app?[["bastA","BAST Approved"]]:[]),["inv","Invoice Submitted"],["clv","CLV"],["clr","Bank Cleared"]]
+      : [["all","Total"],["surat","Surat Pemberitahuan"],["inv","Invoice Submitted"],["clv","CLV"],["clr","Bank Cleared"]];
+    return defs.map(([key,label],i)=>{
+      const prev = i ? defs[i-1][0] : null;
+      const done = rows.filter(r=>stageDone(r,key));
+      const pending = prev ? rows.filter(r=>stageDone(r,prev) && !stageDone(r,key)) : [];
+      return { key, label, val:done.length, pending };
+    });
+  },[rows,isAg,bastCols]);
+  const n = rows.length || 1;
+  return (
+    <div style={{padding:"14px 18px",display:"flex",flexDirection:"column",gap:10}}>
+      {stages.map((s,i)=>{ const p = pct(s.val,n), open = exp===s.key; return (
+        <div key={s.key}>
+          <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) auto",gap:10,alignItems:"baseline"}}>
+            <span style={{fontSize:12.5,fontWeight:600,color:t.ink}}>{s.label}</span>
+            <span style={{fontSize:12.5,fontVariantNumeric:"tabular-nums",color:t.ink2,whiteSpace:"nowrap"}}><strong style={{color:t.ink}}>{s.val.toLocaleString()}</strong> · {p}%</span>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:5}}>
+            <div style={{flex:1,height:10,borderRadius:99,background:t.surf3,overflow:"hidden"}}><div style={{width:`${p}%`,height:"100%",borderRadius:99,background:t.chartA,opacity:1-i*0.13}}/></div>
+            {s.pending.length>0&&<button type="button" onClick={()=>setExp(e=>e===s.key?null:s.key)} aria-expanded={open}
+              style={{flexShrink:0,fontFamily:"inherit",fontSize:12,fontWeight:700,fontVariantNumeric:"tabular-nums",color:t.warnDark,background:t.warnBg,border:`1px solid ${t.warnBd}`,borderRadius:99,padding:"1px 9px",cursor:"pointer",lineHeight:1.5}}>
+              {s.pending.length} pending {open?"▲":"▼"}</button>}
+          </div>
+          {open&&<RecList items={s.pending.map(recItem).sort((a,b)=>b.amt-a.amt)} tone={t.warn} empty="Nothing pending" t={t}/>}
         </div>
+      ); })}
+      <div style={{fontSize:12,color:t.muted,lineHeight:1.5}}>Count of records that have reached each step. &ldquo;Pending&rdquo; = reached the step before but not this one; click to list them.</div>
+    </div>
+  );
+}
+
+function StatusDistribution({ rows, t }) {
+  const [exp, setExp] = useState(null);
+  const groups = useMemo(()=>{
+    const defs = [["PAID","Paid",t.good],["Payment Process","Payment Process",t.warn],["Invoice Not Submitted","Invoice Not Submitted",t.bad]];
+    const g = defs.map(([k,label,color])=>({ k, label, color, rows:[], amt:0 }));
+    const other = { k:"other", label:"Other / blank", color:t.muted2||t.muted, rows:[], amt:0 };
+    rows.forEach(r=>{ const st = rowStatus(r); const x = g.find(z=>z.k===st) || other; x.rows.push(r); x.amt += gnum(r,["amount"]); });
+    return other.rows.length ? [...g, other] : g;
+  },[rows,t]);
+  const n = rows.length || 1, R = 46, SW = 16, C0 = 2*Math.PI*R;
+  let off = 0;
+  return (
+    <div style={{padding:"14px 18px",display:"flex",gap:18,alignItems:"flex-start",flexWrap:"wrap"}}>
+      <svg width={120} height={120} viewBox="0 0 120 120" role="img" aria-label="Status distribution" style={{flexShrink:0}}>
+        <circle cx={60} cy={60} r={R} fill="none" stroke={t.surf3} strokeWidth={SW}/>
+        {groups.map(g=>{ const len = g.rows.length/n*C0; const el = len>0 ? <circle key={g.k} cx={60} cy={60} r={R} fill="none" stroke={g.color} strokeWidth={SW} strokeDasharray={`${Math.max(0,len-1.5)} ${C0}`} strokeDashoffset={-off} transform="rotate(-90 60 60)"/> : null; off += len; return el; })}
+        <text x={60} y={58} textAnchor="middle" fontSize={20} fontWeight={800} fill={t.ink} fontFamily="inherit" style={{fontVariantNumeric:"tabular-nums"}}>{rows.length.toLocaleString()}</text>
+        <text x={60} y={76} textAnchor="middle" fontSize={12} fill={t.muted} fontFamily="inherit">records</text>
+      </svg>
+      <div style={{flex:"1 1 220px",minWidth:0,display:"flex",flexDirection:"column",gap:8}}>
+        {groups.map(g=>{ const open = exp===g.k; return (
+          <div key={g.k}>
+            <button type="button" onClick={()=>g.rows.length&&setExp(e=>e===g.k?null:g.k)} aria-expanded={open} disabled={!g.rows.length}
+              style={{width:"100%",display:"grid",gridTemplateColumns:"auto minmax(0,1fr) auto",gap:8,alignItems:"center",padding:"7px 10px",borderRadius:10,border:`1px solid ${open?g.color:t.line}`,background:t.surf2,cursor:g.rows.length?"pointer":"default",fontFamily:"inherit",textAlign:"left"}}>
+              <span style={{width:10,height:10,borderRadius:3,background:g.color}}/>
+              <span style={{fontSize:12.5,fontWeight:600,color:t.ink,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{g.label}</span>
+              <span style={{fontSize:12.5,color:t.ink2,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}><strong style={{color:t.ink}}>{g.rows.length.toLocaleString()}</strong> · {pct(g.rows.length,n)}% · <span title={fmtRpFull(g.amt)}>{fmtRpWord(g.amt)}</span></span>
+            </button>
+            {open&&<RecList items={g.rows.map(recItem).sort((a,b)=>b.amt-a.amt)} tone={g.color} empty="No records" t={t}/>}
+          </div>
+        ); })}
       </div>
     </div>
   );
@@ -1484,13 +1432,26 @@ function DashScreen(props) {
     isIOHUmbrella, canPickRegion, regionView, setRegionView, regionOptions,
     regionFilter, filterMpxType, viewPartnerRaw, viewAgencyRaw, pubMeta,
     filters, setFilters, opts, curAgg, curRaw, filtAgg, filtRaw,
-    setCollapsed, searchFocus, setSearchFocus, searchIdx, setSearchIdx,
+    searchFocus, setSearchFocus, searchIdx, setSearchIdx,
     searchRef, searchSuggestions, allSuggestions, searchInput, setSearchInput,
     setRawPage, showToast, exportSummary, profile } = props;
   const isAg = src === "agency";
+  // Tab level atas mengikuti pilihan Partner/Agency: Accrual hanya Agency (role yang boleh melihat Agency),
+  // Forecast hanya Partner. YTD Summary gabungan keduanya.
+  const canAgency = isSPM || isIOHAny;
+  const showAccrual = isAg && canAgency && (viewAgencyRaw||[]).length>0;
+  const showForecast = !isAg && (viewPartnerRaw||[]).length>0;
+  const showDc = !isAg && (viewPartnerRaw||[]).some(isDcRow);
+  // Tab yang sedang dibuka tapi tidak tersedia untuk pilihan ini → kembali ke Dashboard
+  const tabKey = (activeTab==="acc" && !showAccrual) || (activeTab==="fc" && !showForecast) || (activeTab==="dc" && !showDc) ? "dash" : activeTab;
+  const isAcc = tabKey==="acc", isFc = tabKey==="fc", isDc = tabKey==="dc";
+  // YTD/Accrual/Forecast punya pilihan sendiri → filter dashboard disembunyikan; toggle Partner/Agency
+  // tetap tampil kecuali di YTD (gabungan Partner + Agency)
+  const isYtd = tabKey==="ytd" || isAcc || isFc || isDc;
 
   // Dokumen per PO (Partner & Agency): dipakai kolom Dokumen di Raw Data & tab Upload & Merge Dokumen
-  const docs = usePartnerDocStats(profile);
+  // profile null → hook tidak aktif (docs.enabled=false), tidak ada fetch dokumen/approval
+  const docs = usePartnerDocStats(SHOW_DOCUMENT_TABS ? profile : null);
   // 1 entri per (pemilik, PO): baris dobel → amount dijumlah, records dihitung. Baris tanpa PO dihitung terpisah.
   // ym = periode PO (YYYY-MM) dari program date; ptype = MPC/MP3 dari kolom Partner Type/Entity (untuk generator BAST/Letter)
   const buildDocPOs = useCallback((rowsIn) => {
@@ -1509,9 +1470,9 @@ function DashScreen(props) {
     });
     return { list: [...m.values()].map(p => ({...p, amountText: fmtMoney(p.amount,false)})), noRef };
   }, [src]);
-  const { docPOs, docNoRef } = useMemo(() => { const x = buildDocPOs(filtRaw); return { docPOs: x.list, docNoRef: x.noRef }; }, [filtRaw, buildDocPOs]);
+  const { docPOs, docNoRef } = useMemo(() => { const x = buildDocPOs(SHOW_DOCUMENT_TABS ? filtRaw : []); return { docPOs: x.list, docNoRef: x.noRef }; }, [filtRaw, buildDocPOs]);
   // Semua PO segment ini (tanpa filter dashboard) — dipakai generator untuk mencocokkan PO
-  const docPOsAll = useMemo(() => buildDocPOs(curRaw).list, [curRaw, buildDocPOs]);
+  const docPOsAll = useMemo(() => buildDocPOs(SHOW_DOCUMENT_TABS ? curRaw : []).list, [curRaw, buildDocPOs]);
   const docPOsDone = docPOs.filter(p => doneCount(docs.byRef[statKey(src,p.partner,p.ref)]) === DOC_TYPES.length).length;
 
   const isMobile = w < 640;
@@ -1536,23 +1497,22 @@ function DashScreen(props) {
 
   const filtersEmpty = curAgg.length>0 && filtAgg.length===0;
 
-  // Format published timestamp to "LAST UPDATED MMM DD, YYYY"
   const pubLabel = pubMeta?.publishedAt
-    ? `LAST UPDATED ${pubMeta.publishedAt.toUpperCase()}`
-    : "LIVE PREVIEW";
+    ? `Last updated ${pubMeta.publishedAt}`
+    : "Live preview";
 
   return (
     <div style={{maxWidth:1400,margin:"0 auto",padding:w<480?"16px 12px 44px":w<768?"18px 16px 48px":"20px 20px 56px"}}>
       <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:20,marginBottom:20,flexWrap:"wrap"}}>
         <div>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,fontFamily:MONO,fontSize:10,letterSpacing:"0.2em",textTransform:"uppercase",color:t.muted,flexWrap:"wrap"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,fontSize:12,letterSpacing:"0.01em",color:t.muted,flexWrap:"wrap"}}>
             <span style={{width:16,height:1,background:C.magenta,display:"inline-block"}}/>
             {pubLabel}
           </div>
           <h1 style={{fontWeight:800,fontSize:"clamp(1.6rem,3.5vw,2.4rem)",letterSpacing:"-0.03em",color:t.ink,margin:"0 0 8px",lineHeight:1.04}}>
             Payout Tracker <em style={{fontStyle:"italic",color:C.magenta}}>Sumatera</em>
           </h1>
-          <p style={{color:t.muted,fontSize:14,margin:0,lineHeight:1.6}}>Milestone PO → Invoice → CLV → Bank Cleared · Partner &amp; Agency Prepaid</p>
+          <p style={{color:t.muted,fontSize:14,margin:0,lineHeight:1.6}}>Partner &amp; Agency Prepaid payouts · tracked by invoice</p>
           {(regionFilter || filterMpxType) && (
             <div style={{display:"inline-flex",alignItems:"center",gap:8,marginTop:10,padding:"5px 12px",borderRadius:8,background:t.surf2,border:`1px solid ${t.line}`,fontSize:12,color:t.muted,flexWrap:"wrap"}}>
               <span style={{width:7,height:7,borderRadius:"50%",background:C.teal,flexShrink:0}}/>
@@ -1574,7 +1534,7 @@ function DashScreen(props) {
 
       {canPickRegion&&(
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16,flexWrap:"wrap"}}>
-          <span style={{display:"inline-flex",alignItems:"center",gap:6,fontFamily:MONO,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:t.muted}}>
+          <span style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12,letterSpacing:"0.01em",color:t.muted}}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
             Region View
           </span>
@@ -1591,15 +1551,16 @@ function DashScreen(props) {
           </select>
           {regionView&&(
             <button onClick={()=>setRegionView("")}
-              style={{fontFamily:"inherit",fontSize:11.5,fontWeight:600,color:t.muted,background:"transparent",border:`1px solid ${t.line}`,borderRadius:8,padding:"6px 10px",cursor:"pointer"}}>
+              style={{fontFamily:"inherit",fontSize:12,fontWeight:600,color:t.muted,background:"transparent",border:`1px solid ${t.line}`,borderRadius:8,padding:"6px 10px",cursor:"pointer"}}>
               Reset
             </button>
           )}
         </div>
       )}
 
+      {tabKey!=="ytd"&&<div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:18}}>
       {segVisible.length>0&&(
-        <div style={{display:"inline-flex",gap:4,background:t.surf,border:`1px solid ${t.line}`,borderRadius:14,padding:4,marginBottom:18,boxShadow:t.shadow1,overflowX:"auto",maxWidth:"100%"}}>
+        <div style={{display:"inline-flex",gap:4,background:t.surf,border:`1px solid ${t.line}`,borderRadius:14,padding:4,boxShadow:t.shadow1,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"none",maxWidth:"100%"}}>
           {segVisible.map(s=>(
             <SegBtn key={s} s={s} active={src===s} disabled={false}
               count={(s==="partner"?segPartnerCount:segAgencyCount).toLocaleString()}
@@ -1607,46 +1568,46 @@ function DashScreen(props) {
               onClick={()=>{
                 if (s===src) return;
                 setSrc(s);
+                // pindah ke tab padanannya: Accrual (Agency) ↔ Forecast (Partner)
+                if (activeTab==="acc" && s==="partner") setActiveTab((viewPartnerRaw||[]).length ? "fc" : "dash");
+                else if (activeTab==="fc" && s==="agency") setActiveTab(canAgency && (viewAgencyRaw||[]).length ? "acc" : "dash");
                 resetFilters();
-                setSearchIdx(-1); setCollapsed({}); setRawPage(1);
+                setSearchIdx(-1); setRawPage(1);
                 showToast(`Switched to ${s==="partner"?"Partner":"Agency"} Prepaid — filters reset`);
               }}
               t={t}/>
           ))}
         </div>
       )}
+      </div>}
 
-      <div style={{display:"flex",gap:24,borderBottom:`1px solid ${t.line}`,marginBottom:18,overflowX:"auto"}}>
-        {[{id:"dash",label:"Dashboard"},{id:"raw",label:"Raw Data",count:filtRaw.length},...(docs.enabled?[{id:"docs",label:"Document Upload & Merge",count:docPOsDone}]:[]),...(docs.enabled&&docs.canManageApprovals?[{id:"letters",label:"Partner Letters"}]:[])].map(tab=>(
-          <TabBtn key={tab.id} label={tab.label} count={tab.count} active={activeTab===tab.id} onClick={()=>setActiveTab(tab.id)} t={t}/>
+      <div style={{display:"flex",gap:24,borderBottom:`1px solid ${t.line}`,marginBottom:18,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"none"}}>
+        {[{id:"dash",label:"Dashboard"},...(showDc?[{id:"dc",label:"Distribution Fee & Champions"}]:[]),{id:"raw",label:"Raw Data",count:filtRaw.length},{id:"ytd",label:"YTD Summary"},...(showAccrual?[{id:"acc",label:"Accrual"}]:[]),...(showForecast?[{id:"fc",label:"Forecast"}]:[]),...(SHOW_DOCUMENT_TABS&&docs.enabled?[{id:"docs",label:"Document Upload & Merge",count:docPOsDone}]:[]),...(SHOW_DOCUMENT_TABS&&docs.enabled&&docs.canManageApprovals?[{id:"letters",label:"Partner Letters"}]:[])].map(tab=>(
+          <TabBtn key={tab.id} label={tab.label} count={tab.count} active={tabKey===tab.id} onClick={()=>setActiveTab(tab.id)} t={t}/>
         ))}
       </div>
 
-      {curAgg.length>0&&(
+      {curAgg.length>0&&!isYtd&&(
         <div style={{background:t.surf,border:`1px solid ${t.line}`,borderRadius:14,padding:"10px 16px",marginBottom:chips.length>0?8:18,boxShadow:t.shadow1,position:"relative",zIndex:10}}>
           <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-            <span style={{fontFamily:MONO,fontSize:10,letterSpacing:"0.16em",textTransform:"uppercase",color:t.muted,paddingRight:12,borderRight:`1px solid ${t.line}`,flexShrink:0}}>Filters</span>
+            <span style={{fontSize:12,letterSpacing:"0.01em",color:t.muted,paddingRight:12,borderRight:`1px solid ${t.line}`,flexShrink:0}}>Filters</span>
             {isMobile&&(
               <button onClick={()=>setShowFilters(v=>!v)} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:10,border:`1px solid ${activeFilterCount?C.teal:t.line2}`,background:t.surf2,color:t.ink,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>
                 {showFilters?"Hide filters":"Show filters"}
-                {activeFilterCount>0&&<span style={{fontFamily:MONO,fontSize:10,fontWeight:700,padding:"1px 7px",borderRadius:99,background:C.teal,color:"#fff"}}>{activeFilterCount}</span>}
+                {activeFilterCount>0&&<span style={{fontVariantNumeric:"tabular-nums",fontSize:12,fontWeight:700,padding:"1px 7px",borderRadius:99,background:C.teal,color:"#fff"}}>{activeFilterCount}</span>}
               </button>
             )}
-            <div style={{display:"flex",gap:8,flexShrink:0,marginLeft:"auto"}}>
-              <Btn t={t} variant="outline" sm onClick={()=>exportSummary("csv")} title="Export filtered summary (CSV)">CSV</Btn>
-              <Btn t={t} variant="primary" sm onClick={()=>exportSummary("xlsx")} title="Export filtered summary (Excel)">Excel</Btn>
-            </div>
           </div>
           {(!isMobile||showFilters)&&(
             <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginTop:10}}>
               <MultiSel t={t} values={Array.isArray(filters.month)?filters.month:[]} options={opts.months.filter(Boolean)} placeholder="All Months" onChange={vals=>setFilters(f=>({...f,month:vals}))}/>
-              <MultiSel t={t} values={Array.isArray(filters.entity)?filters.entity:[]} options={opts.entities.filter(Boolean)} placeholder="All Entities" onChange={vals=>setFilters(f=>({...f,entity:vals}))}/>
+              <MultiSel t={t} values={Array.isArray(filters.entity)?filters.entity:[]} options={opts.entities.filter(Boolean)} labelOf={v=>entLabel(v)} placeholder="All Entities" onChange={vals=>setFilters(f=>({...f,entity:vals}))}/>
               <MultiSel t={t} values={Array.isArray(filters.ptype)?filters.ptype:[]} options={opts.ptypes.filter(Boolean)} placeholder={isAg?"All Agencies":"All Partners"} onChange={vals=>setFilters(f=>({...f,ptype:vals}))}/>
               <MultiSel t={t} values={Array.isArray(filters.prog)?filters.prog:[]} options={opts.progs.filter(Boolean)} placeholder="All Programs" onChange={vals=>setFilters(f=>({...f,prog:vals}))}/>
               {curRaw.length>0&&<MultiSel t={t} values={Array.isArray(filters.status)?filters.status:[]} options={opts.statuses.filter(Boolean)} placeholder="All Statuses" onChange={vals=>setFilters(f=>({...f,status:vals}))}/>}
               <div ref={searchRef} style={{position:"relative",flex:"1 1 200px",minWidth:160}}>
                 <svg style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",pointerEvents:"none",color:t.muted}} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-                <input type="text" placeholder="Search partner, PO, or project…" value={searchInput}
+                <input type="text" placeholder="Search partner, invoice no. / ID, or project…" value={searchInput}
                   onChange={e=>{setSearchInput(e.target.value);setSearchIdx(-1);}}
                   onFocus={()=>setSearchFocus(true)} onBlur={()=>setTimeout(()=>setSearchFocus(false),160)}
                   onKeyDown={e=>{
@@ -1657,16 +1618,16 @@ function DashScreen(props) {
                     else if(e.key==="Escape"){setSearchFocus(false);setSearchIdx(-1);}
                   }}
                   style={{width:"100%",padding:"7px 28px 7px 32px",fontSize:12.5,borderRadius:10,border:`1px solid ${searchFocus?C.teal:t.line2}`,background:t.surf2,color:t.ink,fontFamily:"inherit",outline:"none",boxSizing:"border-box",boxShadow:searchFocus?`0 0 0 3px ${C.teal}22`:"none",transition:"all .15s"}}/>
-                {searchInput&&<button onClick={()=>{setSearchInput("");setFilters(f=>({...f,q:""}));}} aria-label="Clear search" style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",width:18,height:18,borderRadius:"50%",border:"none",background:t.surf4,color:t.muted,cursor:"pointer",fontSize:10,padding:0}}>✕</button>}
+                {searchInput&&<button onClick={()=>{setSearchInput("");setFilters(f=>({...f,q:""}));}} aria-label="Clear search" style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",width:18,height:18,borderRadius:"50%",border:"none",background:t.surf4,color:t.muted,cursor:"pointer",fontSize:12,padding:0}}>✕</button>}
                 {searchFocus&&allSuggestions.length>0&&(
                   <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,right:0,zIndex:300,background:t.surf,border:`1px solid ${t.line2}`,borderRadius:14,boxShadow:t.shadow3,overflow:"hidden"}}>
-                    {[{g:searchSuggestions.partners,l:isAg?"Agency":"Partner",ic:C.teal,lbl:"P",off:0},{g:searchSuggestions.pos,l:"PO Number",ic:C.magenta,lbl:"PO",off:searchSuggestions.partners.length},{g:searchSuggestions.projects,l:"Project",ic:C.pink,lbl:"Pr",off:searchSuggestions.partners.length+searchSuggestions.pos.length}].filter(x=>x.g.length>0).map(({g,l,ic,lbl,off})=>(
+                    {[{g:searchSuggestions.partners,l:isAg?"Agency":"Partner",ic:C.teal,lbl:"P",off:0},{g:searchSuggestions.pos,l:"Invoice No / ID",ic:C.magenta,lbl:"PO",off:searchSuggestions.partners.length},{g:searchSuggestions.projects,l:"Project",ic:C.pink,lbl:"Pr",off:searchSuggestions.partners.length+searchSuggestions.pos.length}].filter(x=>x.g.length>0).map(({g,l,ic,lbl,off})=>(
                       <div key={l}>
-                        <div style={{padding:"5px 14px 4px",fontFamily:MONO,fontSize:9,textTransform:"uppercase",letterSpacing:"0.14em",color:t.muted,background:t.surf2,display:"flex",justifyContent:"space-between"}}><span>{l}</span><span style={{color:C.teal}}>{g.length}</span></div>
+                        <div style={{padding:"5px 14px 4px",fontSize:12,letterSpacing:"0.01em",color:t.muted,background:t.surf2,display:"flex",justifyContent:"space-between"}}><span>{l}</span><span style={{color:C.teal}}>{g.length}</span></div>
                         {g.map((s,i)=><SugItem key={i} s={s} active={searchIdx===off+i} iconLabel={lbl} accentColor={ic} t={t} onPick={()=>{setSearchInput(s.label);setFilters(f=>({...f,q:s.label}));setSearchFocus(false);setSearchIdx(-1);}}/>)}
                       </div>
                     ))}
-                    <div style={{display:"flex",justifyContent:"space-between",padding:"5px 14px",fontFamily:MONO,fontSize:9.5,color:t.muted,background:t.surf2,borderTop:`1px solid ${t.line}`}}><span>↑↓ navigate</span><span>↵ select</span><span>Esc close</span></div>
+                    <div style={{display:"flex",justifyContent:"space-between",padding:"5px 14px",fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted,background:t.surf2,borderTop:`1px solid ${t.line}`}}><span>↑↓ navigate</span><span>↵ select</span><span>Esc close</span></div>
                   </div>
                 )}
               </div>
@@ -1676,21 +1637,32 @@ function DashScreen(props) {
         </div>
       )}
 
-      {chips.length>0&&(
+      {chips.length>0&&!isYtd&&(
         <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:18}}>
-          <span style={{fontFamily:MONO,fontSize:9.5,letterSpacing:"0.1em",textTransform:"uppercase",color:t.muted}}>Active:</span>
+          <span style={{fontSize:12,letterSpacing:"0.01em",color:t.muted}}>Active:</span>
           {chips.map((c,i)=>(
-            <span key={i} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"3px 6px 3px 10px",borderRadius:99,background:`${C.teal}14`,border:`1px solid ${C.teal}40`,fontSize:11.5,color:t.ink}}>
-              <span style={{color:t.muted,fontSize:10.5}}>{c.lbl}:</span>
-              <span style={{fontWeight:600,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.v}</span>
-              <button onClick={()=>removeChip(c)} aria-label={`Remove filter ${c.lbl} ${c.v}`} style={{width:16,height:16,borderRadius:"50%",border:"none",background:`${C.teal}30`,color:t.ink,cursor:"pointer",fontSize:9,padding:0,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+            <span key={i} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"3px 6px 3px 10px",borderRadius:99,background:`${C.teal}14`,border:`1px solid ${C.teal}40`,fontSize:12,color:t.ink}}>
+              <span style={{color:t.muted,fontSize:12}}>{c.lbl}:</span>
+              <span style={{fontWeight:600,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.k==="entity"?entLabel(c.v):c.v}</span>
+              <button onClick={()=>removeChip(c)} aria-label={`Remove filter ${c.lbl} ${c.v}`} style={{width:16,height:16,borderRadius:"50%",border:"none",background:`${C.teal}30`,color:t.ink,cursor:"pointer",fontSize:12,padding:0,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>✕</button>
             </span>
           ))}
-          <button onClick={resetFilters} style={{border:"none",background:"transparent",color:t.bad,cursor:"pointer",fontFamily:"inherit",fontSize:11.5,fontWeight:600,padding:"3px 6px"}}>Clear all</button>
+          <button onClick={resetFilters} style={{border:"none",background:"transparent",color:t.bad,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,padding:"3px 6px"}}>Clear all</button>
         </div>
       )}
 
-      {filtersEmpty ? (
+      {isDc ? (
+        <DcTab rows={viewPartnerRaw||[]} w={w} t={t} showToast={showToast}/>
+      ) : isFc ? (
+        <ForecastTab rows={viewPartnerRaw||[]} w={w} t={t} showToast={showToast}/>
+      ) : isAcc ? (
+        <Card t={t} pad={false} style={{marginBottom:14}}>
+          <CardHead title="Accrual · Agency Prepaid" accent={C.yellow} sub="Submission checklist, missing list & accrual estimate · all Agency rows for the selected year" t={t}/>
+          <AccrualTab rows={viewAgencyRaw||[]} region={canPickRegion ? (regionView||"") : (regionFilter||"")} w={w} t={t} showToast={showToast}/>
+        </Card>
+      ) : isYtd ? (
+        <YtdTab partnerRows={viewPartnerRaw||[]} agencyRows={(isSPM||isIOHAny)?(viewAgencyRaw||[]):[]} showTeam={isSPM||isIOHAny} w={w} t={t} showToast={showToast}/>
+      ) : filtersEmpty ? (
         <Card t={t} style={{marginBottom:14}}>
           <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,padding:"28px 16px",textAlign:"center"}}>
             <div style={{fontSize:40}}>🔍</div>
@@ -1701,228 +1673,1601 @@ function DashScreen(props) {
         </Card>
       ) : (
         <>
-          {activeTab==="dash" && <DashTab {...props} t={t} w={w}/>}
-          {activeTab==="raw"  && <RawTab  {...props} t={t} w={w} docs={docs}/>}
-          {activeTab==="letters" && docs.enabled && docs.canManageApprovals && <PartnerLettersTab docs={docs} partnerNames={src==="partner"?[...new Set(docPOsAll.map(p=>p.partner).filter(Boolean))].sort():[]} t={t}/>}
-          {activeTab==="docs" && docs.enabled && <PoDocsTab pos={docPOs} allPos={docPOsAll} segment={src} docs={docs} noRefCount={docNoRef} fmtAmount={n=>fmtMoney(n)} onGoLetters={docs.canManageApprovals?()=>setActiveTab("letters"):undefined} t={t}/>}
+          {tabKey==="dash" && <DashTab {...props} t={t} w={w}/>}
+          {tabKey==="raw"  && <RawTab  {...props} t={t} w={w} docs={docs}/>}
+          {SHOW_DOCUMENT_TABS && activeTab==="letters" && docs.enabled && docs.canManageApprovals && <PartnerLettersTab docs={docs} partnerNames={src==="partner"?[...new Set(docPOsAll.map(p=>p.partner).filter(Boolean))].sort():[]} t={t}/>}
+          {SHOW_DOCUMENT_TABS && activeTab==="docs" && docs.enabled && <PoDocsTab pos={docPOs} allPos={docPOsAll} segment={src} docs={docs} noRefCount={docNoRef} fmtAmount={n=>fmtMoney(n)} onGoLetters={docs.canManageApprovals?()=>setActiveTab("letters"):undefined} t={t}/>}
         </>
       )}
 
-      <div style={{marginTop:28,paddingTop:18,borderTop:`1px solid ${t.line}`,textAlign:"center",fontFamily:MONO,fontSize:10,letterSpacing:"0.12em",textTransform:"uppercase",color:t.muted,lineHeight:1.6}}>
-        Partner &amp; Agency Payout Tracker · Sumatera · SAP &amp; Web Coupa · SLA {isAg?"2/2/2/3":"2/1/2/2/3"} WD (Working Days)
+      <div style={{marginTop:28,paddingTop:18,borderTop:`1px solid ${t.line}`,textAlign:"center",fontSize:12,letterSpacing:"0.01em",color:t.muted,lineHeight:1.6}}>
+        Partner &amp; Agency Payout Tracker · Sumatera · SAP &amp; Web Coupa · SLA {slaText(isAg)} working days
         {regionFilter&&<span style={{marginLeft:12,color:t.yellow}}>· {regionFilter}</span>}
       </div>
     </div>
   );
 }
 
-function DashTab(props) {
-  const { t, w, grand, grandPartnerCount, filtAgg, filtRaw, src, funnelStages, trendSeries, donutPieces, heatData, heatMetric, setHeatMetric, bnResults, topPartners, sortedMonths, collapsed, setCollapsed, tblSort, setTblSort, funnelExp, setFunnelExp, donutExp, setDonutExp, bnExp, setBnExp, tpExp, setTpExp, exportSummary } = props;
-  const isAg = src==="agency";
-  const noteItems = [
-    {l:"Data Source",   txt:`SAP & Web Coupa · ${isAg?"Agency SLA 2/2/2/3":"Partner SLA 2/1/2/2/3"} WD (Working Days)`, c:C.teal},
-    {l:"Invoice Sub.",  txt:"Submitted to Coupa · AP verification",                                                        c:C.yellow},
-    {l:"CLV",           txt:"Cleared Voucher · Finance approved",                                                           c:C.magenta},
-    {l:"Bank Cleared",  txt:"Fund transfer completed (3 WD)",                                                               c:C.tealD},
+/* ─────────────────────────────────────────────────────────────────────
+   INSIGHTS — KPI cards, Outstanding (aging + due this/next week), Partners,
+   Accrual Agency.
+   Semua dihitung sekali dari filtRaw (sudah ikut filter Flow/Month/Entity/dst).
+   ───────────────────────────────────────────────────────────────────── */
+const DAY = 86400000;
+const dayStart = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+const ownerName = (r) => gstr(r,["partner name","agency name"]);
+const ymLabel = (mk) => { const ms=["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]; return mk ? `${ms[mk%100]||"?"} ${Math.floor(mk/100)}` : "—"; };
+function rowMonthKey(r) {
+  const v = gcell(r,["program date","month","bulan","periode"]);
+  const d = toRealDate(v);
+  return d ? d.getFullYear()*100 + d.getMonth() + 1 : monthKey(v);
+}
+const stripCat = (s) => String(s||"").toUpperCase().replace(/[^A-Z0-9]/g,"");
+
+// Accrual Agency: actual per Agency × Program Type × bulan; bulan kosong = rata-rata bulan terisi
+// (kecuali kategori non-accrual), agency pengecualian di-skip.
+function computeAccrual(rows) {
+  const skipAg = ACCRUAL_SKIP_AGENCY.map(normalizeName);
+  const groups = {}; const monthSet = new Set();
+  rows.forEach(r=>{
+    const mk = rowMonthKey(r); if (!mk) return;
+    const ag = gstr(r,["agency name"]); if (!ag) return;
+    monthSet.add(mk);
+    const na = normalizeName(ag);
+    if (skipAg.some(x=>na.includes(x))) return;
+    const prog = gstr(r,["program type","programtype"]) || "—";
+    const key = ag+"\x00"+prog;
+    if (!groups[key]) groups[key] = { agency:ag, prog, act:{} };
+    groups[key].act[mk] = (groups[key].act[mk]||0) + gnum(r,["amount"]);
+  });
+  const months = [...monthSet].sort((a,b)=>a-b);
+  const tot = {}; months.forEach(m=>{ tot[m]={act:0,est:0}; });
+  const list = Object.values(groups).map(g=>{
+    const filled = Object.keys(g.act).map(Number);
+    const avg = filled.length ? filled.reduce((s,m)=>s+g.act[m],0)/filled.length : 0;
+    const noAccrue = ACCRUAL_SKIP_PROG.includes(stripCat(g.prog));
+    const cells = {}; let act=0, est=0;
+    months.forEach(m=>{
+      if (g.act[m]!=null) { cells[m]={v:g.act[m],est:false}; act+=g.act[m]; tot[m].act+=g.act[m]; }
+      else if (!noAccrue && avg) { cells[m]={v:avg,est:true}; est+=avg; tot[m].est+=avg; }
+    });
+    return { ...g, cells, act, est, noAccrue };
+  }).sort((a,b)=>a.agency.localeCompare(b.agency)||a.prog.localeCompare(b.prog));
+  return { months, list, tot };
+}
+
+// Header sticky: background harus solid (bukan rgba) dan di atas sel body, supaya baris yang di-scroll tidak tembus
+const thS = (t, left) => ({position:"sticky",top:0,zIndex:3,fontSize:12,letterSpacing:"0.01em",color:t.muted,fontWeight:600,background:t.surf2,padding:"8px 9px",textAlign:left?"left":"right",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap"});
+const tdS = (t, left) => ({padding:"8px 10px",textAlign:left?"left":"right",borderBottom:`1px solid ${t.line}`,fontSize:12.5,fontVariantNumeric:"tabular-nums",color:t.ink2,whiteSpace:"nowrap",maxWidth:left?240:undefined,overflow:"hidden",textOverflow:"ellipsis"});
+const EmptyNote = ({ t, children }) => <div style={{textAlign:"center",color:t.muted,padding:"1.5rem",fontVariantNumeric:"tabular-nums",fontSize:12}}>{children}</div>;
+
+// Rupiah: ringkas (juta/miliar) untuk kartu, penuh untuk tabel
+const fmtRpFull = (n) => "Rp "+Math.round(Number(n)||0).toLocaleString("id-ID");
+const pctClr = (p, t) => p>=80 ? { c:t.goodDark, bg:t.goodBg, bd:t.goodBd, dot:t.good } : p>=50 ? { c:t.warnDark, bg:t.warnBg, bd:t.warnBd, dot:t.warn } : { c:t.badDark, bg:t.badBg, bd:t.badBd, dot:t.bad };
+
+function computeInsights(rows) {
+  const today = dayStart(new Date());
+  const wk0 = new Date(today.getTime() - ((today.getDay()+6)%7)*DAY); // Senin minggu ini
+  const wk1 = new Date(wk0.getTime()+7*DAY), wk2 = new Date(wk0.getTime()+14*DAY);
+  const k = { total:0, n:rows.length, paid:0, paidN:0, out:0, outN:0, notSub:0, notSubAmt:0, cycSum:0, cycN:0 };
+  const open = [], owners = {};
+  rows.forEach(r=>{
+    const amt = gnum(r,["amount"]), st = rowStatus(r), name = ownerName(r) || "—";
+    const invV = gcell(r,H_INV_COUPA,null) || gcell(r,H_INV), clrV = gcell(r,H_CLR);
+    const paid = isPaidStatus(st), proc = isProcessStatus(st), ns = isNotSubStatus(st);
+    k.total += amt;
+    if (paid) { k.paid += amt; k.paidN++; }
+    if (proc) { k.out += amt; k.outN++; }
+    if (ns) { k.notSub++; k.notSubAmt += amt; }
+    const invD = toDate(invV), clrD = toDate(clrV), clvD = toDate(gcell(r,H_CLV)), estRaw = toDate(gcell(r,H_EST));
+    const est = estRaw ? dayStart(estRaw) : null;
+    const cyc = workDaysBetween(invV, clrV);
+    if (cyc!=null) { k.cycSum += cyc; k.cycN++; }
+    if (!owners[name]) owners[name] = { name, total:0, paid:0, n:0, open:0, openAmt:0, cycSum:0, cycN:0, onT:0, onN:0, late:0, oldest:null };
+    const o = owners[name]; o.total += amt; o.n++;
+    if (paid) o.paid += amt;
+    if (cyc!=null) { o.cycSum += cyc; o.cycN++; }
+    if (clrD && est) { o.onN++; if (dayStart(clrD) <= est) o.onT++; }
+    if (paid || clrV) return;
+    // Masih terbuka (belum dibayar & belum clearing)
+    const sofar = invD ? workDaysBetween(invD, today) : null;              // Invoice → hari ini (hari kerja)
+    const late = est && est < today ? (workDaysBetween(est, today) || 0) : 0; // hari kerja lewat Est. Date
+    const mk = rowMonthKey(r);
+    const item = { name, title:gstr(r,["project title"])||"—", inv:r._inv, invId:r._invId, amt, status:st, ns, proc,
+      invD, clvD, est, cyc:sofar, late, period:mk?ymLabel(mk):"—" };
+    open.push(item);
+    o.open++; o.openAmt += amt;
+    if (late>0) o.late++;
+    if (sofar!=null && (o.oldest==null || sofar>o.oldest)) o.oldest = sofar;
+  });
+  // rentang bulan program di data (untuk menjelaskan cakupan KPI)
+  const mks = rows.map(rowMonthKey).filter(Boolean);
+  const lo = mks.length ? Math.min(...mks) : 0, hi = mks.length ? Math.max(...mks) : 0;
+  const monthSpan = lo ? (lo===hi ? ymLabel(lo) : `${ymLabel(lo)} – ${ymLabel(hi)}`) : "";
+  return { k, open, owners:Object.values(owners), wk0, wk1, wk2, today, monthSpan };
+}
+
+/* ── KPI: 4 kartu (nominal besar + jumlah kecil) ── */
+function KpiCards({ ins, partnerCount, monthsCount, isAg, w, t }) {
+  const { k } = ins;
+  const span = ins.monthSpan;
+  const dot = (c) => <span style={{width:10,height:10,borderRadius:3,background:c,flexShrink:0}}/>;
+  const lbl = (c, txt) => <span style={{display:"inline-flex",alignItems:"center",gap:6}}>{c&&dot(c)}{txt}</span>;
+  const cards = [
+    { l:lbl(null,"Total payout"),               v:k.total,     sub:plural(k.n,"record") },
+    { l:lbl(t.good,"Paid"),                     v:k.paid,      sub:`${plural(k.paidN,"record")} · ${pct(k.paid,k.total)}% of amount` },
+    { l:lbl(t.warn,"In process"),               v:k.out,       sub:`${plural(k.outN,"record")} invoiced, waiting for payment` },
+    { l:lbl(t.bad,"Invoice not submitted"),     v:k.notSubAmt, sub:`${plural(k.notSub,"record")} waiting for an invoice` },
   ];
   return (
-    <>
-      {/* Grand Total Banner — hero summary */}
-      <GrandTotalBanner grand={grand} partnerCount={grandPartnerCount} monthsCount={unique(filtAgg.map(r=>r.month)).length} groupCount={filtAgg.length} isAg={isAg} w={w} t={t}/>
+    <div style={{marginBottom:14}}>
+      <div style={{display:"grid",gridTemplateColumns:w>=900?"repeat(4,1fr)":"repeat(2,1fr)",gap:12}}>
+        {cards.map((c,i)=><YtdKpi key={i} t={t} label={c.l} value={<span title={fmtRpFull(c.v)}>{fmtRpWord(c.v)}</span>} sub={c.sub}/>)}
+      </div>
+      <div style={{fontSize:12.5,color:t.muted,marginTop:8,display:"flex",gap:14,flexWrap:"wrap"}}>
+        <span>Average time to clear: <strong style={{color:t.ink}}>{k.cycN?`${(k.cycSum/k.cycN).toFixed(1)} working days`:"—"}</strong> (Invoice → Bank Cleared)</span>
+        <span>{plural(partnerCount,isAg?"agency":"partner",isAg?"agencies":"partners")} · {plural(monthsCount,"program month")}{span?` (${span})`:""} · all years in the data; YTD Summary covers one year</span>
+      </div>
+    </div>
+  );
+}
 
-      <div style={{display:"grid",gridTemplateColumns:w>=1000?"1.05fr 1fr":"1fr",gap:14,marginBottom:14}}>
-        <Card t={t} pad={false}>
-          <CardHead title="Completion Funnel" accent={C.teal} sub={`${isAg?"Agency milestones":"Partner milestones"} · click "pending" badge to view records`} t={t}/>
-          <div style={{padding:20,display:"flex",gap:18,alignItems:"flex-start",flexWrap:"wrap"}}>
-            <div style={{flexShrink:0}}>
-              {(()=>{
-                const W=190,H=isAg?175:215,pad=5,sH=(H-pad*2)/funnelStages.length;
-                const maxV=grand.n||1;
-                return <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{display:"block"}} role="img" aria-label="Milestone funnel">{funnelStages.map((s,i)=>{ const w1=(s.val/maxV)*(W-12); const nv=funnelStages[i+1]?funnelStages[i+1].val:s.val; const w2=(nv/maxV)*(W-12); const x1a=(W-w1)/2,x1b=x1a+w1,x2a=(W-w2)/2,x2b=x2a+w2,y1=pad+i*sH,y2=y1+sH-1; const darkTxt=s.color===C.yellow||s.color==="#FFCB05"; return <g key={s.key}><path d={`M${x1a},${y1} L${x1b},${y1} L${x2b},${y2} L${x2a},${y2} Z`} fill={s.color} opacity={.95}/><text x={W/2} y={y1+sH/2+4} textAnchor="middle" fill={darkTxt?"#1a1a1a":"#fff"} fontSize={10.5} fontWeight="700" fontFamily="inherit">{s.val.toLocaleString()}</text></g>; })}</svg>;
-              })()}
+/* ── SLA strip: rata-rata hari kerja vs target + % tepat waktu per step ── */
+function SlaStrip({ steps, bnExp, setBnExp, t }) {
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+      {steps.map(r=>{
+        const p = pct(r.ok, r.n), pc = pctClr(p, t), open = bnExp===r.key, can = r.n>0;
+        return (
+          <div key={r.key} style={{border:`1px solid ${open?C.magenta:t.line}`,borderRadius:10,background:t.surf2}}>
+            <div {...(can?kbd(()=>setBnExp(e=>e===r.key?null:r.key)):{})} onClick={can?()=>setBnExp(e=>e===r.key?null:r.key):undefined} aria-expanded={open}
+              style={{display:"grid",gridTemplateColumns:"1fr auto auto",alignItems:"center",gap:10,padding:"8px 11px",cursor:can?"pointer":"default"}}>
+              <div style={{minWidth:0,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                <span style={{fontWeight:600,fontSize:12.5,color:t.ink}}>{r.label}</span>
+              </div>
+              <span style={{fontSize:12.5,color:t.ink2,whiteSpace:"nowrap",fontVariantNumeric:"tabular-nums"}} title="Average working days vs SLA target">
+                {r.n?<><strong style={{color:r.avg<=r.sla?t.goodDark:t.badDark}}>{r.avg.toFixed(1).replace(".",",")}</strong> / {r.sla} working days</>:"—"}
+              </span>
+              <span style={{display:"inline-flex",alignItems:"center",gap:5,minWidth:78,justifyContent:"center",padding:"1px 9px",borderRadius:99,fontSize:12,lineHeight:"18px",fontVariantNumeric:"tabular-nums",fontWeight:700,background:r.n?pc.bg:t.surf3,color:r.n?pc.c:t.muted,border:`1px solid ${r.n?pc.bd:t.line}`,whiteSpace:"nowrap"}} title={`${r.ok} of ${r.n} on time`}>
+                {r.n?<><span style={{width:6,height:6,borderRadius:"50%",background:pc.dot}}/>{p}% on time</>:"no data"}
+              </span>
             </div>
-            <div style={{flex:1,minWidth:220}}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:`linear-gradient(90deg,${C.red},${C.magenta})`,color:"#fff",borderRadius:10,padding:"9px 14px",marginBottom:10,fontSize:13,fontWeight:700}}><span>Total Records</span><span style={{fontFamily:MONO,fontSize:16,fontWeight:600}}>{grand.n.toLocaleString()}</span></div>
-              {funnelStages.map((s,i)=>{ const prev=i>0?funnelStages[i-1]:null; const drop=(prev?prev.val:grand.n)-s.val; return <FunnelRowItem key={s.key} s={s} prevKey={prev?prev.key:null} drop={drop} isExp={funnelExp===s.key} filtRaw={filtRaw} grand={grand} onToggle={()=>setFunnelExp(k=>k===s.key?null:s.key)} t={t}/>; })}
-            </div>
+            {open&&r.details.length>0&&(
+              <div style={{borderTop:`1px solid ${t.line}`,maxHeight:220,overflowY:"auto",background:t.surf}}>
+                <div style={{padding:"6px 12px",fontSize:12,color:t.bad,letterSpacing:"0.01em"}}>Longest {Math.min(r.details.length,20)} of {r.n}</div>
+                {r.details.slice(0,20).map((d,j)=><BnDetailRow key={j} d={d} t={t}/>)}
+              </div>
+            )}
           </div>
-        </Card>
+        );
+      })}
+    </div>
+  );
+}
+
+function DashTab(props) {
+  const { t, w, grandPartnerCount, filtAgg, filtRaw, src, bnResults, bnExp, setBnExp } = props;
+  const isAg = src==="agency";
+  const ins = useMemo(()=>computeInsights(filtRaw),[filtRaw]);
+  const monthsCount = useMemo(()=>unique(filtAgg.map(r=>r.month)).length,[filtAgg]);
+  const bastMissing = isAg && props.bastCols && (!props.bastCols.rcv || !props.bastCols.app);
+  return (
+    <>
+      <KpiCards ins={ins} partnerCount={grandPartnerCount} monthsCount={monthsCount} isAg={isAg} w={w} t={t}/>
+      <div style={{display:"grid",gridTemplateColumns:"1fr",gap:14,marginBottom:14}}>
         <Card t={t} pad={false}>
-          <CardHead title="Status Distribution" accent={C.magenta} sub="Click a status to view records" t={t}/>
-          <div style={{padding:20}}>
-            <DonutChart pieces={donutPieces} t={t} size={140}/>
-            <div style={{marginTop:14,display:"flex",flexDirection:"column",gap:5}}>
-              {donutPieces.map((p,i)=><DonutRow key={i} p={p} total={donutPieces.reduce((a,b)=>a+b.v,0)} isExp={donutExp===p.label} filtRaw={filtRaw} onToggle={()=>setDonutExp(e=>e===p.label?null:p.label)} t={t}/>)}
+          <CardHead title="SLA by Step" accent={C.red} sub="Avg working days vs target · % on time · click a step for the longest cases" t={t}/>
+          {bastMissing&&<div style={{margin:"12px 18px 0",padding:"8px 12px",borderRadius:10,background:t.infoBg,border:`1px solid ${t.infoBd}`,fontSize:12.5,color:t.ink2,lineHeight:1.5}}>BAST steps need <strong>BAST Received Date</strong> and <strong>BAST Approved Date</strong> columns in the Agency sheet. They are not in the uploaded data yet, so those steps show &ldquo;no data&rdquo; and are left out of the funnel.</div>}
+          <div style={{padding:18}}>
+            {filtRaw.length===0?<EmptyNote t={t}>No data available</EmptyNote>:<SlaStrip steps={bnResults} bnExp={bnExp} setBnExp={setBnExp} t={t}/>}
+            <div style={{display:"flex",gap:12,marginTop:10,flexWrap:"wrap",fontSize:12,color:t.muted}}>
+              {[{c:t.good,l:"≥80% on time"},{c:t.warn,l:"50–79%"},{c:t.bad,l:"<50%"}].map(x=><span key={x.l} style={{display:"inline-flex",alignItems:"center",gap:5}}><span style={{width:8,height:8,borderRadius:2,background:x.c}}/>{x.l}</span>)}
             </div>
           </div>
         </Card>
       </div>
-      <div style={{display:"grid",gridTemplateColumns:w>=1000?"1fr 1fr":"1fr",gap:14,marginBottom:14}}>
+      <div style={{display:"grid",gridTemplateColumns:w>=1000?"minmax(0,1fr) minmax(0,1fr)":"1fr",gap:14,marginBottom:14,alignItems:"start"}}>
         <Card t={t} pad={false}>
-          <CardHead title="Monthly Trends" accent={C.yellow} sub="% Invoice & % Bank Cleared per month" t={t}/>
-          <div style={{padding:20}}>
-            <BarChart series={trendSeries} t={t}/>
-            <div style={{display:"flex",gap:16,justifyContent:"center",marginTop:10,flexWrap:"wrap",fontSize:12,fontWeight:600}}>
-              <span style={{display:"flex",alignItems:"center",gap:6,color:t.ink}}><span style={{width:12,height:12,background:C.yellow,borderRadius:3,display:"inline-block"}}/> % Invoice</span>
-              <span style={{display:"flex",alignItems:"center",gap:6,color:t.ink}}><span style={{width:12,height:12,background:C.teal,borderRadius:3,display:"inline-block"}}/> % Cleared</span>
-            </div>
-          </div>
+          <CardHead title="Completion Funnel" sub={isAg?`Total → ${props.bastCols?.rcv||props.bastCols?.app?"BAST → ":""}Invoice Submitted → CLV → Bank Cleared · click "pending" to list records`:"Total → Surat Pemberitahuan → Invoice Submitted → CLV → Bank Cleared · click \"pending\" to list records"} t={t}/>
+          {filtRaw.length===0?<EmptyNote t={t}>No data available</EmptyNote>:<CompletionFunnel rows={filtRaw} isAg={isAg} bastCols={props.bastCols} t={t}/>}
         </Card>
         <Card t={t} pad={false}>
-          <CardHead title="Completion Heatmap" accent={C.magenta} sub={`Month × ${isAg?"Agency":"Partner"} Type`} t={t}
-            right={<div style={{display:"flex",gap:5,marginTop:8,flexWrap:"wrap"}}>{[{k:"inv",l:"Invoice",ac:C.yellow,dark:true},{k:"clv",l:"CLV",ac:C.tealD},{k:"clr",l:"Clearing",ac:C.teal}].map(m=><HeatBtn key={m.k} m={m} active={heatMetric===m.k} onClick={()=>setHeatMetric(m.k)} t={t}/>)}</div>}/>
-          <div style={{padding:20}}>
-            <div style={{overflowX:"auto"}}>
-              <table style={{borderCollapse:"separate",borderSpacing:3,minWidth:320,fontSize:12,width:"100%"}}>
-                <thead><tr><th style={{fontFamily:MONO,fontSize:9.5,color:t.muted,textAlign:"left",padding:"4px 6px",textTransform:"uppercase",letterSpacing:"0.1em",fontWeight:500}}>Month</th>{heatData.ptypes.map(p=><th key={p} style={{fontFamily:MONO,fontSize:9.5,color:t.muted,textAlign:"center",padding:"4px 6px",textTransform:"uppercase",letterSpacing:"0.1em",fontWeight:500}}>{p}</th>)}</tr></thead>
-                <tbody>{heatData.months.map(m=><tr key={m}><td style={{fontFamily:MONO,fontSize:11,fontWeight:600,color:t.ink,padding:"3px 6px",whiteSpace:"nowrap"}}>{m}</td>{heatData.ptypes.map(p=>{ const c=heatData.cells[m+"\x00"+p]; if(!c)return <td key={p}><div style={{borderRadius:8,padding:"9px 5px",textAlign:"center",background:t.surf3,color:t.muted2,fontFamily:MONO,fontSize:11}}>—</div></td>; const v=c[heatMetric]||0,pp=pct(v,c.n),bg=heatClr(pp),light=bg==="#FFCB05"||bg===C.yellow; return <td key={p} title={`${m}·${p}: ${v}/${c.n} (${pp}%)`}><HeatCell bg={bg} light={light} pp={pp} v={v} n={c.n}/></td>; })}</tr>)}</tbody>
-              </table>
-            </div>
-            <div style={{display:"flex",alignItems:"center",gap:7,marginTop:10,fontFamily:MONO,fontSize:10,color:t.muted,flexWrap:"wrap"}}>
-              Scale: <div style={{display:"flex",gap:2}}>{[5,25,50,70,85,97].map(p=><span key={p} style={{width:20,height:11,borderRadius:3,background:heatClr(p),display:"block"}}/>)}</div> 0% → 100%
-            </div>
-          </div>
+          <CardHead title="Status Distribution" sub="Records by payment status · click a status to list its records" t={t}/>
+          {filtRaw.length===0?<EmptyNote t={t}>No data available</EmptyNote>:<StatusDistribution rows={filtRaw} t={t}/>}
         </Card>
       </div>
-      {filtRaw.length>0&&(
-        <div style={{display:"grid",gridTemplateColumns:w>=1000?"1fr 1fr":"1fr",gap:14,marginBottom:14}}>
-          <Card t={t} pad={false}>
-            <CardHead title="SLA Bottleneck Analysis" accent={C.red} sub={`${isAg?"Agency 2/2/2/3":"Partner 2/1/2/2/3"} WD (Working Days)`} t={t}/>
-            <div style={{padding:20}}>
-              <div style={{fontFamily:MONO,fontSize:10,color:t.muted,padding:"6px 12px",background:t.surf2,borderRadius:9,marginBottom:14,borderLeft:`3px solid ${C.teal}`}}><strong style={{color:t.ink,fontSize:11}}>{unique(filtRaw.map(r=>gstr(r,["program date","month"]))).length} month{unique(filtRaw.map(r=>gstr(r,["program date","month"]))).length!==1?"s":""}</strong>{" · "}<strong style={{color:t.ink,fontSize:11}}>{filtRaw.length.toLocaleString()}</strong> records</div>
-              <div style={{display:"flex",flexDirection:"column",gap:9}}>{bnResults.map(r=><BnRow key={r.key} r={r} isExp={bnExp===r.key} onToggle={()=>r.n>0&&setBnExp(e=>e===r.key?null:r.key)} t={t}/>)}</div>
-              <div style={{display:"flex",gap:12,marginTop:12,padding:"8px 12px",background:t.surf2,borderRadius:9,border:`1px solid ${t.line}`,flexWrap:"wrap",fontFamily:MONO,fontSize:10,color:t.muted,textTransform:"uppercase",letterSpacing:"0.06em"}}>{[{c:t.good,l:"Within SLA"},{c:t.warn,l:"Approaching SLA"},{c:t.bad,l:"Overdue"}].map(x=><span key={x.l} style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,borderRadius:3,background:x.c}}/>{x.l}</span>)}</div>
-            </div>
-          </Card>
-          <Card t={t} pad={false}>
-            <CardHead title={isAg?"Top Agencies":"Top Partners"} accent={C.magenta} sub="By total amount · click to view all programs" t={t}/>
-            <div style={{padding:20}}>
-              {topPartners.length===0?<div style={{textAlign:"center",color:t.muted,padding:"2rem",fontFamily:MONO,fontSize:12}}>No data available</div>:<div style={{display:"flex",flexDirection:"column",gap:6}}>{topPartners.map((p,i)=><TpRow key={i} p={p} i={i} maxAmt={topPartners[0]?.amt||1} isExp={tpExp===p.name} onToggle={()=>setTpExp(e=>e===p.name?null:p.name)} t={t}/>)}</div>}
-            </div>
-          </Card>
-        </div>
-      )}
-      <SummaryTable t={t} w={w} filtAgg={filtAgg} grand={grand} grandPartnerCount={grandPartnerCount} sortedMonths={sortedMonths} collapsed={collapsed} setCollapsed={setCollapsed} tblSort={tblSort} setTblSort={setTblSort} isAg={isAg} exportSummary={exportSummary}/>
-      <Card t={t} pad={false} style={{marginBottom:14}}>
-        <div style={{padding:"13px 20px",fontWeight:700,fontSize:13.5,letterSpacing:"-0.01em",borderBottom:`1px solid ${t.line}`,color:t.ink,background:t.surf2}}>Data References &amp; Remarks</div>
-        <div style={{display:"grid",gridTemplateColumns:w>=900?"repeat(4,1fr)":w>=600?"repeat(2,1fr)":"1fr",gap:12,padding:16}}>{noteItems.map((n,i)=><NoteCard key={i} n={n} t={t}/>)}</div>
-      </Card>
+      <DetailsTabs {...props} ins={ins} isAg={isAg}/>
     </>
   );
 }
 
-function SummaryTable({ t, w, filtAgg, grand, grandPartnerCount, sortedMonths, collapsed, setCollapsed, tblSort, setTblSort, isAg, exportSummary }) {
-  const COLS = [
-    {k:"month",l:"Month",left:true},
-    {k:"entity",l:"Entity",left:true},
-    {k:"ptype",l:isAg?"Agency":"Partner Type",left:true},
-    {k:"prog",l:"Program",left:true},
-    {k:"n",l:"#Rec"},
-    {k:"po",l:"PO"},
-    ...(!isAg?[{k:"surat",l:"Surat Pemberitahuan"}]:[]),
-    {k:"inv",l:"Invoice"},
-    {k:"clv",l:"CLV"},
-    {k:"clr",l:"Clearing"},
-    {k:"pInv",l:"% Inv"},
-    {k:"pClv",l:"% CLV"},
-    {k:"pClr",l:"% Clr"},
+/* ── Area detail bertab (default: Outstanding) ── */
+function DetailsTabs(props) {
+  const { t, w, ins, isAg, exportSummary } = props;
+  const [tab, setTab] = useState("out");
+  const tabs = [
+    { id:"out",  label:"Outstanding", count:ins.open.length },
+    { id:"own",  label:isAg?"Agencies":"Partners", count:ins.owners.length },
   ];
-  const colCount = COLS.length;
-  // Label mengikuti keadaan nyata: semua terbuka → "Collapse all", selain itu → "Expand all"
-  const allExpanded = sortedMonths.length>0 && sortedMonths.every(m=>!collapsed[m]);
-  const toggleAll = () => { const next={}; if(allExpanded) sortedMonths.forEach(m=>{next[m]=true;}); setCollapsed(next); };
-  const invPct = pct(grand.inv,grand.n), clvPct = pct(grand.clv,grand.n), clrPct = pct(grand.clr,grand.n);
-  const narrow = w<700;
-
+  const cur = tabs.some(x=>x.id===tab) ? tab : "out";
   return (
     <Card t={t} pad={false} style={{marginBottom:14}}>
-      <CardHead title="Monthly Summary" accent={C.teal}
-        sub={`${filtAgg.length} groups · ${sortedMonths.length} months · click month row to expand/collapse`}
-        t={t}
-        right={
-          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-            <Btn t={t} variant="ghost" sm onClick={toggleAll}>{allExpanded?"Collapse all":"Expand all"}</Btn>
-            <Btn t={t} variant="outline" sm onClick={()=>exportSummary("csv")}>CSV</Btn>
-          </div>
-        }/>
-      {narrow&&(
-        <div style={{padding:"7px 16px",fontFamily:MONO,fontSize:10,color:t.muted,background:t.surf2,borderBottom:`1px solid ${t.line}`,display:"flex",alignItems:"center",gap:6}}>
-          <span style={{fontSize:13}}>↔</span> Scroll horizontally to view all columns
+      <div style={{display:"flex",gap:22,padding:"0 20px",borderBottom:`1px solid ${t.line}`,background:t.surf2,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"none"}} role="tablist">
+        {tabs.map(x=><TabBtn key={x.id} label={x.label} count={x.count} active={cur===x.id} onClick={()=>setTab(x.id)} t={t}/>)}
+        {/* Ekspor ringkasan (per bulan × entity × tipe × program × flow, ikut filter) — tersedia di semua tab detail */}
+        <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8,flexShrink:0,padding:"8px 0"}}>
+          <span style={{fontSize:12.5,color:t.muted,whiteSpace:"nowrap"}}>Export summary</span>
+          <Btn t={t} variant="outline" sm onClick={()=>exportSummary("csv")} title="Filtered monthly summary as CSV">CSV</Btn>
+          <Btn t={t} variant="primary" sm onClick={()=>exportSummary("xlsx")} title="Filtered monthly summary as Excel">Excel</Btn>
         </div>
-      )}
-      <div style={{overflowX:"auto"}}>
-        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:narrow?720:undefined}}>
-          <thead><tr>{COLS.map(c=><ThCell key={c.k} col={c} sortState={tblSort} setSort={setTblSort} t={t}/>)}</tr></thead>
-          <tbody>
-            {sortedMonths.map(m=>{
-              const rows=filtAgg.filter(r=>r.month===m);
-              const mT=sumRows(rows);
-              const isCol=!!collapsed[m];
-              return (
-                <React.Fragment key={`grp-${m}`}>
-                  <MonthTotalRow m={m} mT={mT} isAg={isAg} isCol={isCol} colCount={colCount} onToggle={()=>setCollapsed(c=>({...c,[m]:!c[m]}))} t={t}/>
-                  {!isCol && rows.map((r,j)=><SummaryDataRow key={`${m}-${j}`} r={r} j={j} isAg={isAg} t={t}/>)}
-                </React.Fragment>
-              );
-            })}
-            {sortedMonths.length===0&&(
-              <tr><td colSpan={colCount} style={{padding:"28px",textAlign:"center",color:t.muted,fontFamily:MONO,fontSize:12}}>No data matches the current filters</td></tr>
-            )}
-          </tbody>
-          {/* ───────────────────────────────────────────────────────────────────
-             GRAND TOTAL footer row — uniform charcoal background, white text,
-             thin teal accent line, teal pills. Sticky so it stays visible
-             while scrolling.
-             ─────────────────────────────────────────────────────────────────── */}
-          <tfoot>
-            <tr style={{position:"sticky",bottom:0,zIndex:3}}>
-              {/* GRAND TOTAL label */}
-              <td colSpan={4} style={{
-                background:"#1E2128", padding:"14px 12px",
-                borderTop:`2px solid ${C.teal}`, whiteSpace:"nowrap",
-              }}>
-                <span style={{display:"inline-flex",alignItems:"center",gap:9}}>
-                  <span style={{width:11,height:11,borderRadius:3,background:C.teal,display:"inline-block",flexShrink:0}}/>
-                  <span style={{fontWeight:900,fontSize:15,letterSpacing:"-0.01em",color:"#FFFFFF"}}>GRAND TOTAL</span>
-                  <span style={{fontFamily:MONO,fontWeight:600,fontSize:11,color:"#E8E8EE",letterSpacing:"0.04em"}}>
-                    {grandPartnerCount} {isAg?"agenc":"partner"}{grandPartnerCount!==1?(isAg?"ies":"s"):(isAg?"y":"")} · {fmtMoney(grand.amt)}
-                  </span>
-                </span>
-              </td>
-              {/* count cells — uniform charcoal background, bright white numerals */}
-              {[grand.n,grand.po,...(!isAg?[grand.surat]:[]),grand.inv,grand.clv,grand.clr].map((v,i)=>(
-                <td key={i} style={{
-                  background:"#1E2128",
-                  textAlign:"center", padding:"12px 9px",
-                  borderTop:`2px solid ${C.teal}`,
-                }}>
-                  <span style={{
-                    display:"inline-block",
-                    fontFamily:MONO, fontWeight:900, fontSize:19,
-                    letterSpacing:"-0.02em", color:"#FFFFFF",
-                  }}>{v.toLocaleString()}</span>
-                </td>
-              ))}
-              {/* percentage badges — standardized solid teal pill, white text */}
-              {[invPct, clvPct, clrPct].map((val,i)=>(
-                <td key={i} style={{background:"#1E2128",textAlign:"center",padding:"12px 9px",borderTop:`2px solid ${C.teal}`}}>
-                  <span style={{
-                    display:"inline-flex", alignItems:"center", gap:6,
-                    padding:"5px 12px", borderRadius:99,
-                    background:C.tealD, color:"#FFFFFF",
-                    fontFamily:MONO, fontWeight:900, fontSize:12,
-                    letterSpacing:"0.02em",
-                  }}>
-                    <span style={{width:7,height:7,borderRadius:"50%",background:"#FFFFFF",opacity:0.75,flexShrink:0}}/>
-                    {val}%
-                  </span>
-                </td>
-              ))}
+      </div>
+      {cur==="out"  && <OutstandingTab ins={ins} isAg={isAg} w={w} t={t} showToast={props.showToast}/>}
+      {cur==="own"  && <PartnersTab ins={ins} isAg={isAg} w={w} t={t}/>}
+    </Card>
+  );
+}
+
+function Chip({ active, onClick, children, t, tone }) {
+  const ac = tone || C.teal;
+  return <button type="button" onClick={onClick} aria-pressed={active} style={{fontFamily:"inherit",fontSize:12,fontWeight:600,padding:"5px 12px",borderRadius:99,cursor:"pointer",whiteSpace:"nowrap",border:`1px solid ${active?ac:t.line2}`,background:active?ac:t.surf,color:active?"#fff":t.ink2,transition:"all .15s"}}>{children}</button>;
+}
+
+function SortTh({ col, sort, setSort, left, wrap, children, t }) {
+  const on = sort.col===col;
+  return <th onClick={()=>setSort(s=>({col,dir:s.col===col&&s.dir==="desc"?"asc":"desc"}))} aria-sort={on?(sort.dir==="asc"?"ascending":"descending"):"none"} style={{...thS(t,left),...(wrap?{whiteSpace:"normal",lineHeight:1.25,minWidth:64,maxWidth:96}:{}),cursor:"pointer",color:on?C.teal:t.muted,fontWeight:on?700:500}}>{children}{on?(sort.dir==="asc"?" ▲":" ▼"):""}</th>;
+}
+
+function PartnersTab({ ins, isAg, w, t }) {
+  const [sort, setSort] = useState({ col:"late", dir:"desc" });
+  const list = useMemo(()=>{
+    const arr = ins.owners.map(o=>({ ...o,
+      pPaid: o.total ? o.paid/o.total*100 : 0,
+      avg: o.cycN ? o.cycSum/o.cycN : null,
+      pOn: o.onN ? o.onT/o.onN*100 : null }));
+    const { col, dir } = sort, m = dir==="asc" ? 1 : -1;
+    const v = (o) => o[col]==null ? -1 : o[col];
+    arr.sort((a,b)=> col==="name" ? m*a.name.localeCompare(b.name) : (m*(v(a)-v(b)) || b.open-a.open || b.total-a.total));
+    return arr;
+  },[ins.owners,sort]);
+  const phone = w<640;
+  if (!list.length) return <EmptyNote t={t}>No data available</EmptyNote>;
+  const anyOn = list.some(o=>o.onN>0);
+  const num = (x, color, title) => <td style={{...tdS(t),color:x==null||x===0?t.muted:(color||t.ink2)}} title={title}>{x==null?"—":x}</td>;
+  return (
+    <div style={{padding:"12px 16px 16px"}}>
+      <div style={{maxHeight:460,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10}}>
+        <table style={{width:"100%",borderCollapse:"collapse"}}>
+          <thead><tr>
+            <SortTh col="name" left sort={sort} setSort={setSort} t={t}>{isAg?"Agency":"Partner"}</SortTh>
+            {!phone&&<SortTh col="n" sort={sort} setSort={setSort} t={t}>Invoices</SortTh>}
+            <SortTh col="total" sort={sort} setSort={setSort} t={t}>Total</SortTh>
+            {!phone&&<SortTh col="pPaid" sort={sort} setSort={setSort} t={t}>Paid %</SortTh>}
+            <SortTh col="open" sort={sort} setSort={setSort} t={t}>Open</SortTh>
+            {!phone&&<SortTh col="avg" wrap sort={sort} setSort={setSort} t={t}>Avg Invoice→ Clearing</SortTh>}
+            {!phone&&<SortTh col="pOn" wrap sort={sort} setSort={setSort} t={t}>% on time</SortTh>}
+            <SortTh col="late" wrap sort={sort} setSort={setSort} t={t}>Late now</SortTh>
+            {!phone&&<SortTh col="oldest" wrap sort={sort} setSort={setSort} t={t}>Oldest open</SortTh>}
+          </tr></thead>
+          <tbody>{list.map((o,i)=>(
+            <tr key={o.name} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+              <td style={{...tdS(t,true),fontWeight:600,color:t.ink,maxWidth:phone?150:260}} title={o.name}>{o.name}</td>
+              {!phone&&num(o.n)}
+              <td style={{...tdS(t),fontWeight:700,color:t.ink}} title={fmtRpFull(o.total)}>{fmtMiliar(o.total)}</td>
+              {!phone&&<td style={tdS(t)} title={`Paid ${fmtRpFull(o.paid)} of ${fmtRpFull(o.total)}`}><PctBadge val={Math.round(o.pPaid)} t={t}/></td>}
+              {num(o.open, t.warnDark, o.open?`${fmtRpFull(o.openAmt)} in process or not submitted`:undefined)}
+              {!phone&&num(o.avg==null?null:`${o.avg.toFixed(1).replace(".",",")} d`, null, o.cycN?`Average of ${plural(o.cycN,"cleared invoice")}, working days`:undefined)}
+              {!phone&&<td style={tdS(t)} title={o.onN?`${o.onT} of ${o.onN} cleared on or before Est. Date`:"No cleared invoice has an Est. Date"}>{o.pOn==null?<span style={{color:t.muted}}>—</span>:<PctBadge val={Math.round(o.pOn)} t={t}/>}</td>}
+              {num(o.late, t.badDark)}
+              {!phone&&num(o.oldest==null?null:`${o.oldest} d`, o.oldest>15?t.badDark:o.oldest>5?t.warnDark:null, o.oldest!=null?"Working days since the invoice date of the oldest open invoice":undefined)}
             </tr>
-          </tfoot>
+          ))}</tbody>
         </table>
       </div>
-    </Card>
+      <div style={{fontSize:12,color:t.muted,marginTop:8,lineHeight:1.6}}>
+        Open = in process + not submitted. Avg Invoice→Clearing = working days for cleared invoices. Late now = open invoices past their Est. Date. Oldest open = working days since the invoice date of the oldest open invoice.
+        {!anyOn&&" % on time needs an Est. Date on cleared invoices; the data only has Est. Dates on open invoices, so it shows “—”."}
+      </div>
+    </div>
+  );
+}
+
+const inWeek = (x, a, b) => !!x.est && x.est>=a && x.est<b;
+const OUT_VIEWS = [
+  { id:"all",    label:"All",            f:()=>true },
+  { id:"late",   label:"Late",           f:(x)=>x.late>0, tone:C.red },
+  { id:"this",   label:"Due this week",  f:(x,ins)=>inWeek(x,ins.wk0,ins.wk1) },
+  { id:"next",   label:"Due next week",  f:(x,ins)=>inWeek(x,ins.wk1,ins.wk2) },
+  { id:"notsub", label:"Not submitted",  f:(x)=>x.ns, tone:C.red },
+];
+/* ── Outstanding: tagihan yang belum clearing, dengan tanggal tiap tahap + keterlambatan ── */
+function OutstandingTab({ ins, isAg, w, t, showToast }) {
+  const [view, setView] = useState("all"); // all | late | this | next | notsub
+  const [sort, setSort] = useState({ col:"late", dir:"desc" });
+  const [grouped, setGrouped] = useState(false);
+  const [openG, setOpenG] = useState({});
+  const views = OUT_VIEWS;
+  const cur = views.find(v=>v.id===view) || views[0];
+  const rows = useMemo(()=>{
+    const { col, dir } = sort, m = dir==="asc" ? 1 : -1;
+    const f = (OUT_VIEWS.find(v=>v.id===view) || OUT_VIEWS[0]).f;
+    const val = (x) => col==="late" ? x.late : col==="cyc" ? (x.cyc ?? -1) : col==="amt" ? x.amt : col==="est" ? (x.est ? x.est.getTime() : Infinity) : 0;
+    return ins.open.filter(x=>f(x,ins)).sort((a,b)=> col==="name" ? m*a.name.localeCompare(b.name) : (m*(val(a)-val(b)) || b.amt-a.amt));
+  },[ins,view,sort]);
+  const groups = useMemo(()=>{
+    if (!grouped) return [];
+    const g = {};
+    rows.forEach(x=>{ (g[x.name] ||= { name:x.name, items:[], amt:0, late:0 }); g[x.name].items.push(x); g[x.name].amt += x.amt; if (x.late>0) g[x.name].late++; });
+    return Object.values(g).sort((a,b)=>b.late-a.late || b.amt-a.amt);
+  },[rows,grouped]);
+  const amt = rows.reduce((a,r)=>a+r.amt,0);
+  const phone = w<640;
+  const own = isAg ? "Agency" : "Partner";
+  const pend = <span style={{display:"inline-block",padding:"1px 6px",borderRadius:99,background:t.warnBg,border:`1px solid ${t.warnBd}`,color:t.warnDark,fontSize:12,fontWeight:600}}>pending</span>;
+  const dt = (d) => d ? fmtDayMon(d) : pend;
+  const estBg = `linear-gradient(${C.yellow}40,${C.yellow}40),${t.surf2}`;
+  const th = (left) => ({ ...thS(t,left), padding:"8px 8px" });
+  const td = (left) => ({ ...tdS(t,left), padding:"7px 8px" });
+  const thW = { ...th(false), whiteSpace:"normal", lineHeight:1.25, minWidth:64, maxWidth:96 };
+  const cols = phone ? 4 : 9;
+  const exportXlsx = async () => {
+    const XLSX = await getXLSX();
+    const data = rows.map(x=>({ "Invoice Number":x.inv||"", "Invoice ID":x.invId||"", "Project Title":x.title, [own]:x.name, Period:x.period, Status:x.status||"",
+      Amount:Math.round(x.amt), "Invoice Date":fmtDayMon(x.invD)||"pending", "CLV Date":fmtDayMon(x.clvD)||"pending", "Est. Date":fmtDayMon(x.est)||"",
+      "Clearing Bank Date":"pending", "Invoice→Clearing (working days so far)":x.cyc??"", "Late (working days past Est. Date)":x.est?x.late:"" }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws["!cols"] = [18,12,48,32,10,20,16,14,14,14,18,16,16].map(wch=>({wch}));
+    for (let r=1; r<=data.length; r++) { const c = ws[XLSX.utils.encode_cell({r,c:6})]; if (c && c.t==="n") c.z = '"Rp "#,##0'; }
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Outstanding");
+    XLSX.writeFile(wb, `${isAg?"agency":"partner"}_outstanding_${cur.id}_${new Date().toISOString().slice(0,10)}.xlsx`);
+    showToast?.("Outstanding list downloaded — Excel","success");
+  };
+  const renderRow = (x, i) => (
+    <tr key={i} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+      <td style={{...td(true),maxWidth:phone?110:140}} title={invLabel(x.inv,x.invId)}>
+        <div style={{color:t.ink,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis"}}>{x.inv || (x.invId ? "—" : pend)}</div>
+        {x.invId&&<div style={{fontSize:12,color:t.muted}}>ID {x.invId}</div>}
+      </td>
+      <td style={{...td(true),maxWidth:phone?150:w<1250?170:260}} title={`${x.title}\n${x.name}`}>
+        <div style={{color:t.ink2,overflow:"hidden",textOverflow:"ellipsis"}}>{x.title}</div>
+        {!grouped&&<div style={{fontSize:12,color:t.muted,overflow:"hidden",textOverflow:"ellipsis"}}>{x.name}</div>}
+      </td>
+      <td style={{...td(false),color:t.ink}} title={fmtRpFull(x.amt)}>{fmtRpWord(x.amt)}</td>
+      {!phone&&<td style={td(false)}>{x.ns ? pend : dt(x.invD)}</td>}
+      {!phone&&<td style={td(false)}>{dt(x.clvD)}</td>}
+      {!phone&&<td style={{...td(false),fontWeight:700,color:x.late>0?t.bad:t.ink,background:x.late>0?t.badBg:`${C.yellow}14`}}>{x.est?fmtDayMon(x.est):"—"}</td>}
+      {!phone&&<td style={td(false)}>{pend}</td>}
+      {!phone&&<td style={{...td(false),color:t.ink2}} title={x.invD?`${fmtDayMon(x.invD)} → today`:"No invoice date yet"}>{x.cyc==null?"—":plural(x.cyc,"day")}</td>}
+      <td style={td(false)}>{!x.est ? <span style={{color:t.muted}}>—</span> : x.late>0
+        ? <span style={{display:"inline-block",padding:"1px 8px",borderRadius:99,background:t.badBg,border:`1px solid ${t.badBd}`,color:t.badDark,fontSize:12,fontWeight:700}}>{plural(x.late,"day")} late</span>
+        : <span style={{fontSize:12,color:t.goodDark,fontWeight:600}}>on track</span>}</td>
+    </tr>
+  );
+  return (
+    <div style={{padding:18}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:12}}>
+        {views.map(v=><Chip key={v.id} t={t} tone={v.tone} active={view===v.id} onClick={()=>setView(v.id)}>{v.label} · {ins.open.filter(x=>v.f(x,ins)).length}</Chip>)}
+        <span style={{flex:"1 1 0"}}/>
+        <label style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12.5,color:t.ink2,cursor:"pointer"}}><input type="checkbox" checked={grouped} onChange={e=>{ setGrouped(e.target.checked); setOpenG({}); }}/>Group by {own.toLowerCase()}</label>
+        <Btn t={t} sm onClick={exportXlsx} disabled={!rows.length}>Export Excel</Btn>
+      </div>
+      <div style={{display:"flex",alignItems:"baseline",gap:12,flexWrap:"wrap",padding:"10px 14px",background:t.surf2,border:`1px solid ${t.line}`,borderRadius:12,marginBottom:10}}>
+        <span style={{fontSize:12.5,fontWeight:600,color:t.muted}}>{cur.id==="all"?"Total outstanding":cur.label}</span>
+        <span style={{fontWeight:800,fontSize:20,color:t.ink,letterSpacing:"-0.02em"}} title={fmtRpFull(amt)}>{fmtRpWord(amt)}</span>
+        <span style={{fontSize:12,color:t.muted}}>{plural(rows.length,"invoice")}{cur.id==="this"||cur.id==="next"?` · Est. Date ${fmtDate(cur.id==="this"?ins.wk0:ins.wk1)} – ${fmtDate(new Date((cur.id==="this"?ins.wk1:ins.wk2).getTime()-DAY))}`:" · not yet cleared by the bank"}</span>
+      </div>
+      {rows.length===0 ? <EmptyNote t={t}>{cur.id==="late"?"Nothing is late":cur.id==="notsub"?"No invoices waiting":cur.id==="all"?"No outstanding payments":"No payments due in this period"}</EmptyNote> : (
+        <div style={{maxHeight:460,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10}}>
+          <table style={{width:"100%",borderCollapse:"collapse"}}>
+            <thead><tr>
+              <th style={th(true)}>Invoice</th>
+              <SortTh col="name" left sort={sort} setSort={setSort} t={t}>Project · {own}</SortTh>
+              <SortTh col="amt" sort={sort} setSort={setSort} t={t}>Amount</SortTh>
+              {!phone&&<th style={thW}>Invoice Date</th>}
+              {!phone&&<th style={thW}>CLV Date</th>}
+              {!phone&&<th style={{...thW,background:estBg,color:t.ink,fontWeight:700,cursor:"pointer"}} onClick={()=>setSort(s=>({col:"est",dir:s.col==="est"&&s.dir==="asc"?"desc":"asc"}))}>Est. Date{sort.col==="est"?(sort.dir==="asc"?" ▲":" ▼"):""}</th>}
+              {!phone&&<th style={thW}>Clearing Bank Date</th>}
+              {!phone&&<SortTh col="cyc" wrap sort={sort} setSort={setSort} t={t}>Invoice→ Clearing</SortTh>}
+              <SortTh col="late" sort={sort} setSort={setSort} t={t}>Late</SortTh>
+            </tr></thead>
+            <tbody>
+              {!grouped && rows.slice(0,300).map((x,i)=>renderRow(x,i))}
+              {grouped && groups.map(g=>{ const op = !!openG[g.name]; return (
+                <React.Fragment key={g.name}>
+                  <tr onClick={()=>setOpenG(s=>({...s,[g.name]:!op}))} {...kbd(()=>setOpenG(s=>({...s,[g.name]:!op})))} aria-expanded={op} style={{cursor:"pointer",background:t.surf2}}>
+                    <td colSpan={2} style={{...td(true),maxWidth:phone?220:420,color:t.ink,fontWeight:700}} title={g.name}>{op?"▾":"▸"} {g.name} <span style={{fontWeight:500,color:t.muted}}>· {plural(g.items.length,"invoice")}</span></td>
+                    <td style={{...td(false),fontWeight:700,color:t.ink}} title={fmtRpFull(g.amt)}>{fmtRpWord(g.amt)}</td>
+                    {!phone&&<td colSpan={cols-4} style={td(false)}/>}
+                    <td style={{...td(false),fontWeight:700,color:g.late?t.badDark:t.muted}}>{g.late?`${g.late} late`:"—"}</td>
+                  </tr>
+                  {op && g.items.map((x,i)=>renderRow(x,i))}
+                </React.Fragment>
+              ); })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {!grouped&&rows.length>300&&<div style={{fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted,marginTop:6}}>Showing 300 of {rows.length.toLocaleString()} — use Export Excel or Raw Data for the rest.</div>}
+      <div style={{fontSize:12,color:t.muted,marginTop:8,lineHeight:1.6}}>
+        <strong style={{color:t.ink2}}>Invoice→Clearing</strong> = working days from the invoice date (Coupa submission) until today, because the bank has not cleared it yet.{" "}
+        <strong style={{color:t.ink2}}>Late</strong> = working days past the Est. Date; &ldquo;on track&rdquo; means the Est. Date has not passed. &ldquo;Pending&rdquo; = that step has no date yet.
+      </div>
+    </div>
+  );
+}
+
+/* ── Tahun (YTD Summary & Accrual) ── */
+const rowYear = (r) => { const mk = rowMonthKey(r); return mk ? Math.floor(mk/100) : 0; };
+function yearsOf(rows) { return [...new Set(rows.map(rowYear).filter(Boolean))].sort((a,b)=>b-a); }
+function useYear(years) {
+  const cy = new Date().getFullYear();
+  const [y, setY] = useState(null);
+  const year = y && years.includes(y) ? y : (years.includes(cy) ? cy : (years[0] || cy));
+  return [year, setY];
+}
+function YearSelect({ years, value, onChange, t }) {
+  return (
+    <select value={value} onChange={e=>onChange(+e.target.value)} aria-label="Year"
+      style={{fontFamily:"inherit",fontSize:13,fontWeight:700,color:t.ink,background:t.surf2,border:`1px solid ${t.line2}`,borderRadius:9,padding:"6px 10px",cursor:"pointer"}}>
+      {(years.length?years:[value]).map(y=><option key={y} value={y}>{y}</option>)}
+    </select>
+  );
+}
+
+/* ── YTD Summary: biaya Sales Team (Agency) + insentif Partner per bulan ── */
+// Program Type yang dihitung "Salary" (dibandingkan setelah huruf/angka saja); selain ini = Incentive
+const SALARY_TYPES = ["SALARY","SALARYFWA","SALARYUUCK","THR"];
+const MONTHS_SHORT = ["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function computeYtd(pRows, aRows, year) {
+  const cell = () => ({ a:0, p:0 });
+  const data = {}; const ents = new Set(); let maxM = 0;
+  const at = (m) => (data[m] = data[m] || { sal:cell(), inc:cell(), ent:{} });
+  const add = (c, amt, paid) => { c.a += amt; if (paid) c.p += amt; };
+  aRows.forEach(r=>{
+    const mk = rowMonthKey(r); if (!mk || Math.floor(mk/100)!==year) return;
+    const m = mk%100; maxM = Math.max(maxM, m);
+    const amt = gnum(r,["amount"]), paid = !!gcell(r,H_CLR);
+    add(SALARY_TYPES.includes(stripCat(gstr(r,["program type","programtype"]))) ? at(m).sal : at(m).inc, amt, paid);
+  });
+  pRows.forEach(r=>{
+    const mk = rowMonthKey(r); if (!mk || Math.floor(mk/100)!==year) return;
+    const m = mk%100; maxM = Math.max(maxM, m);
+    const e = gstr(r,["entity"]) || "(blank)"; ents.add(e);
+    const d = at(m); add(d.ent[e] = d.ent[e] || cell(), gnum(r,["amount"]), !!gcell(r,H_CLR));
+  });
+  const entList = [...ents].sort();
+  const sum = (cs) => cs.reduce((x,c)=>({ a:x.a+(c?.a||0), p:x.p+(c?.p||0) }), cell());
+  const rowOf = (d) => {
+    const sal = d?.sal||cell(), inc = d?.inc||cell(), ent = entList.map(e=>d?.ent[e]||cell());
+    const team = sum([sal,inc]), partner = sum(ent);
+    return { sal, inc, team, ent, partner, grand:sum([team,partner]) };
+  };
+  const rows = []; for (let m=1;m<=maxM;m++) rows.push({ m, label:`${MONTHS_SHORT[m]} ${year}`, ...rowOf(data[m]) });
+  const tot = { m:0, label:`YTD ${year}`, sal:sum(rows.map(r=>r.sal)), inc:sum(rows.map(r=>r.inc)), team:sum(rows.map(r=>r.team)),
+    ent:entList.map((_,i)=>sum(rows.map(r=>r.ent[i]))), partner:sum(rows.map(r=>r.partner)), grand:sum(rows.map(r=>r.grand)) };
+  return { rows, tot, entList };
+}
+
+// Rupiah dengan satuan kata (miliar/juta) untuk ringkasan & kartu
+function fmtRpWord(n, d=1) {
+  n = Number(n) || 0;
+  const a = Math.abs(n), f = (v) => v.toFixed(d).replace(".", ",");
+  if (a>=1e12) return `Rp ${f(n/1e12)} triliun`;
+  if (a>=1e9)  return `Rp ${f(n/1e9)} miliar`;
+  if (a>=1e6)  return `Rp ${(a<1e8 ? (n/1e6).toFixed(1).replace(".", ",") : Math.round(n/1e6).toLocaleString("id-ID"))} juta`;
+  return "Rp "+Math.round(n).toLocaleString("id-ID");
+}
+// Jumlah + kata benda tunggal/jamak: "1 row", "2 rows"
+const plural = (n, word, many) => `${Number(n||0).toLocaleString()} ${Number(n)===1 ? word : (many || word+"s")}`;
+// Angka tabel YTD: "10,66 miliar", di bawah 1 miliar "248 juta" (nilai penuh di tooltip)
+const fmtMiliar = (n) => {
+  n = Number(n) || 0;
+  if (!n) return "—";
+  if (Math.abs(n) >= 1e9) return `${(n/1e9).toFixed(2).replace(".", ",")} miliar`;
+  if (Math.abs(n) >= 1e6) return `${Math.round(n/1e6).toLocaleString("id-ID")} juta`;
+  return Math.round(n).toLocaleString("id-ID");
+};
+// Bar paid kecil sebaris dengan persen
+function PaidMini({ p, narrow, t }) {
+  if (p==null) return "—";
+  return (
+    <span style={{display:"inline-flex",alignItems:"center",gap:8,justifyContent:"flex-end"}}>
+      {!narrow&&<span style={{width:36,height:5,borderRadius:3,background:t.surf3,overflow:"hidden",flexShrink:0}}><span style={{display:"block",height:"100%",width:`${p}%`,background:t.good}}/></span>}
+      <span style={{minWidth:34,textAlign:"right"}}>{p}%</span>
+    </span>
+  );
+}
+
+// Lebar elemen (chart SVG mengikuti lebar kartu, teks tetap ≥12px)
+function useBoxWidth() {
+  const ref = useRef(null);
+  const [bw, setBw] = useState(0);
+  useEffect(()=>{
+    const el = ref.current;
+    if (!el) return;
+    setBw(Math.round(el.getBoundingClientRect().width)); // ukur langsung, jangan menunggu callback observer
+    if (typeof ResizeObserver==="undefined") return;
+    const ro = new ResizeObserver(es=>setBw(Math.round(es[0].contentRect.width)));
+    ro.observe(el);
+    return ()=>ro.disconnect();
+  },[]);
+  return [ref, bw];
+}
+
+// Skala sumbu Y "rapi" (1/2/2,5/5 × 10^n)
+function niceMax(v, ticks=4) {
+  if (!v) return { max:1, step:1 };
+  const raw = v/ticks, p = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1,2,2.5,5,10].map(m=>m*p).find(s=>s>=raw);
+  return { max:Math.ceil(v/step)*step, step };
+}
+
+/* ── Forecast pembayaran Partner Prepaid ──
+   Item terbuka: "Payment Process" (sudah ditagih) dan "Invoice Not Submitted" (belum ditagih).
+   Tanggal bayar yang diharapkan:
+   • Payment Process → Estimation Date; bila kosong: Invoice Submission + median (Invoice → Clearing).
+   • Invoice Not Submitted → akhir bulan program + median (akhir bulan program → Clearing) dari
+     histori partner tsb (≥3 data) atau seluruh partner.
+   Tanggal yang sudah lewat → bucket "Overdue". */
+const median = (a) => { if (!a.length) return null; const s=[...a].sort((x,y)=>x-y), m=Math.floor(s.length/2); return s.length%2 ? s[m] : Math.round((s[m-1]+s[m])/2); };
+const addDays = (d, n) => new Date(d.getTime() + n*DAY);
+const monthEndOf = (mk) => new Date(Math.floor(mk/100), mk%100, 0);
+
+function computeForecast(rows) {
+  const today = dayStart(new Date());
+  // histori: jeda akhir bulan program → clearing, dan invoice → clearing (hari kalender)
+  const lagAll = [], lagBy = {}, invLag = [];
+  rows.forEach(r=>{
+    const clr = toDate(gcell(r,H_CLR)); if (!clr) return;
+    const mk = rowMonthKey(r);
+    if (mk) { const d = Math.round((dayStart(clr) - monthEndOf(mk))/DAY); if (d>=0) { lagAll.push(d); const n = ownerName(r)||"—"; (lagBy[n]=lagBy[n]||[]).push(d); } }
+    const inv = toDate(gcell(r,H_INV)); if (inv) { const d = Math.round((dayStart(clr)-dayStart(inv))/DAY); if (d>=0) invLag.push(d); }
+  });
+  const lag = median(lagAll) ?? 45, lagInv = median(invLag) ?? 14;
+  const items = [];
+  rows.forEach(r=>{
+    const st = rowStatus(r), pp = isProcessStatus(st), ns = isNotSubStatus(st);
+    if (!pp && !ns) return;
+    const name = ownerName(r) || "—", mk = rowMonthKey(r), amt = gnum(r,["amount"]);
+    let due = null, basis = "";
+    const est = toDate(gcell(r,H_EST)), inv = toDate(gcell(r,H_INV));
+    if (pp && est) { due = dayStart(est); basis = "Est. Date"; }
+    else if (pp && inv) { due = addDays(dayStart(inv), lagInv); basis = `Invoice + ${lagInv}d`; }
+    else if (mk) {
+      const own = lagBy[name] && lagBy[name].length>=3 ? median(lagBy[name]) : null;
+      due = addDays(monthEndOf(mk), own ?? lag); basis = own!=null ? `Program month + ${own}d (partner)` : `Program month + ${lag}d`;
+    }
+    items.push({ name, title:gstr(r,["project title"])||"—", inv:r._inv||"", invId:r._invId||"", period:mk?ymLabel(mk):"—", amt, status:st, pp, due, basis,
+      overdue: !!due && due < today, days: mk ? Math.max(0, Math.round((today - monthEndOf(mk))/DAY)) : null });
+  });
+  const sum = (f) => items.filter(f).reduce((a,x)=>a+x.amt,0);
+  const cnt = (f) => items.filter(f).length;
+  // bucket bulan: Overdue + bulan ini s.d. bulan terakhir yang diharapkan
+  const curMk = today.getFullYear()*100 + today.getMonth() + 1;
+  const mkOf = (d) => d.getFullYear()*100 + d.getMonth() + 1;
+  const buckets = [{ key:"over", label:"Overdue", pp:0, ns:0 }];
+  const byMk = {};
+  items.forEach(x=>{
+    if (!x.due || x.overdue) { const b = buckets[0]; x.pp ? b.pp += x.amt : b.ns += x.amt; return; }
+    const k = mkOf(x.due); (byMk[k] = byMk[k] || { pp:0, ns:0 }); x.pp ? byMk[k].pp += x.amt : byMk[k].ns += x.amt;
+  });
+  const nextMk = (k) => k%100===12 ? (Math.floor(k/100)+1)*100+1 : k+1;
+  const lastMk = Math.max(nextMk(nextMk(curMk)), ...Object.keys(byMk).map(Number)); // minimal 3 bulan ke depan
+  for (let k=curMk; k<=lastMk; k = (k%100===12 ? (Math.floor(k/100)+1)*100+1 : k+1)) buckets.push({ key:String(k), label:ymLabel(k), short:MONTHS_SHORT[k%100], pp:byMk[k]?.pp||0, ns:byMk[k]?.ns||0 });
+  // per partner
+  const own = {};
+  items.forEach(x=>{
+    const o = (own[x.name] = own[x.name] || { name:x.name, pp:0, ns:0, n:0, earliest:null, oldest:0 });
+    x.pp ? o.pp += x.amt : o.ns += x.amt; o.n++;
+    if (x.due && (!o.earliest || x.due < o.earliest)) o.earliest = x.due;
+    if (x.days!=null) o.oldest = Math.max(o.oldest, x.days);
+  });
+  const partners = Object.values(own).map(o=>({ ...o, total:o.pp+o.ns }));
+  return { items, buckets, partners, lag, lagInv, lagN:lagAll.length,
+    total:sum(()=>true), pp:{ amt:sum(x=>x.pp), n:cnt(x=>x.pp) }, ns:{ amt:sum(x=>!x.pp), n:cnt(x=>!x.pp) },
+    over:{ amt:sum(x=>x.overdue), n:cnt(x=>x.overdue) },
+    next3:buckets.slice(1,4).reduce((a,b)=>a+b.pp+b.ns,0), next3Label:(()=>{ const b=buckets.slice(1,4); if (b.length<2) return b[0]?.label||""; const sameYear = b[0].key.slice(0,4)===b[b.length-1].key.slice(0,4); return `${sameYear?b[0].short:b[0].label}–${b[b.length-1].label}`; })() };
+}
+
+// Stacked bar per bulan bayar: In process (amber) + Not submitted (merah); bar pertama = Overdue
+function ForecastChart({ buckets, t }) {
+  const [ref, bw] = useBoxWidth();
+  const [hov, setHov] = useState(null);
+  const H = 240, pL = 46, pR = 8, pT = 22, pB = 30;
+  const W = Math.max(bw, 280), cW = W-pL-pR, cH = H-pT-pB;
+  const tot = (b) => b.pp + b.ns;
+  const { max, step } = niceMax(Math.max(...buckets.map(tot), 0));
+  const y = (v) => pT + cH - (v/max)*cH;
+  const band = cW/Math.max(buckets.length,1), bWid = Math.min(46, band*0.62);
+  const ticks = []; for (let v=0; v<=max+1e-6; v+=step) ticks.push(v);
+  const big = max >= 1e9, unit = big ? 1e9 : 1e6;
+  const h = hov!=null ? buckets[hov] : null;
+  return (
+    <div ref={ref} style={{position:"relative"}}>
+      {bw>0&&(
+        <svg width={W} height={H} role="img" aria-label="Expected partner payments per month" style={{display:"block"}} onMouseLeave={()=>setHov(null)}>
+          {ticks.map(v=>(
+            <g key={v}>
+              <line x1={pL} x2={W-pR} y1={y(v)} y2={y(v)} stroke={t.line} strokeWidth={1}/>
+              <text x={pL-8} y={y(v)+4} textAnchor="end" fontSize={12} fill={t.muted} style={{fontVariantNumeric:"tabular-nums"}}>{(v/unit).toLocaleString("id-ID",{maximumFractionDigits:1})}</text>
+            </g>
+          ))}
+          <text x={0} y={11} fontSize={12} fill={t.muted}>{big?"Rp miliar":"Rp juta"}</text>
+          {buckets.map((b,i)=>{
+            const cx = pL + band*i + band/2, x0 = cx-bWid/2;
+            const segs = [{k:"pp",v:b.pp,c:t.warn},{k:"ns",v:b.ns,c:t.bad}].filter(s=>s.v>0);
+            let acc = 0;
+            return (
+              <g key={b.key} opacity={hov==null||hov===i?1:0.45}>
+                {i===0&&<rect x={pL+1} y={pT} width={band-2} height={cH} fill={t.badBg} rx={6}/>}
+                {segs.map((s,j)=>{
+                  const yTop = y(acc+s.v), yBot = y(acc); acc += s.v;
+                  const top = j===segs.length-1, gap = j>0 ? 2 : 0;
+                  const hgt = Math.max(0, yBot-yTop-gap), rr = top ? Math.min(4, hgt) : 0;
+                  return <path key={s.k} d={`M${x0},${yTop+hgt} V${yTop+rr} Q${x0},${yTop} ${x0+rr},${yTop} H${x0+bWid-rr} Q${x0+bWid},${yTop} ${x0+bWid},${yTop+rr} V${yTop+hgt} Z`} fill={s.c}/>;
+                })}
+                <text x={cx} y={H-pB+18} textAnchor="middle" fontSize={12} fill={i===0?t.badDark:t.muted} fontWeight={i===0?700:400}>{i===0?"Overdue":b.short}</text>
+                <rect x={pL+band*i} y={pT} width={band} height={cH} fill="transparent" tabIndex={0} onMouseEnter={()=>setHov(i)} onFocus={()=>setHov(i)} onBlur={()=>setHov(null)} aria-label={`${b.label}: ${fmtRpWord(tot(b))}`}/>
+              </g>
+            );
+          })}
+          <line x1={pL} x2={W-pR} y1={y(0)} y2={y(0)} stroke={t.line2} strokeWidth={1}/>
+        </svg>
+      )}
+      {h&&(()=>{ const cx = pL + band*hov + band/2, right = cx + bWid/2 + 10, left = right + 220 <= W ? right : Math.max(0, cx - bWid/2 - 230);
+        const row = (c,l,v) => <div style={{display:"flex",justifyContent:"space-between",gap:8}}><span style={{display:"inline-flex",alignItems:"center",gap:6,color:t.ink2}}>{c&&<span style={{width:10,height:10,borderRadius:3,background:c}}/>}{l}</span><strong style={{color:t.ink,fontVariantNumeric:"tabular-nums"}}>{v}</strong></div>;
+        return (
+          <div style={{position:"absolute",top:8,left,width:220,background:t.surf,border:`1px solid ${t.line2}`,borderRadius:12,boxShadow:t.shadow3,padding:"10px 12px",fontSize:12.5,pointerEvents:"none",display:"flex",flexDirection:"column",gap:5,zIndex:5}}>
+            <div style={{fontWeight:700,color:t.ink}}>{hov===0?"Overdue (date already passed)":h.label}</div>
+            {row(t.warn,"In process",fmtRpWord(h.pp))}
+            {row(t.bad,"Not submitted",fmtRpWord(h.ns))}
+            <div style={{borderTop:`1px solid ${t.line}`,paddingTop:5}}>{row(null,"Total",fmtRpWord(tot(h)))}</div>
+          </div>
+        ); })()}
+    </div>
+  );
+}
+
+/* ── Forecast bulanan: rata-rata bergulir 3 bulan ──
+   Biaya partner per bulan program (semua status). Forecast bulan X = rata-rata 3 bulan sebelumnya yang
+   punya nilai; bulan lampau dengan data tidak lengkap (< 25% dari median jumlah baris per bulan) dilewati,
+   bulan forecast sebelumnya ikut dipakai (rolling). Horizon: bulan ini s.d. maks(+2 bulan, Desember). */
+const mkAdd = (mk, n) => { let y = Math.floor(mk/100), m = mk%100 + n; while (m>12) { m-=12; y++; } while (m<1) { m+=12; y--; } return y*100+m; };
+const fmtMil2 = (n) => (n/1e9).toFixed(2).replace(".", ",");
+
+function computeRolling(rows) {
+  const today = new Date(), cur = today.getFullYear()*100 + today.getMonth() + 1;
+  const act = {}, cnt = {}, byOwner = {};
+  rows.forEach(r=>{
+    const mk = rowMonthKey(r); if (!mk) return;
+    const a = gnum(r,["amount"]), o = ownerName(r) || "—";
+    act[mk] = (act[mk]||0) + a; cnt[mk] = (cnt[mk]||0) + 1;
+    ((byOwner[o] = byOwner[o] || {})[mk] = (byOwner[o][mk]||0) + a);
+  });
+  const dataMks = Object.keys(act).map(Number).sort((a,b)=>a-b);
+  if (!dataMks.length) return null;
+  const minRows = Math.max(5, Math.round(0.25 * (median(dataMks.map(k=>cnt[k])) || 0)));
+  const end = Math.max(mkAdd(cur, 2), Math.floor(cur/100)*100 + 12);
+  const months = [], val = {};
+  for (let mk = dataMks[0]; mk <= end; mk = mkAdd(mk, 1)) {
+    const has = act[mk] != null, complete = has && cnt[mk] >= minRows;
+    const m = { mk, label:ymLabel(mk), short:MONTHS_SHORT[mk%100], actual:has?act[mk]:null, n:cnt[mk]||0, complete, future: mk >= cur };
+    if (!m.future) { if (complete) val[mk] = act[mk]; m.kind = complete ? "actual" : has ? "partial" : "empty"; }
+    else {
+      const refs = []; for (let k = mkAdd(mk,-1); refs.length < 3 && k >= dataMks[0]; k = mkAdd(k,-1)) if (val[k] != null) refs.push(k);
+      refs.reverse();
+      m.refs = refs; m.refVals = refs.map(k=>val[k]); m.refIsFc = refs.map(k=>k>=cur);
+      m.fc = refs.length ? m.refVals.reduce((a,b)=>a+b,0)/refs.length : null;
+      m.kind = "forecast"; val[mk] = m.fc;
+    }
+    months.push(m);
+  }
+  const fcMonths = months.filter(m=>m.kind==="forecast");
+  const shown = months.filter(m=>m.mk >= mkAdd(cur,-6));
+  const next = fcMonths[0];
+  const refText = (m) => {
+    if (!m.refs.length) return "—";
+    const r = m.refs, sameYear = r.every(k=>Math.floor(k/100)===Math.floor(r[0]/100));
+    if (r.length===3 && r[2]===mkAdd(r[0],2)) return `${sameYear?MONTHS_SHORT[r[0]%100]:ymLabel(r[0])}–${ymLabel(r[2])}`;
+    return sameYear ? `${r.map(k=>MONTHS_SHORT[k%100]).join(", ")} ${Math.floor(r[0]/100)}` : r.map(k=>ymLabel(k)).join(", ");
+  };
+  const formula = (m) => m.refs.length ? `= (${m.refVals.map(fmtMil2).join(" + ")}) / ${m.refs.length}` : "—";
+  // per partner: rata-rata 3 bulan referensi forecast bulan pertama
+  const partners = next ? Object.entries(byOwner).map(([name,mm])=>{
+    const v = next.refs.map(k=>mm[k]||0); const avg = v.reduce((a,b)=>a+b,0)/(v.length||1);
+    return { name, v, avg };
+  }).filter(p=>p.v.some(x=>x>0)).sort((a,b)=>b.avg-a.avg) : [];
+  return { months, shown, fcMonths, next, partners, minRows, refText, formula, skipped: months.filter(m=>!m.future && m.kind!=="actual" && m.mk>=mkAdd(cur,-6)) };
+}
+
+function RollingChart({ months, refText, t }) {
+  const [ref, bw] = useBoxWidth();
+  const [hov, setHov] = useState(null);
+  const H = 240, pL = 46, pR = 8, pT = 22, pB = 30;
+  const W = Math.max(bw, 280), cW = W-pL-pR, cH = H-pT-pB;
+  const v = (m) => m.kind==="forecast" ? (m.fc||0) : (m.actual||0);
+  const { max, step } = niceMax(Math.max(...months.map(v), 0));
+  const y = (x) => pT + cH - (x/max)*cH;
+  const band = cW/Math.max(months.length,1), bWid = Math.min(46, band*0.62);
+  const ticks = []; for (let x=0; x<=max+1e-6; x+=step) ticks.push(x);
+  const h = hov!=null ? months[hov] : null;
+  const pid = "fc-hatch";
+  return (
+    <div ref={ref} style={{position:"relative"}}>
+      {bw>0&&(
+        <svg width={W} height={H} role="img" aria-label="Partner cost per month: actual and 3-month rolling forecast" style={{display:"block"}} onMouseLeave={()=>setHov(null)}>
+          <defs>
+            <pattern id={pid} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <rect width="6" height="6" fill={t.chartA} opacity="0.22"/><line x1="0" y1="0" x2="0" y2="6" stroke={t.chartA} strokeWidth="2.5"/>
+            </pattern>
+          </defs>
+          {ticks.map(x=>(
+            <g key={x}>
+              <line x1={pL} x2={W-pR} y1={y(x)} y2={y(x)} stroke={t.line} strokeWidth={1}/>
+              <text x={pL-8} y={y(x)+4} textAnchor="end" fontSize={12} fill={t.muted} style={{fontVariantNumeric:"tabular-nums"}}>{(x/1e9).toLocaleString("id-ID",{maximumFractionDigits:1})}</text>
+            </g>
+          ))}
+          <text x={0} y={11} fontSize={12} fill={t.muted}>Rp miliar</text>
+          {months.map((m,i)=>{
+            const cx = pL + band*i + band/2, x0 = cx-bWid/2, val = v(m), yt = y(val), hgt = Math.max(0, y(0)-yt), rr = Math.min(4,hgt);
+            const d = `M${x0},${yt+hgt} V${yt+rr} Q${x0},${yt} ${x0+rr},${yt} H${x0+bWid-rr} Q${x0+bWid},${yt} ${x0+bWid},${yt+rr} V${yt+hgt} Z`;
+            const fill = m.kind==="forecast" ? `url(#${pid})` : t.chartA;
+            return (
+              <g key={m.mk} opacity={hov==null||hov===i?1:0.45}>
+                {val>0&&<path d={d} fill={fill} opacity={m.kind==="partial"?0.35:1} stroke={m.kind==="forecast"?t.chartA:"none"} strokeWidth={m.kind==="forecast"?1.5:0} strokeDasharray={m.kind==="forecast"?"4 3":undefined}/>}
+                {m.kind==="empty"&&<text x={cx} y={y(0)-6} textAnchor="middle" fontSize={12} fill={t.muted}>no data</text>}
+                <text x={cx} y={H-pB+18} textAnchor="middle" fontSize={12} fill={m.kind==="forecast"?t.ink:t.muted} fontWeight={m.kind==="forecast"?700:400}>{m.short}</text>
+                <rect x={pL+band*i} y={pT} width={band} height={cH} fill="transparent" tabIndex={0} onMouseEnter={()=>setHov(i)} onFocus={()=>setHov(i)} onBlur={()=>setHov(null)} aria-label={`${m.label}: ${m.kind} ${fmtRpWord(val)}`}/>
+              </g>
+            );
+          })}
+          <line x1={pL} x2={W-pR} y1={y(0)} y2={y(0)} stroke={t.line2} strokeWidth={1}/>
+        </svg>
+      )}
+      {h&&(()=>{ const cx = pL + band*hov + band/2, right = cx + bWid/2 + 10, left = right + 250 <= W ? right : Math.max(0, cx - bWid/2 - 260); return (
+        <div style={{position:"absolute",top:8,left,width:250,background:t.surf,border:`1px solid ${t.line2}`,borderRadius:12,boxShadow:t.shadow3,padding:"10px 12px",fontSize:12.5,pointerEvents:"none",display:"flex",flexDirection:"column",gap:4,zIndex:5}}>
+          <div style={{fontWeight:700,color:t.ink}}>{h.label} · {h.kind==="forecast"?"Forecast":h.kind==="partial"?"Incomplete":h.kind==="empty"?"No data":"Actual"}</div>
+          {h.kind==="forecast"
+            ? <><strong style={{color:t.ink,fontVariantNumeric:"tabular-nums"}}>{fmtRpWord(h.fc)}</strong><span style={{color:t.muted}}>Reference: {refText(h)}</span><span style={{color:t.ink2,fontVariantNumeric:"tabular-nums"}}>{h.refs.length?`= (${h.refVals.map(fmtMil2).join(" + ")}) / ${h.refs.length} miliar`:""}</span></>
+            : <><strong style={{color:t.ink,fontVariantNumeric:"tabular-nums"}}>{h.actual!=null?fmtRpWord(h.actual):"—"}</strong><span style={{color:t.muted}}>{plural(h.n,"row")}{h.kind==="partial"?" · too few rows, not used as reference":""}</span></>}
+        </div>
+      ); })()}
+    </div>
+  );
+}
+
+/* ── Distribution Fee & Champions (Partner): success rate + daftar invoice per bulan program ── */
+// Cocok bila Program Type (atau Project Title bila Program Type kosong) memuat "DISTRIBUTION FEE" atau "CHAMPION"
+// (termasuk FEEBATCH/HYBRID/(BATCH 2), CHAMPIONSANNUALREWARDS, dan salah ketik "GHAMPIONS"/"DIŞTRIBUTION").
+// "Kompensasi Distribusi Voucher" sengaja tidak termasuk.
+const dcText = (s) => String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toUpperCase();
+const DC_RE = /DISTRIBUTION\s*FEE|[CG]HAMPION/;
+const isDcRow = (r) => DC_RE.test(dcText(gstr(r,["program type","programtype"]) || gstr(r,["project title","=project"])));
+const H_INV_CREATED = ["=invoice date","=created invoice","created invoice date","=invoice created","=tanggal invoice"];
+const H_INV_COUPA   = ["=invoice submission","invoice submission date","=invoicing","invoicing date","=inv submission"];
+const DC_STEPS = [
+  { k:"up",   label:"Invoice Uploading",  done:(x)=>!!(x.created || x.inv) },
+  { k:"coupa",label:"Invoicing on Coupa", done:(x)=>!!x.coupa },
+  { k:"clv",  label:"CLV",                done:(x)=>!!x.clv },
+  { k:"clr",  label:"Clearing Bank",      done:(x)=>!!x.clr },
+];
+const fmtDayMon = (d) => d ? `${String(d.getDate()).padStart(2,"0")} ${MONTHS_SHORT[d.getMonth()+1]} ${d.getFullYear()}` : ""; // "21 Oct 2026" (tanpa "Sept" dari ICU)
+const MONTHS_LONG = ["","January","February","March","April","May","June","July","August","September","October","November","December"];
+const ymLong = (mk) => mk ? `${MONTHS_LONG[mk%100]} ${Math.floor(mk/100)}` : "";
+const dcEnt = (r) => String(entLabel(gstr(r,["=entity"]))||"").toUpperCase();
+
+function DcTab({ rows, w, t, showToast }) {
+  const all = useMemo(()=>rows.filter(isDcRow).map(r=>({
+    mk: rowMonthKey(r), ent: dcEnt(r),
+    created: toDate(gcell(r,H_INV_CREATED,null)), inv: refNo(r), title: gstr(r,["project title","=project"]),
+    total: gnum(r,["=invoice amount"]) || gnum(r,["=amount","total amount","=total"]),
+    supplier: ownerName(r),
+    coupa: toDate(gcell(r,H_INV_COUPA,null)), clv: toDate(gcell(r,H_CLV,null)), clr: toDate(gcell(r,H_CLR,null)),
+  })),[rows]);
+  const ents = useMemo(()=>[...new Set(all.map(x=>x.ent).filter(Boolean))].sort(),[all]);
+  const [entSel, setEnt] = useState("MDI");
+  const ent = entSel==="ALL" || ents.includes(entSel) ? entSel : (ents[0] || "ALL");
+  const byEnt = useMemo(()=>all.filter(x=>ent==="ALL"||x.ent===ent),[all,ent]);
+  const months = useMemo(()=>[...new Set(byEnt.map(x=>x.mk).filter(Boolean))].sort((a,b)=>b-a),[byEnt]);
+  const [mkSel, setMk] = useState(null);
+  const mk = mkSel && months.includes(mkSel) ? mkSel : months[0];
+  const [sort, setSort] = useState({ col:"no", dir:"asc" });
+  const list = useMemo(()=>byEnt.filter(x=>x.mk===mk).map((x,i)=>({...x,no:i+1})),[byEnt,mk]);
+  const shown = useMemo(()=>{
+    if (sort.col==="no") return list;
+    const m = sort.dir==="asc" ? 1 : -1;
+    return [...list].sort((a,b)=> sort.col==="total" ? m*(a.total-b.total) : m*a.supplier.localeCompare(b.supplier) || a.no-b.no);
+  },[list,sort]);
+  const rates = DC_STEPS.map(s=>{ const n = list.filter(s.done).length; return { ...s, n, p: list.length ? Math.round(n/list.length*100) : 0 }; });
+  const total = list.reduce((s,x)=>s+x.total,0);
+  const entName = ent==="ALL" ? "MDI & SDP" : ent;
+  const title = `Distribution Fee & Champions ${entName} · ${ymLong(mk)} · ICM`;
+  const fileTitle = `DISTRIBUTION FEE & CHAMPIONS ${entName} ${ymLong(mk).toUpperCase()} - ICM`;
+  const rateTxt = (r) => `${r.p}% (${r.n} of ${list.length})`;
+  const head = ["No","Created Invoice","No Invoice","Project Title","Total","Supplier","Invoicing","CLV","Bank Clearing Date"];
+
+  const exportXlsx = async () => {
+    const XLSX = await getXLSX();
+    const aoa = [[fileTitle],[],["SUCCESS RATE"],...rates.map(r=>[r.label,"",rateTxt(r).toUpperCase()]),[],head,
+      ...shown.map((x,i)=>[i+1, fmtDayMon(x.created)||"pending", x.inv||"pending", x.title, Math.round(x.total), x.supplier, fmtDayMon(x.coupa)||"pending", fmtDayMon(x.clv)||"pending", fmtDayMon(x.clr)||"pending"]),
+      ["TOTAL","","","",total,"","","",""]];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const r0 = 4 + rates.length + 1; // baris header tabel (0-based)
+    for (let r=r0+1; r<aoa.length; r++) {
+      const tc = ws[XLSX.utils.encode_cell({r,c:4})]; if (tc && tc.t==="n") tc.z = "#,##0";
+    }
+    ws["!merges"] = [{ s:{r:0,c:0}, e:{r:0,c:8} }, ...rates.map((_,i)=>({ s:{r:3+i,c:0}, e:{r:3+i,c:1} }))];
+    ws["!cols"] = [6,15,20,48,16,32,15,15,18].map(wch=>({wch}));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, `${entName} ${MONTHS_SHORT[mk%100]} ${Math.floor(mk/100)}`.replace(/[^\w &-]/g,"").slice(0,31));
+    XLSX.writeFile(wb, `distribution_fee_champions_${entName.replace(/\W+/g,"_").toLowerCase()}_${mk}.xlsx`);
+    showToast("Distribution Fee & Champions report downloaded — Excel","success");
+  };
+  const copyTable = async () => {
+    const lines = [fileTitle,"","SUCCESS RATE",...rates.map(r=>`${r.label}\t${rateTxt(r).toUpperCase()}`),"",head.join("\t"),
+      ...shown.map((x,i)=>[i+1, fmtDayMon(x.created), x.inv, x.title, Math.round(x.total), x.supplier, fmtDayMon(x.coupa), fmtDayMon(x.clv), fmtDayMon(x.clr)].join("\t")),
+      ["TOTAL","","","",Math.round(total),"","","",""].join("\t")];
+    try { await navigator.clipboard.writeText(lines.join("\n")); showToast("Table copied — paste into Excel or email","success"); }
+    catch { showToast("Copy failed — use Export Excel instead","error"); }
+  };
+
+  if (!all.length) return <Card t={t} style={{marginBottom:14}}><EmptyNote t={t}>No Distribution Fee or Champions rows in the partner data</EmptyNote></Card>;
+  const phone = w<640;
+  const th = (left) => ({ ...thS(t,left), padding:"8px 8px" });
+  const td = (left) => ({ ...tdS(t,left), padding:"8px 8px" });
+  const pend = <span style={{display:"inline-block",padding:"1px 6px",borderRadius:99,background:t.warnBg,border:`1px solid ${t.warnBd}`,color:t.warnDark,fontSize:12,fontWeight:600}}>pending</span>;
+  const dt = (d) => d ? fmtDayMon(d) : pend;
+  const sel = {fontFamily:"inherit",fontSize:13,fontWeight:700,color:t.ink,background:t.surf2,border:`1px solid ${t.line2}`,borderRadius:9,padding:"6px 10px",cursor:"pointer"};
+  return (
+    <div style={{marginBottom:14}}>
+      <div style={{display:"flex",alignItems:"flex-start",gap:12,flexWrap:"wrap",marginBottom:14}}>
+        <div style={{flex:"1 1 420px",minWidth:0}}>
+          <div style={{fontWeight:800,fontSize:20,letterSpacing:"-0.02em",color:t.ink}}>{title}</div>
+          <div style={{fontSize:13,color:t.ink2,marginTop:6,lineHeight:1.5}}>{plural(list.length,"invoice")} · total <strong style={{color:t.ink}} title={fmtRpFull(total)}>{fmtRpWord(total)}</strong> · by program month</div>
+        </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+          <select aria-label="Period" value={mk||""} onChange={e=>setMk(+e.target.value)} style={sel}>{months.map(m=><option key={m} value={m}>{ymLong(m)}</option>)}</select>
+          <select aria-label="Entity" value={ent} onChange={e=>{ setEnt(e.target.value); setMk(null); }} style={sel}>{ents.map(e=><option key={e} value={e}>{e}</option>)}<option value="ALL">All entities</option></select>
+          <Btn t={t} sm onClick={copyTable}>Copy table</Btn>
+          <Btn t={t} variant="primary" sm onClick={exportXlsx}>Export Excel</Btn>
+        </div>
+      </div>
+      <Card t={t} pad={false} style={{marginBottom:14}}>
+        <CardHead title="Success Rate" sub={`${ymLong(mk)} · ${entName} · share of ${plural(list.length,"invoice")} that reached each step`} t={t}/>
+        <div style={{padding:"14px 20px",display:"grid",gridTemplateColumns:w>=900?"repeat(4,minmax(0,1fr))":phone?"1fr":"repeat(2,minmax(0,1fr))",gap:14}}>
+          {rates.map(r=>{ const c = pctClr(r.p,t); return (
+            <div key={r.k} style={{minWidth:0}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8}}>
+                <span style={{fontSize:12.5,fontWeight:600,color:t.ink2}}>{r.label}</span>
+                <span style={{fontSize:12.5,color:t.muted,fontVariantNumeric:"tabular-nums"}}>{r.n} of {list.length}</span>
+              </div>
+              <div style={{fontSize:22,fontWeight:800,color:c.c,fontVariantNumeric:"tabular-nums",margin:"2px 0 6px"}}>{r.p}%</div>
+              <div style={{height:8,borderRadius:99,background:t.surf3,overflow:"hidden"}} role="img" aria-label={`${r.label} ${r.p}%`}><div style={{width:`${r.p}%`,height:"100%",borderRadius:99,background:c.dot}}/></div>
+            </div>
+          ); })}
+        </div>
+      </Card>
+      <Card t={t} pad={false}>
+        <div style={{maxHeight:560,overflow:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse"}}>
+            <thead><tr>
+              <SortTh col="no" sort={sort} setSort={setSort} t={t}>No</SortTh>
+              <th style={th(false)}>Created Invoice</th>
+              <th style={th(true)}>No Invoice</th>
+              <th style={th(true)}>Project Title</th>
+              <SortTh col="total" sort={sort} setSort={setSort} t={t}>Total</SortTh>
+              <SortTh col="supplier" left sort={sort} setSort={setSort} t={t}>Supplier</SortTh>
+              <th style={th(false)}>Invoicing</th>
+              <th style={th(false)}>CLV</th>
+              <th style={th(false)}>Bank Clearing Date</th>
+            </tr></thead>
+            <tbody>
+              {shown.map((x,i)=>(
+                <tr key={i} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+                  <td style={{...td(false),color:t.muted}}>{i+1}</td>
+                  <td style={td(false)}>{dt(x.created)}</td>
+                  <td style={{...td(true),maxWidth:120}} title={x.inv}>{x.inv || pend}</td>
+                  <td style={{...td(true),maxWidth:phone?160:155,color:t.ink2}} title={x.title}>{x.title}</td>
+                  <td style={{...td(false),color:t.ink,fontWeight:600}} title={fmtRpFull(x.total)}>{Math.round(x.total).toLocaleString("id-ID")}</td>
+                  <td style={{...td(true),maxWidth:135,color:t.ink}} title={x.supplier}>{x.supplier}</td>
+                  <td style={td(false)}>{dt(x.coupa)}</td>
+                  <td style={td(false)}>{dt(x.clv)}</td>
+                  <td style={td(false)}>{dt(x.clr)}</td>
+                </tr>
+              ))}
+              <tr style={{background:t.surf2}}>
+                <td colSpan={4} style={{...td(true),fontWeight:700,color:t.ink,borderTop:`1.5px solid ${t.line2}`}}>TOTAL</td>
+                <td style={{...td(false),fontWeight:800,color:t.ink,borderTop:`1.5px solid ${t.line2}`}} title={fmtRpFull(total)}>{Math.round(total).toLocaleString("id-ID")}</td>
+                <td colSpan={4} style={{...td(true),borderTop:`1.5px solid ${t.line2}`}}/>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function ForecastTab({ rows, w, t, showToast }) {
+  const rf = useMemo(()=>computeRolling(rows),[rows]);
+  const [pSort, setPSort] = useState({ col:"avg", dir:"desc" });
+  const phone = w<640;
+  const partners = useMemo(()=>{
+    if (!rf) return [];
+    const { col, dir } = pSort, m = dir==="asc" ? 1 : -1;
+    return [...rf.partners].sort((a,b)=> col==="name" ? m*a.name.localeCompare(b.name) : col.startsWith("v") ? m*(a.v[+col.slice(1)]-b.v[+col.slice(1)]) : m*(a[col]-b[col]));
+  },[rf,pSort]);
+  if (!rf || !rf.next) return <Card t={t} style={{marginBottom:14}}><EmptyNote t={t}>Not enough partner data for a forecast</EmptyNote></Card>;
+  const { next, fcMonths, refText, formula } = rf;
+  const exportXlsx = async () => {
+    const XLSX = await getXLSX();
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rf.months.map(m=>({
+      Month:m.label, Type:m.kind==="forecast"?"Forecast":m.kind==="partial"?"Actual (incomplete, not used)":m.kind==="empty"?"No data":"Actual",
+      Actual:m.actual??"", Forecast:m.kind==="forecast"?Math.round(m.fc||0):"", Rows:m.n,
+      "Reference months":m.kind==="forecast"?m.refs.map((k,i)=>ymLabel(k)+(m.refIsFc[i]?" (forecast)":"")).join(", "):"",
+      Formula:m.kind==="forecast"?`${formula(m)} (Rp miliar)`:"",
+    }))), "Forecast by month");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(partners.map(p=>{ const o={ Partner:p.name }; next.refs.forEach((k,i)=>{ o[ymLabel(k)]=p.v[i]; }); o[`Forecast ${next.label} (3-month average)`]=Math.round(p.avg); return o; })), "Forecast by partner");
+    XLSX.writeFile(wb, `partner_forecast_${new Date().toISOString().slice(0,10)}.xlsx`);
+    showToast("Partner forecast downloaded — Excel","success");
+  };
+  const th = (left) => ({ ...thS(t,left), padding:"8px 12px" });
+  const td = (left) => ({ ...tdS(t,left), padding:"8px 12px" });
+  return (
+    <div style={{marginBottom:14}}>
+      <div style={{display:"flex",alignItems:"flex-start",gap:12,flexWrap:"wrap",marginBottom:14}}>
+        <div style={{flex:"1 1 420px",minWidth:0}}>
+          <div style={{fontWeight:800,fontSize:20,letterSpacing:"-0.02em",color:t.ink}}>Partner payment forecast</div>
+          <div style={{fontSize:14,color:t.ink2,marginTop:6,lineHeight:1.5}}>
+            Forecast for <strong style={{color:t.ink}}>{next.label}</strong>: <strong style={{color:t.ink}}>{fmtRpWord(next.fc)}</strong>, the average of the previous 3 months with complete data. <span style={{display:"inline-block",padding:"1px 8px",borderRadius:99,background:t.surf2,border:`1px solid ${t.line}`,fontSize:12.5,fontWeight:600,color:t.ink2}}>Reference: {refText(next)}</span>
+          </div>
+        </div>
+        <Btn t={t} variant="primary" sm onClick={exportXlsx}>Export Excel</Btn>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:w>=900?`repeat(${Math.min(fcMonths.length,4)},1fr)`:"repeat(2,1fr)",gap:12,marginBottom:14}}>
+        {fcMonths.slice(0,4).map(m=>(
+          <YtdKpi key={m.mk} t={t} label={`Forecast ${m.label}`} value={<span title={fmtRpFull(m.fc||0)}>{fmtRpWord(m.fc||0)}</span>} sub={<>Ref: {refText(m)}{m.refIsFc.some(Boolean)?" (incl. forecast)":""}</>}/>
+        ))}
+      </div>
+      <Card t={t} style={{marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap",marginBottom:6}}>
+          <span style={{fontWeight:700,fontSize:14,color:t.ink}}>Partner cost per month</span>
+          <span style={{display:"inline-flex",gap:14,fontSize:12.5,color:t.ink2,marginLeft:"auto",flexWrap:"wrap"}}>
+            <span style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:10,height:10,borderRadius:3,background:t.chartA}}/>Actual</span>
+            <span style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:10,height:10,borderRadius:3,border:`1.5px dashed ${t.chartA}`,background:`repeating-linear-gradient(45deg, ${t.chartA}, ${t.chartA} 2px, transparent 2px, transparent 5px)`}}/>Forecast (3-month average)</span>
+            <span style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:10,height:10,borderRadius:3,background:t.chartA,opacity:.35}}/>Incomplete</span>
+          </span>
+        </div>
+        <RollingChart months={rf.shown} refText={refText} t={t}/>
+        <div style={{fontSize:12,color:t.muted,marginTop:8,lineHeight:1.5}}>
+          Based on partner cost by program month (all statuses, PO + MDI). Each forecast month = average of the previous 3 months that have data; months with fewer than {rf.minRows} rows count as incomplete and are skipped{rf.skipped.length?` (${rf.skipped.map(m=>`${m.label}${m.n?`: ${plural(m.n,"row")}`:": no data"}`).join(", ")})`:""}. Later forecast months roll forward and include earlier forecast months.
+        </div>
+      </Card>
+      <div style={{display:"grid",gridTemplateColumns:w>=1100?"minmax(0,1fr) minmax(0,1fr)":"1fr",gap:14,marginBottom:14,alignItems:"start"}}>
+        <Card t={t} pad={false}>
+          <div style={{padding:"12px 16px",borderBottom:`1px solid ${t.line}`,display:"flex",gap:10,alignItems:"baseline",flexWrap:"wrap"}}>
+            <span style={{fontWeight:700,fontSize:14,color:t.ink}}>By month</span><span style={{fontSize:12.5,color:t.muted}}>Rp miliar · formula = average of the 3 reference months</span>
+          </div>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr><th style={th(true)}>Month</th><th style={th(false)}>Actual</th><th style={th(false)}>Forecast</th><th style={th(true)}>Reference</th>{!phone&&<th style={th(true)}>Formula</th>}</tr></thead>
+              <tbody>{rf.shown.map((m,i)=>{ const fc = m.kind==="forecast"; return (
+                <tr key={m.mk} style={{background:fc?`${C.teal}0F`:i%2===1?t.rowStripe:"transparent"}}>
+                  <td style={{...td(true),fontWeight:600,color:t.ink}}>{m.label}{m.kind==="partial"&&<span style={{marginLeft:6,fontSize:12,fontWeight:500,color:t.warnDark}}>· incomplete</span>}</td>
+                  <td style={{...td(false),color:m.actual!=null?t.ink2:t.muted}} title={m.actual!=null?fmtRpFull(m.actual):undefined}>{m.actual!=null?fmtMiliar(m.actual):"—"}</td>
+                  <td style={{...td(false),fontWeight:fc?700:400,color:fc?t.ink:t.muted}} title={fc?fmtRpFull(m.fc||0):undefined}>{fc?fmtMiliar(m.fc||0):"—"}</td>
+                  <td style={{...td(true),color:t.ink2}}>{fc?refText(m):""}</td>
+                  {!phone&&<td style={{...td(true),color:t.muted,maxWidth:220}} title={fc?formula(m):undefined}>{fc?formula(m):""}</td>}
+                </tr>
+              ); })}</tbody>
+            </table>
+          </div>
+        </Card>
+        <Card t={t} pad={false}>
+          <div style={{padding:"12px 16px",borderBottom:`1px solid ${t.line}`,display:"flex",gap:10,alignItems:"baseline",flexWrap:"wrap"}}>
+            <span style={{fontWeight:700,fontSize:14,color:t.ink}}>By partner · {next.label}</span><span style={{fontSize:12.5,color:t.muted}}>average of {refText(next)}</span>
+          </div>
+          <div style={{maxHeight:420,overflow:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr>
+                <SortTh col="name" left sort={pSort} setSort={setPSort} t={t}>Partner</SortTh>
+                {!phone&&next.refs.map((k,i)=><SortTh key={k} col={`v${i}`} sort={pSort} setSort={setPSort} t={t}>{MONTHS_SHORT[k%100]}</SortTh>)}
+                <SortTh col="avg" sort={pSort} setSort={setPSort} t={t}>Forecast</SortTh>
+              </tr></thead>
+              <tbody>{partners.map((p,i)=>(
+                <tr key={p.name} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+                  <td style={{...td(true),fontWeight:600,color:t.ink,maxWidth:phone?150:220}} title={p.name}>{p.name}</td>
+                  {!phone&&p.v.map((x,j)=><td key={j} style={{...td(false),color:x?t.ink2:t.muted}} title={x?fmtRpFull(x):undefined}>{x?fmtMiliar(x):"—"}</td>)}
+                  <td style={{...td(false),fontWeight:700,color:t.ink}} title={`(${p.v.map(x=>fmtRpFull(x)).join(" + ")}) / ${p.v.length}`}>{fmtMiliar(p.avg)}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </Card>
+      </div>
+      <OpenBillsSection rows={rows} w={w} t={t} showToast={showToast}/>
+    </div>
+  );
+}
+
+function OpenBillsSection({ rows, w, t, showToast }) {
+  const fc = useMemo(()=>computeForecast(rows),[rows]);
+  const [sort, setSort] = useState({ col:"total", dir:"desc" });
+  const [dSort, setDSort] = useState({ col:"due", dir:"asc" });
+  const [showDetail, setShowDetail] = useState(false);
+  const phone = w<640;
+  const partners = useMemo(()=>{
+    const { col, dir } = sort, m = dir==="asc" ? 1 : -1;
+    return [...fc.partners].sort((a,b)=> col==="name" ? m*a.name.localeCompare(b.name) : col==="earliest" ? m*((a.earliest||0)-(b.earliest||0)) : m*(a[col]-b[col]));
+  },[fc.partners,sort]);
+  const detail = useMemo(()=>{
+    const { col, dir } = dSort, m = dir==="asc" ? 1 : -1;
+    return [...fc.items].sort((a,b)=>{ const va=a[col], vb=b[col]; if (va instanceof Date || vb instanceof Date) return m*((va||0)-(vb||0)); return typeof va==="number" ? m*((va??-1)-(vb??-1)) : m*String(va).localeCompare(String(vb)); });
+  },[fc.items,dSort]);
+  const hasInv = detail.some(x=>x.inv||x.invId);
+  const exportXlsx = async () => {
+    const XLSX = await getXLSX();
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detail.map(x=>({ Partner:x.name, "Project Title":x.title, "Invoice Number":x.inv, "Invoice ID":x.invId, Period:x.period, Amount:x.amt, Status:x.status, "Expected payment":x.due?fmtShortDate(x.due):"", Basis:x.basis, Overdue:x.overdue?"Yes":"", "Days since program month end":x.days??"" }))), "Forecast detail");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(fc.buckets.map(b=>({ Month:b.key==="over"?"Overdue":b.label, "In process":b.pp, "Not submitted":b.ns, Total:b.pp+b.ns }))), "By month");
+    XLSX.writeFile(wb, `partner_payment_forecast_${new Date().toISOString().slice(0,10)}.xlsx`);
+    showToast("Partner forecast downloaded — Excel","success");
+  };
+  const dot = (c) => <span style={{width:10,height:10,borderRadius:3,background:c,flexShrink:0}}/>;
+  const lbl = (c, s) => <span style={{display:"inline-flex",alignItems:"center",gap:6}}>{c&&dot(c)}{s}</span>;
+  const amt = (v, c) => <td style={{...tdS(t),color:v?(c||t.ink2):t.muted}} title={v?fmtRpFull(v):undefined}>{v?fmtMiliar(v):"—"}</td>;
+  if (!fc.items.length) return <Card t={t} style={{marginBottom:14}}><div style={{fontWeight:700,fontSize:16,color:t.ink,marginBottom:6}}>Open bills to pay</div><EmptyNote t={t}>No open partner payments — everything is paid</EmptyNote></Card>;
+  return (
+    <div style={{marginBottom:14}}>
+      <div style={{marginBottom:14}}>
+        <div style={{fontWeight:800,fontSize:17,letterSpacing:"-0.02em",color:t.ink,paddingTop:14,borderTop:`1px solid ${t.line2}`}}>Open bills to pay <span style={{fontWeight:500,fontSize:13,color:t.muted}}>· invoices not paid yet, by expected payment date</span></div>
+        <div style={{fontSize:14,color:t.ink2,marginTop:6,lineHeight:1.5}}>
+          <strong style={{color:t.ink}}>{fmtRpWord(fc.total)}</strong> still to be paid to partners. <strong style={{color:t.ink}}>{fmtRpWord(fc.next3)}</strong> is expected in {fc.next3Label}{fc.over.amt?<>, and <strong style={{color:t.badDark}}>{fmtRpWord(fc.over.amt)}</strong> is already past its expected date</>:null}.
+        </div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:w>=900?"repeat(4,1fr)":"repeat(2,1fr)",gap:12,marginBottom:14}}>
+        <YtdKpi t={t} label={lbl(null,"Total expected")} value={<span title={fmtRpFull(fc.total)}>{fmtRpWord(fc.total)}</span>} sub={plural(fc.items.length,"row")}/>
+        <YtdKpi t={t} label={lbl(t.warn,"In process")} value={<span title={fmtRpFull(fc.pp.amt)}>{fmtRpWord(fc.pp.amt)}</span>} sub={`${plural(fc.pp.n,"row")} · invoiced`}/>
+        <YtdKpi t={t} label={lbl(t.bad,"Not submitted")} value={<span title={fmtRpFull(fc.ns.amt)}>{fmtRpWord(fc.ns.amt)}</span>} sub={`${plural(fc.ns.n,"row")} · no invoice yet`}/>
+        <YtdKpi t={t} label={lbl(t.bad,"Overdue")} value={<span title={fmtRpFull(fc.over.amt)}>{fmtRpWord(fc.over.amt)}</span>} sub={`${plural(fc.over.n,"row")} · expected date passed`}/>
+      </div>
+      <Card t={t} style={{marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap",marginBottom:6}}>
+          <span style={{fontWeight:700,fontSize:14,color:t.ink}}>Expected payments by month</span>
+          <span style={{display:"inline-flex",gap:14,fontSize:12.5,color:t.ink2,marginLeft:"auto"}}>{lbl(t.warn,"In process")}{lbl(t.bad,"Not submitted")}</span>
+        </div>
+        <ForecastChart buckets={fc.buckets} t={t}/>
+        <div style={{fontSize:12,color:t.muted,marginTop:8,lineHeight:1.5}}>
+          How dates are estimated: <strong style={{color:t.ink2}}>In process</strong> uses the Est. Date (or Invoice Submission + {fc.lagInv} days when empty). <strong style={{color:t.ink2}}>Not submitted</strong> uses the end of the program month + {fc.lag} days, the median time from program month end to bank clearing over {plural(fc.lagN,"paid row")} (the partner&rsquo;s own median when it has 3+ paid rows). All Partner rows (PO + MDI); dashboard filters don&rsquo;t apply.
+        </div>
+      </Card>
+      <Card t={t} pad={false}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",padding:"12px 16px",borderBottom:`1px solid ${t.line}`}}>
+          <span style={{fontWeight:700,fontSize:14,color:t.ink}}>By partner</span>
+          <span style={{fontSize:12.5,color:t.muted}}>Rp miliar · juta below 1 miliar · hover for the full amount</span>
+          <span style={{marginLeft:"auto",display:"inline-flex",gap:8}}>
+            <Btn t={t} variant="ghost" sm onClick={()=>setShowDetail(v=>!v)} aria-expanded={showDetail}>{showDetail?"Hide detail":"Show detail"}</Btn>
+            <Btn t={t} variant="primary" sm onClick={exportXlsx}>Export Excel</Btn>
+          </span>
+        </div>
+        <div style={{padding:"12px 16px 16px"}}>
+          <div style={{maxHeight:440,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10,width:"fit-content",maxWidth:"100%"}}>
+            <table style={{borderCollapse:"collapse"}}>
+              <thead><tr>
+                <SortTh col="name" left sort={sort} setSort={setSort} t={t}>Partner</SortTh>
+                <SortTh col="pp" sort={sort} setSort={setSort} t={t}>In process</SortTh>
+                <SortTh col="ns" sort={sort} setSort={setSort} t={t}>Not submitted</SortTh>
+                <SortTh col="total" sort={sort} setSort={setSort} t={t}>Total expected</SortTh>
+                {!phone&&<SortTh col="earliest" sort={sort} setSort={setSort} t={t}>Earliest date</SortTh>}
+                {!phone&&<SortTh col="oldest" sort={sort} setSort={setSort} t={t}>Oldest (days)</SortTh>}
+              </tr></thead>
+              <tbody>{partners.map((o,i)=>{ const late = o.earliest && o.earliest < dayStart(new Date()); return (
+                <tr key={o.name} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+                  <td style={{...tdS(t,true),fontWeight:600,color:t.ink,maxWidth:phone?150:280,paddingRight:24}} title={o.name}>{o.name}</td>
+                  {amt(o.pp,t.warnDark)}
+                  {amt(o.ns,t.badDark)}
+                  <td style={{...tdS(t),fontWeight:700,color:t.ink}} title={fmtRpFull(o.total)}>{fmtMiliar(o.total)}</td>
+                  {!phone&&<td style={{...tdS(t),color:late?t.bad:t.ink2,fontWeight:late?700:400}} title={late?"Already past":undefined}>{o.earliest?fmtDate(o.earliest):"—"}</td>}
+                  {!phone&&<td style={{...tdS(t),color:o.oldest>60?t.bad:o.oldest>30?t.warnDark:t.ink2}}>{o.oldest||"—"}</td>}
+                </tr>
+              ); })}</tbody>
+            </table>
+          </div>
+        </div>
+        {showDetail&&(
+          <div style={{borderTop:`1px solid ${t.line}`,padding:"12px 16px 16px"}}>
+            <div style={{fontSize:12.5,color:t.muted,marginBottom:8}}>{plural(detail.length,"row")} · expected date in red = already passed · days = since the end of the program month</div>
+            <div style={{maxHeight:420,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10}}>
+              <table style={{width:"100%",borderCollapse:"collapse"}}>
+                <thead><tr>
+                  <SortTh col="name" left sort={dSort} setSort={setDSort} t={t}>Partner</SortTh>
+                  {!phone&&<SortTh col="title" left sort={dSort} setSort={setDSort} t={t}>Project Title</SortTh>}
+                  {!phone&&hasInv&&<SortTh col="inv" left sort={dSort} setSort={setDSort} t={t}>Invoice</SortTh>}
+                  {!phone&&<SortTh col="period" left sort={dSort} setSort={setDSort} t={t}>Period</SortTh>}
+                  <SortTh col="amt" sort={dSort} setSort={setDSort} t={t}>Amount</SortTh>
+                  {!phone&&<SortTh col="status" left sort={dSort} setSort={setDSort} t={t}>Status</SortTh>}
+                  <SortTh col="due" sort={dSort} setSort={setDSort} t={t}>Expected</SortTh>
+                  {!phone&&<SortTh col="days" sort={dSort} setSort={setDSort} t={t}>Days</SortTh>}
+                </tr></thead>
+                <tbody>{detail.slice(0,400).map((x,i)=>(
+                  <tr key={i} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+                    <td style={{...tdS(t,true),fontWeight:600,color:t.ink,maxWidth:phone?130:170}} title={x.name}>{x.name}</td>
+                    {!phone&&<td style={{...tdS(t,true),maxWidth:w<1150?140:200}} title={x.title}>{x.title}</td>}
+                    {!phone&&hasInv&&<td style={{...tdS(t,true),maxWidth:150,color:t.ink2}} title={invLabel(x.inv,x.invId)}>{invLabel(x.inv,x.invId)}</td>}
+                    {!phone&&<td style={tdS(t,true)}>{x.period}</td>}
+                    <td style={{...tdS(t),color:t.ink}} title={fmtRpFull(x.amt)}>{fmtRpWord(x.amt)}</td>
+                    {!phone&&<td style={tdS(t,true)}><StatusBadge val={x.status} t={t}/></td>}
+                    <td style={{...tdS(t),color:x.overdue?t.bad:t.ink2,fontWeight:x.overdue?700:400}} title={x.basis}>{x.due?fmtDate(x.due):"—"}</td>
+                    {!phone&&<td style={{...tdS(t),color:x.days>60?t.bad:x.days>30?t.warnDark:t.ink2}}>{x.days??"—"}</td>}
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function YtdKpi({ label, value, sub, children, t }) {
+  return (
+    <div style={{background:t.surf,border:`1px solid ${t.line}`,borderRadius:16,padding:"14px 16px",boxShadow:t.shadow1,minWidth:0}}>
+      <div style={{fontSize:12,fontWeight:600,color:t.muted}}>{label}</div>
+      <div style={{fontWeight:800,fontSize:"clamp(16px, 4.2vw, 22px)",letterSpacing:"-0.02em",color:t.ink,lineHeight:1.2,marginTop:6,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{value}</div>
+      {sub&&<div style={{fontSize:12.5,color:t.muted,marginTop:4,lineHeight:1.4}}>{sub}</div>}
+      {children}
+    </div>
+  );
+}
+
+// Stacked bar per bulan: Sales Team (bawah) + Partner (atas)
+function YtdChart({ rows, showTeam, latest, t }) {
+  const [ref, bw] = useBoxWidth();
+  const [hov, setHov] = useState(null);
+  const H = 260, pL = 46, pR = 8, pT = 22, pB = 30;
+  const W = Math.max(bw, 280), cW = W-pL-pR, cH = H-pT-pB;
+  const tot = (r) => (showTeam?r.team.a:0) + r.partner.a;
+  const { max, step } = niceMax(Math.max(...rows.map(tot), 0));
+  const y = (v) => pT + cH - (v/max)*cH;
+  const band = cW/Math.max(rows.length,1), bWid = Math.min(46, band*0.62);
+  const segs = (r) => [...(showTeam?[{k:"team",v:r.team.a,c:t.chartA}]:[]),{k:"partner",v:r.partner.a,c:t.chartB}];
+  const ticks = []; for (let v=0; v<=max+1e-6; v+=step) ticks.push(v);
+  const h = hov!=null ? rows[hov] : null;
+  return (
+    <div ref={ref} style={{position:"relative"}}>
+      {bw>0&&(
+        <svg width={W} height={H} role="img" aria-label="Monthly cost, stacked by Sales Team and Partner" style={{display:"block"}} onMouseLeave={()=>setHov(null)}>
+          {ticks.map(v=>(
+            <g key={v}>
+              <line x1={pL} x2={W-pR} y1={y(v)} y2={y(v)} stroke={t.line} strokeWidth={1}/>
+              <text x={pL-8} y={y(v)+4} textAnchor="end" fontSize={12} fill={t.muted} style={{fontVariantNumeric:"tabular-nums"}}>{(v/1e9).toLocaleString("id-ID",{maximumFractionDigits:1})}</text>
+            </g>
+          ))}
+          <text x={0} y={11} fontSize={12} fill={t.muted}>Rp miliar</text>
+          {rows.map((r,i)=>{
+            const cx = pL + band*i + band/2, x0 = cx-bWid/2;
+            let acc = 0; const ss = segs(r).filter(s=>s.v>0);
+            return (
+              <g key={r.m} opacity={hov==null||hov===i?1:0.45} style={{transition:"opacity .12s"}}>
+                {ss.map((s,j)=>{
+                  const yTop = y(acc+s.v), yBot = y(acc); acc += s.v;
+                  const top = j===ss.length-1, gap = j>0 ? 2 : 0;           // celah 2px antar segmen
+                  const hgt = Math.max(0, yBot-yTop-gap), rr = top ? Math.min(4, hgt) : 0;
+                  const d = `M${x0},${yTop+hgt} V${yTop+rr} Q${x0},${yTop} ${x0+rr},${yTop} H${x0+bWid-rr} Q${x0+bWid},${yTop} ${x0+bWid},${yTop+rr} V${yTop+hgt} Z`;
+                  return <path key={s.k} d={d} fill={s.c}/>;
+                })}
+                <text x={cx} y={H-pB+18} textAnchor="middle" fontSize={12} fill={r.m===latest?t.ink:t.muted} fontWeight={r.m===latest?700:400}>{MONTHS_SHORT[r.m]}</text>
+                <rect x={pL+band*i} y={pT} width={band} height={cH} fill="transparent" onMouseEnter={()=>setHov(i)} onFocus={()=>setHov(i)} onBlur={()=>setHov(null)} tabIndex={0} aria-label={`${r.label}: ${fmtRpWord(tot(r))}`}/>
+              </g>
+            );
+          })}
+          <line x1={pL} x2={W-pR} y1={y(0)} y2={y(0)} stroke={t.line2} strokeWidth={1}/>
+        </svg>
+      )}
+      {h&&(()=>{
+        // Tooltip di samping bar (kanan, atau kiri bila tidak muat) supaya bar yang di-hover tetap terlihat
+        const cx = pL + band*hov + band/2, right = cx + bWid/2 + 10;
+        const left = right + 220 <= W ? right : Math.max(0, cx - bWid/2 - 10 - 220);
+        const row = (c,l,v) => <div style={{display:"flex",alignItems:"center",gap:8,justifyContent:"space-between"}}><span style={{display:"inline-flex",alignItems:"center",gap:6,color:t.ink2}}>{c&&<span style={{width:10,height:10,borderRadius:3,background:c}}/>}{l}</span><strong style={{fontVariantNumeric:"tabular-nums",color:t.ink}}>{v}</strong></div>;
+        return (
+          <div style={{position:"absolute",top:8,left,width:220,background:t.surf,border:`1px solid ${t.line2}`,borderRadius:12,boxShadow:t.shadow3,padding:"10px 12px",fontSize:12.5,pointerEvents:"none",display:"flex",flexDirection:"column",gap:5,zIndex:5}}>
+            <div style={{fontWeight:700,color:t.ink}}>{h.label}</div>
+            {showTeam&&row(t.chartA,"Sales Team",fmtRpWord(h.team.a))}
+            {row(t.chartB,"Partner",fmtRpWord(h.partner.a))}
+            <div style={{borderTop:`1px solid ${t.line}`,paddingTop:5}}>{row(null,"Total",fmtRpWord(tot(h)))}</div>
+            {row(null,"Paid",`${pct(h.grand.p,h.grand.a)}%`)}
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+// Bar horizontal komposisi (porsi dalam grupnya)
+function ShareBars({ title, color, items, t }) {
+  const total = items.reduce((a,x)=>a+x.v,0) || 1;
+  return (
+    <div>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+        <span style={{width:10,height:10,borderRadius:3,background:color}}/>
+        <span style={{fontWeight:700,fontSize:13,color:t.ink}}>{title}</span>
+        <span style={{fontSize:12.5,color:t.muted,marginLeft:"auto"}}>{fmtRpWord(total)}</span>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:9}}>
+        {items.map(x=>{ const p = x.v/total*100; return (
+          <div key={x.l} title={`${x.l}: ${fmtRpFull(x.v)}`}>
+            <div style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:12.5,marginBottom:4}}>
+              <span style={{color:t.ink2}}>{x.l}</span>
+              <span style={{color:t.ink,fontVariantNumeric:"tabular-nums"}}><strong>{p.toFixed(0)}%</strong> <span style={{color:t.muted}}>· {fmtRpWord(x.v)}</span></span>
+            </div>
+            <div style={{height:8,borderRadius:4,background:t.surf3,overflow:"hidden"}}><div style={{height:"100%",width:`${p}%`,background:color,borderRadius:4}}/></div>
+          </div>
+        ); })}
+      </div>
+    </div>
+  );
+}
+
+function YtdTab({ partnerRows, agencyRows, showTeam, w, t, showToast }) {
+  const years = useMemo(()=>yearsOf([...partnerRows,...agencyRows]),[partnerRows,agencyRows]);
+  const [year, setYear] = useYear(years);
+  const ytd = useMemo(()=>computeYtd(partnerRows, showTeam?agencyRows:[], year),[partnerRows,agencyRows,showTeam,year]);
+  const [showDetail, setShowDetail] = useState(false);
+  const exportXlsx = async () => {
+    const XLSX = await getXLSX();
+    const line = (r) => {
+      const o = { Month:r.label };
+      if (showTeam) { o["Sales Team Salary Amount"]=r.sal.a; o["Sales Team Salary Paid"]=r.sal.p; o["Sales Team Incentive Amount"]=r.inc.a; o["Sales Team Incentive Paid"]=r.inc.p; o["Sales Team Amount"]=r.team.a; o["Sales Team Paid"]=r.team.p; }
+      ytd.entList.forEach((e,i)=>{ o[`Partner ${e} Amount`]=r.ent[i].a; o[`Partner ${e} Paid`]=r.ent[i].p; });
+      o["Partner Amount"]=r.partner.a; o["Partner Paid"]=r.partner.p; o["Grand Total Amount"]=r.grand.a; o["Grand Total Paid"]=r.grand.p;
+      return o;
+    };
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([...ytd.rows.map(line), line(ytd.tot)]), `YTD ${year}`);
+    XLSX.writeFile(wb, `ytd_summary_${year}.xlsx`);
+    showToast(`YTD ${year} downloaded — Excel`,"success");
+  };
+  const { rows, tot } = ytd;
+  const has = rows.some(r=>r.grand.a>0);
+  const first = rows.find(r=>r.grand.a>0)?.m || 1;
+  const latest = [...rows].reverse().find(r=>r.grand.a>0)?.m || 0;
+  const span = latest ? `${MONTHS_SHORT[first]}–${MONTHS_SHORT[latest]} ${year}` : `${year}`;
+  const paidPct = pct(tot.grand.p, tot.grand.a);
+  const entLbl = (e) => String(e).toUpperCase()==="MPX" ? "MDI (MPX)" : e;
+  const twoCol = w>=1000, narrow = w<640;
+  const thY = (left) => ({ ...thS(t,left), fontSize:12, letterSpacing:"0.01em", fontWeight:600, padding:"8px 10px" });
+  const tdY = (left) => ({ ...tdS(t,left), fontSize:13, lineHeight:"20px", padding:"8px 10px", fontVariantNumeric:"tabular-nums" });
+  const head = (
+    <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",marginBottom:14}}>
+      <div style={{minWidth:0,flex:"1 1 320px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <span style={{fontWeight:800,fontSize:20,letterSpacing:"-0.02em",color:t.ink}}>YTD Summary</span>
+          <YearSelect years={years} value={year} onChange={setYear} t={t}/>
+        </div>
+        {has&&<div style={{fontSize:14,color:t.ink2,marginTop:6,lineHeight:1.5}}>
+          <strong style={{color:t.ink}}>{span}:</strong> total cost <strong style={{color:t.ink}}>{fmtRpWord(tot.grand.a)}</strong>, <strong style={{color:t.ink}}>{paidPct}%</strong> already paid ({fmtRpWord(tot.grand.a-tot.grand.p)} still unpaid).
+        </div>}
+      </div>
+      <Btn t={t} variant="primary" sm onClick={exportXlsx} disabled={!has}>Export Excel</Btn>
+    </div>
+  );
+  if (!has) return <Card t={t} style={{marginBottom:14}}>{head}<EmptyNote t={t}>No data for {year}</EmptyNote></Card>;
+  const kpis = [
+    { label:"Grand Total YTD", value:fmtRpWord(tot.grand.a), sub:`${span} · ${rows.filter(r=>r.grand.a>0).length} months with data` },
+    ...(showTeam?[{ label:"Sales Team (Agency)", value:fmtRpWord(tot.team.a), sub:`${pct(tot.team.a,tot.grand.a)}% of total · ${pct(tot.team.p,tot.team.a)}% paid`, dot:t.chartA }]:[]),
+    { label:"Partner", value:fmtRpWord(tot.partner.a), sub:`${pct(tot.partner.a,tot.grand.a)}% of total · ${pct(tot.partner.p,tot.partner.a)}% paid`, dot:t.chartB },
+  ];
+  return (
+    <div style={{marginBottom:14}}>
+      {head}
+      <div style={{display:"grid",gridTemplateColumns:w>=900?`repeat(${kpis.length+1},1fr)`:"repeat(2,1fr)",gap:12,marginBottom:14}}>
+        {kpis.map(k=><YtdKpi key={k.label} t={t} label={<span style={{display:"inline-flex",alignItems:"center",gap:6}}>{k.dot&&<span style={{width:10,height:10,borderRadius:3,background:k.dot}}/>}{k.label}</span>} value={k.value} sub={k.sub}/>)}
+        <YtdKpi t={t} label="Paid" value={`${paidPct}%`} sub={<>Paid {fmtRpWord(tot.grand.p)}<br/>Unpaid {fmtRpWord(tot.grand.a-tot.grand.p)}</>}>
+          <div style={{height:8,borderRadius:4,background:t.surf3,overflow:"hidden",marginTop:8}} role="meter" aria-valuenow={paidPct} aria-valuemin={0} aria-valuemax={100} aria-label="Share paid"><div style={{height:"100%",width:`${paidPct}%`,background:t.good,borderRadius:4}}/></div>
+        </YtdKpi>
+      </div>
+      <Card t={t} style={{marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap",marginBottom:10}}>
+          <span style={{fontWeight:700,fontSize:14,color:t.ink}}>Monthly cost</span>
+          <span style={{display:"inline-flex",gap:14,fontSize:12.5,color:t.ink2,marginLeft:"auto"}}>
+            {showTeam&&<span style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:10,height:10,borderRadius:3,background:t.chartA}}/>Sales Team</span>}
+            <span style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:10,height:10,borderRadius:3,background:t.chartB}}/>Partner</span>
+          </span>
+        </div>
+        <YtdChart rows={rows} showTeam={showTeam} latest={latest} t={t}/>
+      </Card>
+      <div style={{display:"grid",gridTemplateColumns:twoCol?"minmax(0,1.45fr) minmax(0,1fr)":"1fr",gap:14,marginBottom:14,alignItems:"start"}}>
+        <Card t={t} pad={false}>
+          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",padding:"12px 16px",borderBottom:`1px solid ${t.line}`}}>
+            <span style={{fontWeight:700,fontSize:14,color:t.ink}}>By month</span>
+            <span style={{fontSize:12.5,color:t.muted}}>Rp miliar · juta below 1 miliar · hover for the full amount</span>
+          </div>
+          <div style={{maxHeight:520,overflowY:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr>
+                <th style={thY(true)}>Month</th>
+                {showTeam&&<th style={thY(false)}>Sales Team</th>}
+                <th style={thY(false)}>Partner</th>
+                <th style={thY(false)}>Total</th>
+                <th style={thY(false)}>Paid</th>
+              </tr></thead>
+              <tbody>{rows.map((r,i)=>{ const isLatest = r.m===latest, p = pct(r.grand.p,r.grand.a); return (
+                <tr key={r.m} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+                  <td style={{...tdY(true),fontWeight:600,color:t.ink}}>{r.label}{isLatest&&<span style={{marginLeft:6,fontSize:12,fontWeight:500,color:t.muted}}>· latest</span>}</td>
+                  {showTeam&&<td style={tdY(false)} title={fmtRpFull(r.team.a)}>{fmtMiliar(r.team.a)}</td>}
+                  <td style={tdY(false)} title={fmtRpFull(r.partner.a)}>{fmtMiliar(r.partner.a)}</td>
+                  <td style={{...tdY(false),fontWeight:700,color:t.ink}} title={fmtRpFull(r.grand.a)}>{fmtMiliar(r.grand.a)}</td>
+                  <td style={tdY(false)} title={`Paid ${fmtRpFull(r.grand.p)} of ${fmtRpFull(r.grand.a)}`}><PaidMini p={r.grand.a?p:null} narrow={narrow} t={t}/></td>
+                </tr>
+              ); })}</tbody>
+              <tfoot><tr>
+                {(()=>{ const ft = { ...tdY(false), background:`linear-gradient(${C.teal}14,${C.teal}14),${t.surf}`, color:t.ink, fontWeight:800, borderTop:`2px solid ${t.line2}`, borderBottom:0, position:"sticky", bottom:0, zIndex:3 }; return <>
+                  <td style={{...ft,textAlign:"left"}}>Total {span}</td>
+                  {showTeam&&<td style={ft} title={fmtRpFull(tot.team.a)}>{fmtMiliar(tot.team.a)}</td>}
+                  <td style={ft} title={fmtRpFull(tot.partner.a)}>{fmtMiliar(tot.partner.a)}</td>
+                  <td style={ft} title={fmtRpFull(tot.grand.a)}>{fmtMiliar(tot.grand.a)}</td>
+                  <td style={ft} title={`Paid ${fmtRpFull(tot.grand.p)} of ${fmtRpFull(tot.grand.a)}`}><PaidMini p={paidPct} narrow={narrow} t={t}/></td>
+                </>; })()}
+              </tr></tfoot>
+            </table>
+          </div>
+          <div style={{display:"flex",justifyContent:"flex-end",padding:"8px 12px",borderTop:`1px solid ${t.line}`}}>
+            <Btn t={t} variant="ghost" sm onClick={()=>setShowDetail(v=>!v)} aria-expanded={showDetail}>{showDetail?"Hide detailed breakdown":"Show detailed breakdown"}</Btn>
+          </div>
+        </Card>
+        <Card t={t}>
+          <div style={{fontWeight:700,fontSize:14,color:t.ink,marginBottom:12}}>Where the money goes</div>
+          <div style={{display:"flex",flexDirection:"column",gap:18}}>
+            {showTeam&&<ShareBars title="Sales Team" color={t.chartA} t={t} items={[{l:"Salary",v:tot.sal.a},{l:"Incentive",v:tot.inc.a}]}/>}
+            <ShareBars title="Partner" color={t.chartB} t={t} items={ytd.entList.map((e,i)=>({l:entLbl(e),v:tot.ent[i].a})).sort((a,b)=>b.v-a.v)}/>
+          </div>
+          {showTeam&&<div style={{fontSize:12,color:t.muted,marginTop:14,lineHeight:1.5}}>Salary = SALARY, SALARY FWA, SALARYUUCK, THR. Incentive = all other agency programs.</div>}
+        </Card>
+      </div>
+      {showDetail&&<Card t={t} pad={false}><YtdDetailTable ytd={ytd} showTeam={showTeam} entLbl={entLbl} narrow={narrow} t={t}/></Card>}
+    </div>
+  );
+}
+
+// Rincian lengkap (tampilan lama): Salary/Incentive & per Entity + % paid, dalam Rupiah penuh
+function YtdDetailTable({ ytd, showTeam, entLbl, narrow, t }) {
+  const cols = [
+    ...(showTeam?[{k:"sal",l:"Salary",g:"team"},{k:"inc",l:"Incentive",g:"team"},{k:"team",l:"Total",g:"team",tot:true}]:[]),
+    ...ytd.entList.map((e,i)=>({k:"ent",i,l:entLbl(e),g:"partner"})),
+    {k:"partner",l:"Total",g:"partner",tot:true},
+    {k:"grand",l:"Grand Total",g:"grand",tot:true},
+  ];
+  const val = (row,c) => c.k==="ent" ? row.ent[c.i] : row[c.k];
+  const num = (n) => Math.round(n).toLocaleString("id-ID");
+  const groups = [["team","Sales Team (Agency)"],["partner","Partner"],["grand",""]].map(([g,l])=>({g,l,n:cols.filter(c=>c.g===g).length})).filter(x=>x.n);
+  const th = (extra) => ({ ...thS(t,false), fontSize:12, letterSpacing:"0.02em", textTransform:"none", fontFamily:"inherit", fontWeight:600, padding:"8px 10px", position:"static", ...extra });
+  const cell = (c, v, foot) => (
+    <td key={c.k+(c.i??"")} style={{...tdS(t),fontSize:12.5,padding:"8px 10px",fontVariantNumeric:"tabular-nums",verticalAlign:"top",background:foot?"#1E2128":c.tot?t.surf2:undefined,color:foot?"#fff":t.ink,fontWeight:c.tot||foot?700:500}}>
+      <div>{v.a?num(v.a):"—"}</div>
+      {v.a>0&&<div style={{fontSize:12,fontWeight:500,color:foot?"#C9CDD6":t.muted,marginTop:2}}>paid {pct(v.p,v.a)}%</div>}
+    </td>
+  );
+  return (
+    <div style={{borderTop:`1px solid ${t.line}`}}>
+      <div style={{padding:"12px 16px",fontSize:12.5,color:t.muted}}>Detailed breakdown in full Rupiah · paid = Clearing Date filled</div>
+      <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",minWidth:narrow?640:undefined}}>
+          <thead>
+            <tr><th style={th({borderBottom:0})}/>{groups.map(x=><th key={x.g} colSpan={x.n} style={th({textAlign:"center",borderBottom:0,color:t.ink,fontWeight:700})}>{x.l}</th>)}</tr>
+            <tr><th style={th({textAlign:"left"})}>Month</th>{cols.map(c=><th key={c.k+(c.i??"")} style={th({color:c.tot?t.ink:t.muted,fontWeight:c.tot?700:600})}>{c.l}</th>)}</tr>
+          </thead>
+          <tbody>{ytd.rows.map((r,i)=>(
+            <tr key={r.m} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+              <td style={{...tdS(t,true),fontSize:12.5,fontWeight:700,color:t.ink,verticalAlign:"top",padding:"8px 10px"}}>{r.label}</td>
+              {cols.map(c=>cell(c,val(r,c),false))}
+            </tr>
+          ))}</tbody>
+          <tfoot><tr>
+            <td style={{...tdS(t,true),fontSize:12.5,background:"#1E2128",color:"#fff",fontWeight:800,borderTop:`2px solid ${C.teal}`,verticalAlign:"top",padding:"8px 10px"}}>{ytd.tot.label}</td>
+            {cols.map(c=>cell(c,val(ytd.tot,c),true))}
+          </tr></tfoot>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+
+/* ── Accrual Agency: checklist submission + estimasi ── */
+// Jadwal submission yang DIHARAPKAN per Program Type (kunci = huruf/angka saja, kapital).
+// DEFAULT — menunggu konfirmasi Saila. "monthly" = setiap bulan; array = bulan tertentu (1–12).
+const ACCRUAL_SCHEDULE = {
+  INCENTIVE:    "monthly",
+  SALARY:       "monthly",
+  INCENTIVEFWA: "monthly",
+  SALARYFWA:    "monthly",
+  SALARYUUCK:   [3,6,9,12],   // kuartalan
+  THR:          [3],          // tahunan, Lebaran 2026 (Maret)
+};
+const isExpected = (prog, m) => { const s = ACCRUAL_SCHEDULE[stripCat(prog)]; return s==="monthly" || (Array.isArray(s) && s.includes(m)); };
+// Jadwal kuartalan/tahunan: dianggap sudah submit bila ada baris di periodenya, yaitu bulan setelah
+// jadwal sebelumnya s.d. bulan jadwal (mis. SALARYUUCK Mar → Jan–Mar; THR Mar → Jan–Mar).
+function periodStart(prog, m) {
+  const s = ACCRUAL_SCHEDULE[stripCat(prog)];
+  if (!Array.isArray(s)) return m;
+  const prev = s.filter(x=>x<m);
+  return prev.length ? Math.max(...prev)+1 : 1;
+}
+
+function computeChecklist(rows, year) {
+  const now = new Date(), cy = now.getFullYear();
+  const last = year<cy ? 12 : year===cy ? now.getMonth() : 0; // s.d. bulan terakhir yang sudah lewat
+  const months = []; for (let m=1;m<=last;m++) months.push(m);
+  const skip = ACCRUAL_SKIP_AGENCY.map(normalizeName);
+  const ags = {};
+  rows.forEach(r=>{
+    const mk = rowMonthKey(r); if (!mk || Math.floor(mk/100)!==year) return;
+    const m = mk%100, name = gstr(r,["agency name"]); if (!name) return;
+    const prog = gstr(r,["program type","programtype"]) || "—";
+    const a = ags[name] = ags[name] || { name, first:13, progs:{} };
+    a.first = Math.min(a.first, m);
+    const c = a.progs[prog] = a.progs[prog] || {};
+    c[m] = (c[m]||0) + gnum(r,["amount"]);
+  });
+  const list = [], missing = [];
+  Object.values(ags).sort((a,b)=>a.name.localeCompare(b.name)).forEach(a=>{
+    const excluded = skip.some(x=>normalizeName(a.name).includes(x));
+    Object.keys(a.progs).sort((x,y)=>(ACCRUAL_SCHEDULE[stripCat(y)]?1:0)-(ACCRUAL_SCHEDULE[stripCat(x)]?1:0) || x.localeCompare(y)).forEach(prog=>{
+      const c = a.progs[prog];
+      const cells = months.map(m=>{
+        if (c[m]!=null) return { s:"ok", amt:c[m] };
+        const covered = () => { for (let x=periodStart(prog,m); x<=m; x++) if (c[x]!=null) return true; return false; };
+        if (!excluded && m>=a.first && isExpected(prog,m) && !covered()) { missing.push({ agency:a.name, prog, m, period:`${MONTHS_SHORT[m]} ${year}` }); return { s:"miss" }; }
+        return { s:"na" };
+      });
+      list.push({ agency:a.name, prog, cells, scheduled:!!ACCRUAL_SCHEDULE[stripCat(prog)] });
+    });
+  });
+  return { months, list, missing, last };
+}
+
+function AccrualTab({ rows, region, w, t, showToast }) {
+  const years = useMemo(()=>yearsOf(rows),[rows]);
+  const [year, setYear] = useYear(years);
+  const yearRows = useMemo(()=>rows.filter(r=>rowYear(r)===year),[rows,year]);
+  const ck = useMemo(()=>computeChecklist(rows, year),[rows,year]);
+  const acc = useMemo(()=>computeAccrual(yearRows),[yearRows]);
+  const [sort, setSort] = useState({ col:"agency", dir:"asc" });
+  const missing = useMemo(()=>{
+    const m = sort.dir==="asc"?1:-1;
+    return [...ck.missing].sort((a,b)=> sort.col==="period" ? m*(a.m-b.m) : m*String(a[sort.col]).localeCompare(String(b[sort.col])) || a.m-b.m);
+  },[ck.missing,sort]);
+  const phone = w<640;
+  const exportMissing = async () => {
+    const XLSX = await getXLSX();
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(missing.map(x=>({ Agency:x.agency, Program:x.prog, Period:x.period }))), "Missing");
+    XLSX.writeFile(wb, `agency_missing_submissions_${year}.xlsx`);
+    showToast("Missing list downloaded — Excel","success");
+  };
+  const mark = { ok:{ c:t.goodDark, bg:t.goodBg, s:"✓" }, miss:{ c:t.bad, bg:t.badBg, s:"✗" }, na:{ c:t.muted2, bg:"transparent", s:"–" } };
+  return (
+    <div style={{padding:18}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:10}}>
+        <span style={{fontWeight:700,fontSize:14,color:t.ink}}>Submission checklist</span>
+        <YearSelect years={years} value={year} onChange={setYear} t={t}/>
+        <span style={{display:"inline-flex",alignItems:"center",gap:6,padding:"3px 10px",borderRadius:99,background:ck.missing.length?t.badBg:t.goodBg,color:ck.missing.length?t.badDark:t.goodDark,fontWeight:700,fontSize:12}}>{ck.missing.length?`${ck.missing.length} missing`:"Nothing missing"}</span>
+      </div>
+      <div style={{fontSize:12,color:t.muted,lineHeight:1.55,marginBottom:10,maxWidth:"90ch"}}>
+        ✓ submitted (amount) · <span style={{color:t.bad,fontWeight:700}}>✗</span> expected but missing · – not expected. Months up to the last completed month. Expected schedule (defaults, to be confirmed): INCENTIVE, SALARY, INCENTIVE FWA, SALARY FWA monthly; SALARYUUCK once per quarter (due Mar/Jun/Sep/Dec); THR once by March. An agency is only checked for programs it has submitted this year, from its first month this year. ADHITAMA MITRA NUSANTARA is never marked missing. All Agency rows (PO + MDI); dashboard filters don&rsquo;t apply.
+      </div>
+      {!ck.list.length||!ck.months.length ? <EmptyNote t={t}>No agency data for {year}</EmptyNote> : (
+        <div style={{maxHeight:440,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10,marginBottom:16}}>
+          <table style={{width:"100%",borderCollapse:"collapse",minWidth:Math.max(phone?480:640,230+ck.months.length*72)}}>
+            <thead><tr><th style={thS(t,true)}>Agency · Program</th>{ck.months.map(m=><th key={m} style={{...thS(t),textAlign:"center"}}>{MONTHS_SHORT[m]}</th>)}</tr></thead>
+            <tbody>{ck.list.map((g,i)=>(
+              <tr key={g.agency+"\x00"+g.prog} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+                <td style={{...tdS(t,true),maxWidth:260}} title={`${g.agency} · ${g.prog}`}><strong style={{color:t.ink}}>{g.agency}</strong><span style={{color:t.muted}}> · {g.prog}</span>{!g.scheduled&&<span style={{marginLeft:6,fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted}}>(no schedule)</span>}</td>
+                {g.cells.map((c,j)=>{ const k=mark[c.s]; return (
+                  <td key={j} style={{...tdS(t),textAlign:"center",background:k.bg,color:k.c,fontWeight:700,padding:"5px 4px"}} title={c.s==="ok"?fmtRpFull(c.amt):c.s==="miss"?"Expected but missing":"Not expected"}>
+                    <div>{k.s}</div>{c.s==="ok"&&<div style={{fontVariantNumeric:"tabular-nums",fontSize:12,fontWeight:500,color:t.muted}}>{fmtRpWord(c.amt).replace("Rp ","")}</div>}
+                  </td>
+                ); })}
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
+        <span style={{fontWeight:700,fontSize:14,color:t.ink}}>Missing list <span style={{fontWeight:400,fontSize:12,color:t.muted}}>· {missing.length} items</span></span>
+        <Btn t={t} variant="outline" sm onClick={exportMissing} disabled={!missing.length}>Export Excel</Btn>
+      </div>
+      {!missing.length ? <EmptyNote t={t}>No missing submissions</EmptyNote> : (
+        <div style={{maxHeight:300,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10,marginBottom:20}}>
+          <table style={{width:"100%",borderCollapse:"collapse"}}>
+            <thead><tr>
+              <SortTh col="agency" left sort={sort} setSort={setSort} t={t}>Agency</SortTh>
+              <SortTh col="prog" left sort={sort} setSort={setSort} t={t}>Program</SortTh>
+              <SortTh col="period" left sort={sort} setSort={setSort} t={t}>Period</SortTh>
+            </tr></thead>
+            <tbody>{missing.map((x,i)=>(
+              <tr key={i} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+                <td style={{...tdS(t,true),fontWeight:600,color:t.ink}}>{x.agency}</td>
+                <td style={tdS(t,true)}>{x.prog}</td>
+                <td style={{...tdS(t,true)}}>{x.period}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
+      <AccrualEstimate acc={acc} year={year} region={region||"All Sumatera"} w={w} t={t} showToast={showToast}/>
+    </div>
+  );
+}
+
+function AccrualEstimate({ acc, year, region, w, t, showToast }) {
+  const [allMonths, setAllMonths] = useState(false);
+  if (!acc || !acc.list.length || !acc.months.length) return <EmptyNote t={t}>No agency data for {year}</EmptyNote>;
+  const months = allMonths ? acc.months : acc.months.slice(-4);
+  const rowTotal = (g) => months.reduce((a,m)=>a+(g.cells[m]?.v||0),0);
+  const phone = w<640;
+  // Unduh persis isi tabel (bulan yang sedang tampil), angka sebagai angka dengan format Rp
+  const download = async (kind) => {
+    const XLSX = await getXLSX();
+    const today = new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}).replace("Sept","Sep");
+    const head = ["Agency","Program Type",...months.map(ymLabel),"Total","Estimated months"];
+    const body = acc.list.map(g=>[g.agency, g.prog+(g.noAccrue?" (no accrual)":""), ...months.map(m=>g.cells[m]?Math.round(g.cells[m].v):null), Math.round(rowTotal(g)), months.filter(m=>g.cells[m]?.est).map(ymLabel).join(", ")]);
+    const foot = ["TOTAL","",...months.map(m=>Math.round(acc.tot[m].act+acc.tot[m].est)), Math.round(months.reduce((a,m)=>a+acc.tot[m].act+acc.tot[m].est,0)),""];
+    const pre = [[`Accrual Estimate · Agency Prepaid · ${year} · ${region}`],[`Generated ${today} · empty months estimated with the average of filled months (listed in "Estimated months") · excludes ADHITAMA MITRA NUSANTARA`],[]];
+    const ws = XLSX.utils.aoa_to_sheet([...pre, head, ...body, foot]);
+    const nr = pre.length + 1 + body.length + 1;
+    for (let r=pre.length+1; r<nr; r++) for (let c=2; c<=months.length+2; c++) { const cell = ws[XLSX.utils.encode_cell({r,c})]; if (cell && cell.t==="n") cell.z = '"Rp "#,##0'; }
+    const fname = `Accrual_Estimate_Agency_${year}${region && region!=="All Sumatera" ? "_"+region.replace(/\W+/g,"_") : ""}`;
+    if (kind==="csv") {
+      const csv = XLSX.utils.sheet_to_csv(XLSX.utils.aoa_to_sheet([head, ...body, foot]));
+      const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8"})); a.download = fname+".csv"; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+    } else {
+      ws["!merges"] = [{s:{r:0,c:0},e:{r:0,c:head.length-1}},{s:{r:1,c:0},e:{r:1,c:head.length-1}}];
+      ws["!cols"] = [{wch:34},{wch:26},...months.map(()=>({wch:17})),{wch:19},{wch:24}];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, `Accrual ${year}`);
+      XLSX.writeFile(wb, fname+".xlsx");
+    }
+    showToast?.(`Accrual estimate ${year} downloaded — ${kind==="csv"?"CSV":"Excel"}`,"success");
+  };
+  return (
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:6}}>
+        <div style={{fontWeight:700,fontSize:14,color:t.ink}}>Accrual estimate {year}</div>
+        <div style={{display:"flex",gap:8}}>
+          <Btn t={t} sm onClick={()=>download("csv")}>CSV</Btn>
+          <Btn t={t} variant="primary" sm onClick={()=>download("xlsx")}>Download Excel</Btn>
+        </div>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:10}}>
+        <div style={{fontSize:12,color:t.muted,maxWidth:"70ch",lineHeight:1.5}}>Actual amount per agency and program type. Empty months are <em>estimated</em> (italic) with the average of filled months. Not accrued: SALARYUUCK, THR, INCENTIVE MEUGANG. Excludes ADHITAMA MITRA NUSANTARA.</div>
+        {acc.months.length>4&&<Chip t={t} active={allMonths} onClick={()=>setAllMonths(v=>!v)}>{allMonths?"Last 4 months":`All ${acc.months.length} months`}</Chip>}
+      </div>
+      <div style={{maxHeight:460,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10}}>
+        <table style={{width:"100%",borderCollapse:"collapse",minWidth:phone?Math.max(480,220+months.length*110):undefined}}>
+          <thead><tr>
+            <th style={thS(t,true)}>Agency · Program</th>
+            {months.map(m=><th key={m} style={thS(t)}>{ymLabel(m)}</th>)}
+            <th style={thS(t)}>Total</th>
+          </tr></thead>
+          <tbody>{acc.list.map((g,i)=>(
+            <tr key={g.agency+"\x00"+g.prog} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+              <td style={{...tdS(t,true),maxWidth:240}} title={`${g.agency} · ${g.prog}`}><strong style={{color:t.ink}}>{g.agency}</strong><span style={{color:t.muted}}> · {g.prog}</span>{g.noAccrue&&<span style={{marginLeft:6,fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted}}>(no accrual)</span>}</td>
+              {months.map(m=>{ const c=g.cells[m]; return <td key={m} style={{...tdS(t),fontStyle:c?.est?"italic":"normal",color:c?.est?t.muted:t.ink2}}>{c?fmtRpFull(c.v):"—"}</td>; })}
+              <td style={{...tdS(t),fontWeight:700,color:t.ink}}>{fmtRpFull(rowTotal(g))}</td>
+            </tr>
+          ))}</tbody>
+          <tfoot><tr>
+            {(()=>{ const ft={...tdS(t),background:"#1E2128",color:"#fff",fontWeight:700,borderTop:`2px solid ${C.teal}`,position:"sticky",bottom:0,zIndex:3}; return <>
+              <td style={{...ft,textAlign:"left",fontFamily:"inherit",fontWeight:800}}>TOTAL</td>
+              {months.map(m=><td key={m} style={ft} title={`Actual ${fmtRpFull(acc.tot[m].act)} · Estimated ${fmtRpFull(acc.tot[m].est)}`}>{fmtRpFull(acc.tot[m].act+acc.tot[m].est)}</td>)}
+              <td style={ft}>{fmtRpFull(months.reduce((a,m)=>a+acc.tot[m].act+acc.tot[m].est,0))}</td>
+            </>; })()}
+          </tr></tfoot>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -1936,18 +3281,18 @@ function RawTab(props) {
   return (
     <Card t={t} pad={false} style={{marginBottom:14}}>
       <CardHead title="Raw Data" accent={C.magenta}
-        sub={`${filtRaw.length.toLocaleString()} records · showing ${rawKeys.length} ${showAllCols?"(all)":"primary"} columns`}
+        sub={`${plural(filtRaw.length,"record")} · showing ${rawKeys.length} ${showAllCols?"(all)":"primary"} columns`}
         t={t}
         right={
           <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
             {/* toggle: Primary columns vs All columns */}
             <div style={{display:"inline-flex",background:t.surf3,borderRadius:10,padding:3,gap:2,border:`1px solid ${t.line}`}}>
               <button onClick={()=>setShowAllCols(false)}
-                style={{fontFamily:"inherit",fontSize:11.5,fontWeight:600,padding:"5px 11px",borderRadius:8,border:0,cursor:"pointer",transition:"all .15s",background:!showAllCols?C.teal:"transparent",color:!showAllCols?"#fff":t.muted}}>
+                style={{fontFamily:"inherit",fontSize:12,fontWeight:600,padding:"5px 11px",borderRadius:8,border:0,cursor:"pointer",transition:"all .15s",background:!showAllCols?C.teal:"transparent",color:!showAllCols?"#fff":t.muted}}>
                 Primary columns
               </button>
               <button onClick={()=>setShowAllCols(true)}
-                style={{fontFamily:"inherit",fontSize:11.5,fontWeight:600,padding:"5px 11px",borderRadius:8,border:0,cursor:"pointer",transition:"all .15s",background:showAllCols?C.teal:"transparent",color:showAllCols?"#fff":t.muted}}>
+                style={{fontFamily:"inherit",fontSize:12,fontWeight:600,padding:"5px 11px",borderRadius:8,border:0,cursor:"pointer",transition:"all .15s",background:showAllCols?C.teal:"transparent",color:showAllCols?"#fff":t.muted}}>
                 All columns{hiddenCount>0?` (+${hiddenCount})`:""}
               </button>
             </div>
@@ -1960,23 +3305,23 @@ function RawTab(props) {
 
       {/* Info: export always includes all columns */}
       {!showAllCols&&(
-        <div style={{padding:"7px 16px",fontSize:11,color:t.muted,background:t.infoBg,borderBottom:`1px solid ${t.infoBd}`,display:"flex",alignItems:"center",gap:7,lineHeight:1.4}}>
+        <div style={{padding:"7px 16px",fontSize:12,color:t.muted,background:t.infoBg,borderBottom:`1px solid ${t.infoBd}`,display:"flex",alignItems:"center",gap:7,lineHeight:1.4}}>
           <span style={{color:t.info,fontWeight:700,fontSize:13}}>ℹ</span>
-          This view shows only the 10 primary columns. The Excel export always includes <strong>all columns</strong> as a complete backup.
+          This view shows only the {rawKeysMain.length} primary columns. The Excel export always includes <strong>all columns</strong> as a complete backup.
         </div>
       )}
       {narrow&&(
-        <div style={{padding:"7px 16px",fontFamily:MONO,fontSize:10,color:t.muted,background:t.surf2,borderBottom:`1px solid ${t.line}`,display:"flex",alignItems:"center",gap:6}}>
+        <div style={{padding:"7px 16px",fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted,background:t.surf2,borderBottom:`1px solid ${t.line}`,display:"flex",alignItems:"center",gap:6}}>
           <span style={{fontSize:13}}>↔</span> Scroll horizontally to view all columns
         </div>
       )}
 
       <div style={{overflowX:"auto"}}>
-        <table style={{width:"100%",borderCollapse:"collapse",fontSize:11.5,minWidth:narrow?Math.max(720,rawKeys.length*110):undefined}}>
-          <thead><tr>{rawKeys.map(k=><RawThCell key={k} k={k} rawSort={rawSort} setRawSort={setRawSort} setRawPage={setRawPage} isLeftCol={isLeftCol} t={t}/>)}<th style={{position:"sticky",top:0,zIndex:2,fontFamily:MONO,fontSize:10,letterSpacing:"0.08em",textTransform:"uppercase",color:t.muted,fontWeight:500,background:t.surf2,padding:"9px",textAlign:"center",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap"}}>Documents</th></tr></thead>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:narrow?Math.max(720,rawKeys.length*110):undefined}}>
+          <thead><tr>{rawKeys.map(k=><RawThCell key={k} k={k} rawSort={rawSort} setRawSort={setRawSort} setRawPage={setRawPage} isLeftCol={isLeftCol} t={t}/>)}{SHOW_DOCUMENT_TABS&&<th style={{position:"sticky",top:0,zIndex:2,fontSize:12,letterSpacing:"0.01em",color:t.muted,fontWeight:500,background:t.surf2,padding:"9px",textAlign:"center",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap"}}>Documents</th>}</tr></thead>
           <tbody>
             {pageRaw.length===0
-              ? <tr><td colSpan={rawKeys.length+1} style={{padding:"28px",textAlign:"center",color:t.muted,fontFamily:MONO,fontSize:12}}>No records match the current filters</td></tr>
+              ? <tr><td colSpan={rawKeys.length+(SHOW_DOCUMENT_TABS?1:0)} style={{padding:"28px",textAlign:"center",color:t.muted,fontVariantNumeric:"tabular-nums",fontSize:12}}>No records match the current filters</td></tr>
               : pageRaw.map((r,i)=><RawDataRow key={i} r={r} i={i} rawKeys={rawKeys} isLeftCol={isLeftCol} fmtCellT={fmtCellT} t={t} docs={docs} segment={src}/>)}
           </tbody>
         </table>
@@ -1984,8 +3329,8 @@ function RawTab(props) {
 
       {totalRawPages>1&&(
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,padding:"12px 16px",borderTop:`1px solid ${t.line}`,background:t.surf2,flexWrap:"wrap"}}>
-          <span style={{fontFamily:MONO,fontSize:11,color:t.muted}}>
-            Page {curRawPage} of {totalRawPages} · {filtRaw.length.toLocaleString()} records
+          <span style={{fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted}}>
+            Page {curRawPage} of {totalRawPages} · {plural(filtRaw.length,"record")}
           </span>
           <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
             <RawPageBtn label="‹ Prev" disabled={curRawPage<=1} onClick={()=>setRawPage(p=>Math.max(1,p-1))} t={t}/>
@@ -2009,7 +3354,7 @@ function RawPageBtn({ label, active, disabled, onClick, t }) {
   return (
     <button {...hE} onClick={onClick} disabled={disabled}
       style={{
-        fontFamily:MONO, fontSize:11, fontWeight:active?700:500,
+        fontVariantNumeric:"tabular-nums", fontSize:12, fontWeight:active?700:500,
         padding:"5px 11px", borderRadius:8,
         border:`1px solid ${active?C.teal:hov&&!disabled?C.tealD:t.line2}`,
         background:active?C.teal:hov&&!disabled?t.surf3:t.surf,
