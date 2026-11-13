@@ -20,7 +20,6 @@ async function getXLSX() {
   return _xlsx;
 }
 
-const FUNNEL_RAMP = ["#1d8078","#27a093","#32BCAD","#6FD0C5","#A6E3DC"];
 const C = {
   red:"#ED1C24", teal:"#32BCAD", tealD:"#27a093", tealDp:"#1d8078",
   yellow:"#FFCB05", yellowD:"#c49b00", magenta:"#C6168D", pink:"#EC008C", grey:"#4D4D4F",
@@ -111,7 +110,7 @@ function fmtDate(x) {
   if (!x) return "—";
   const d = snapMin(x instanceof Date ? x : new Date(x));
   if (isNaN(d)) return String(x);
-  return d.toLocaleDateString("en-GB", { day:"2-digit", month:"short", year:"2-digit" });
+  return d.toLocaleDateString("en-GB", { day:"2-digit", month:"short", year:"2-digit" }).replace("Sept","Sep");
 }
 
 function toDate(x) {
@@ -154,7 +153,7 @@ function fmtMonthYear(x) {
   if (!x && x!==0) return "";
   const d = toRealDate(x);
   if (!d) return typeof x==="string" ? x : String(x ?? "");
-  return d.toLocaleDateString("en-GB", { month:"short", year:"numeric" });
+  return d.toLocaleDateString("en-GB", { month:"short", year:"numeric" }).replace("Sept","Sep");
 }
 
 // Hari kerja (Senin–Jumat) dari a (eksklusif) s.d. b (inklusif). Negatif → null.
@@ -800,7 +799,6 @@ export default function PayoutTracker({
   const [searchFocus, setSearchFocus] = useState(false);
   const [searchIdx, setSearchIdx]     = useState(-1);
   const searchRef                     = useRef(null);
-  const [funnelExp, setFunnelExp]     = useState(null);
   const [bnExp, setBnExp]             = useState(null);
   const realtimeCh = useRef(null);
   const toastTmr   = useRef(null);
@@ -898,7 +896,7 @@ export default function PayoutTracker({
       else          { keepAgency  = liveRows.filter(r=>r._source==="agency"); kept = "Agency"; }
     }
     const merged = [...(partner?partner.rows:keepPartner),...(agency?agency.rows:keepAgency)];
-    const ts = new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});
+    const ts = new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}).replace("Sept","Sep");
     const fnames = unique([partner?.file,agency?.file]).join(", ")+(kept?` (${kept} unchanged)`:"");
     const res = await dbSave({ fileName:fnames, rowCount:merged.length, publishedAt:ts, rows:merged });
     stopLoad();
@@ -965,32 +963,13 @@ export default function PayoutTracker({
     const r0 = isAg ? curRaw[0] : null;
     return { rcv: !!(r0 && findCol(r0,H_BAST_RCV)), app: !!(r0 && findCol(r0,H_BAST_APP)) };
   },[isAg,curRaw]);
-  const funnelStagesRaw = useMemo(()=>{
-    const g = grand;
-    if (isAg) return [
-      ...(bastCols.rcv?[{key:"bastR",label:"BAST Received",val:g.bastR}]:[]),
-      ...(bastCols.app?[{key:"bastA",label:"BAST Approved",val:g.bastA}]:[]),
-      {key:"inv",label:"Invoice Submission",val:g.inv},
-      {key:"clv",label:"CLV",val:g.clv},
-      {key:"clr",label:"Bank Clearing",val:g.clr},
-    ];
-    return [
-      {key:"reva",label:"Reva",val:g.reva},
-      {key:"surat",label:"Surat Pemberitahuan",val:g.surat},
-      {key:"inv",label:"Invoice",val:g.inv},
-      {key:"clv",label:"CLV",val:g.clv},
-      {key:"clr",label:"Bank Clearing",val:g.clr},
-    ];
-  },[grand,isAg,bastCols]);
-  // Satu ramp teal (gelap → terang) mengikuti urutan tahap
-  const funnelStages = useMemo(()=>funnelStagesRaw.map((st,i)=>({...st,color:FUNNEL_RAMP[i],darkText:i>=3})),[funnelStagesRaw]);
 
   const bnResults = useMemo(()=>{
     if (!filtRaw.length) return [];
     return slaSet.map(p=>{
       const details=[];
       // Tiap step hanya menghitung baris dari flow-nya (step PO tidak ikut menghitung Direct Invoice, dan sebaliknya)
-      filtRaw.forEach(r=>{ const d=workDaysBetween(gcell(r,p.from),gcell(r,p.to)); if(d==null)return; details.push({days:d,po:refNo(r),name:gstr(r,["partner name","agency name"]),title:gstr(r,["project title"])||"—",month:gstr(r,["program date","month"]),amt:gnum(r,["amount"])}); });
+      filtRaw.forEach(r=>{ const d=workDaysBetween(gcell(r,p.from),gcell(r,p.to)); if(d==null)return; details.push({days:d,po:refNo(r),name:gstr(r,["partner name","agency name"]),title:gstr(r,["project title"])||"—",month:(mk=>mk?ymLabel(mk):"—")(rowMonthKey(r)),amt:gnum(r,["amount"])}); });
       const ds=details.map(d=>d.days);
       return {...p,avg:ds.length?ds.reduce((a,b)=>a+b,0)/ds.length:0,n:ds.length,ok:ds.filter(d=>d<=p.sla).length,details:details.sort((a,b)=>b.days-a.days)};
     });
@@ -1150,10 +1129,10 @@ export default function PayoutTracker({
     rawPage,setRawPage,rawPageSize,
     searchFocus,setSearchFocus,searchIdx,setSearchIdx,
     searchRef,searchSuggestions,allSuggestions,searchInput,setSearchInput,
-    funnelExp,setFunnelExp,bnExp,setBnExp,
+    bnExp,setBnExp,
     src,setSrc,activeTab,setActiveTab,
     curRaw,curAgg,filtAgg,filtRaw,grand,grandPartnerCount,
-    funnelStages,bnResults,bastCols,
+    bnResults,bastCols,
     rawKeys,rawKeysAll,rawKeysMain,showAllCols,setShowAllCols,
     pageRaw,curRawPage,totalRawPages,fmtCellT,isLeftCol,
     handleFile,publish,viewDash,clearData,exportSummary,exportRaw,showToast,
@@ -1330,7 +1309,7 @@ function SugItem({s,active,iconLabel,accentColor,onPick,t}) {
 
 function BnDetailRow({d,t}) {
   const [hov,hE]=useHover();
-  return <div {...hE} style={{display:"grid",gridTemplateColumns:"44px auto 1fr auto",gap:8,padding:"7px 12px",borderBottom:`1px solid ${t.line}`,fontSize:12,alignItems:"center",background:hov?t.surf2:"transparent",transition:"background .1s"}}><span style={{fontSize:12,fontWeight:700,color:t.bad,textAlign:"center",background:t.badBg,padding:"3px 5px",borderRadius:6}}>{d.days}d</span><span style={{fontSize:12,fontWeight:600,background:t.surf3,padding:"2px 7px",borderRadius:5,border:`1px solid ${t.line}`,whiteSpace:"nowrap",color:t.ink}}>{d.po||"—"}</span><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{d.title}</span><span style={{fontSize:12,color:t.muted,textAlign:"right",whiteSpace:"nowrap"}}>{d.month}{d.amt&&<><br/>{fmtMoney(d.amt)}</>}</span></div>;
+  return <div {...hE} style={{display:"grid",gridTemplateColumns:"44px auto 1fr auto",gap:8,padding:"7px 12px",borderBottom:`1px solid ${t.line}`,fontSize:12,alignItems:"center",background:hov?t.surf2:"transparent",transition:"background .1s"}}><span style={{fontSize:12,fontWeight:700,color:t.bad,textAlign:"center",background:t.badBg,padding:"3px 5px",borderRadius:6}}>{d.days}d</span><span style={{fontSize:12,fontWeight:600,background:t.surf3,padding:"2px 7px",borderRadius:5,border:`1px solid ${t.line}`,whiteSpace:"nowrap",color:t.ink}}>{d.po||"—"}</span><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{d.title}</span><span style={{fontSize:12,color:t.muted,textAlign:"right",whiteSpace:"nowrap"}}>{d.month}{d.amt?<><br/>{fmtRpWord(d.amt)}</>:null}</span></div>;
 }
 
 function RawThCell({k,rawSort,setRawSort,setRawPage,isLeftCol,label,t}) {
@@ -1345,51 +1324,104 @@ function RawDataRow({r,i,rawKeys,isLeftCol,fmtCellT,t,docs,segment}) {
 }
 
 // Milestone tercapai? (tanggal tahap terisi)
+/* ── Completion Funnel & Status Distribution ── */
 const STAGE_HINTS = { reva:H_REVA, bastR:H_BAST_RCV, bastA:H_BAST_APP, surat:H_SURAT, inv:H_INV, clv:H_CLV, clr:H_CLR };
 function stageDone(r, key) {
-  return !!gcell(r, STAGE_HINTS[key]||[]);
+  return key==="all" || !!gcell(r, STAGE_HINTS[key]||[]);
+}
+const recItem = (r) => { const mk = rowMonthKey(r); return { ref:invLabel(r._inv,r._invId), name:ownerName(r)||"—", title:gstr(r,["project title"])||"—", month:mk?ymLabel(mk):"—", amt:gnum(r,["amount"]) }; };
+
+function RecList({ items, tone, empty, t }) {
+  if (!items.length) return <div style={{marginTop:6,padding:"8px 10px",borderRadius:10,background:t.surf2,border:`1px solid ${t.line}`,fontSize:12,color:t.muted}}>{empty}</div>;
+  return (
+    <div style={{marginTop:6,borderRadius:10,border:`1px solid ${t.line}`,borderLeft:`3px solid ${tone}`,background:t.surf2}}>
+      <div style={{maxHeight:220,overflowY:"auto"}}>
+        {items.slice(0,50).map((r,j)=>(
+          <div key={j} style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) auto",gap:8,padding:"6px 10px",borderBottom:`1px solid ${t.line}`,fontSize:12,alignItems:"center"}}>
+            <div style={{minWidth:0}}>
+              <div style={{color:t.ink,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={r.title}>{r.title}</div>
+              <div style={{color:t.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.name} · {r.ref}</div>
+            </div>
+            <div style={{textAlign:"right",whiteSpace:"nowrap",fontVariantNumeric:"tabular-nums"}}>
+              <div style={{color:t.ink2,fontWeight:600}} title={fmtRpFull(r.amt)}>{fmtRpWord(r.amt)}</div>
+              <div style={{color:t.muted}}>{r.month}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      {items.length>50&&<div style={{padding:"5px 10px",fontSize:12,color:t.muted}}>Showing 50 of {items.length} (largest first) — see Raw Data for all</div>}
+    </div>
+  );
 }
 
-function FunnelRowItem({s,prevKey,drop,isExp,filtRaw,grand,onToggle,t}) {
-  const [hov,hE]=useHover();
-  const pending=isExp&&filtRaw.length?filtRaw.filter(r=>!stageDone(r,s.key)&&(!prevKey||stageDone(r,prevKey))).map(r=>({po:refNo(r),name:gstr(r,["partner name","agency name"])||"—",month:gstr(r,["program date"]),amt:gnum(r,["amount"])})).sort((a,b)=>b.amt-a.amt):[];
+function CompletionFunnel({ rows, isAg, bastCols, t }) {
+  const [exp, setExp] = useState(null);
+  const stages = useMemo(()=>{
+    const defs = isAg
+      ? [["all","Total"],...(bastCols?.rcv?[["bastR","BAST Received"]]:[]),...(bastCols?.app?[["bastA","BAST Approved"]]:[]),["inv","Invoice Submitted"],["clv","CLV"],["clr","Bank Cleared"]]
+      : [["all","Total"],["surat","Surat Pemberitahuan"],["inv","Invoice Submitted"],["clv","CLV"],["clr","Bank Cleared"]];
+    return defs.map(([key,label],i)=>{
+      const prev = i ? defs[i-1][0] : null;
+      const done = rows.filter(r=>stageDone(r,key));
+      const pending = prev ? rows.filter(r=>stageDone(r,prev) && !stageDone(r,key)) : [];
+      return { key, label, val:done.length, pending };
+    });
+  },[rows,isAg,bastCols]);
+  const n = rows.length || 1;
   return (
-    <div style={{borderBottom:`1px solid ${t.line}`,paddingBottom:6,marginBottom:6}}>
-      <div {...hE} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"5px 8px",borderRadius:8,background:hov?t.surf2:"transparent",transition:"background .1s"}}>
-        <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
-          <span style={{width:4,height:22,borderRadius:2,background:s.color,flexShrink:0}}/>
-          <div>
-            <div style={{fontWeight:600,fontSize:12.5,color:t.ink}}>{s.label}</div>
-            {drop>0&&(
-              <button onClick={e=>{e.stopPropagation();onToggle();}} aria-expanded={isExp}
-                style={{display:"inline-flex",alignItems:"center",gap:5,marginTop:4,fontSize:12,fontVariantNumeric:"tabular-nums",fontWeight:700,color:t.bad,background:t.badBg,border:`1px solid ${t.badBd}`,borderRadius:99,padding:"2px 9px",cursor:"pointer",lineHeight:1.4}}>
-                {drop} pending {isExp?"▲":"▼"}
-              </button>
-            )}
+    <div style={{padding:"14px 18px",display:"flex",flexDirection:"column",gap:10}}>
+      {stages.map((s,i)=>{ const p = pct(s.val,n), open = exp===s.key; return (
+        <div key={s.key}>
+          <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) auto",gap:10,alignItems:"baseline"}}>
+            <span style={{fontSize:12.5,fontWeight:600,color:t.ink}}>{s.label}</span>
+            <span style={{fontSize:12.5,fontVariantNumeric:"tabular-nums",color:t.ink2,whiteSpace:"nowrap"}}><strong style={{color:t.ink}}>{s.val.toLocaleString()}</strong> · {p}%</span>
           </div>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:5}}>
+            <div style={{flex:1,height:10,borderRadius:99,background:t.surf3,overflow:"hidden"}}><div style={{width:`${p}%`,height:"100%",borderRadius:99,background:t.chartA,opacity:1-i*0.13}}/></div>
+            {s.pending.length>0&&<button type="button" onClick={()=>setExp(e=>e===s.key?null:s.key)} aria-expanded={open}
+              style={{flexShrink:0,fontFamily:"inherit",fontSize:12,fontWeight:700,fontVariantNumeric:"tabular-nums",color:t.warnDark,background:t.warnBg,border:`1px solid ${t.warnBd}`,borderRadius:99,padding:"1px 9px",cursor:"pointer",lineHeight:1.5}}>
+              {s.pending.length} pending {open?"▲":"▼"}</button>}
+          </div>
+          {open&&<RecList items={s.pending.map(recItem).sort((a,b)=>b.amt-a.amt)} tone={t.warn} empty="Nothing pending" t={t}/>}
         </div>
-        <div style={{textAlign:"right",flexShrink:0}}>
-          <div style={{fontWeight:700,fontSize:14,fontVariantNumeric:"tabular-nums",color:t.ink}}>{s.val.toLocaleString()}</div>
-          <div style={{fontSize:12,color:t.muted}}>{pct(s.val,grand.n)}%</div>
-        </div>
+      ); })}
+      <div style={{fontSize:12,color:t.muted,lineHeight:1.5}}>Count of records that have reached each step. &ldquo;Pending&rdquo; = reached the step before but not this one; click to list them.</div>
+    </div>
+  );
+}
+
+function StatusDistribution({ rows, t }) {
+  const [exp, setExp] = useState(null);
+  const groups = useMemo(()=>{
+    const defs = [["PAID","Paid",t.good],["Payment Process","Payment Process",t.warn],["Invoice Not Submitted","Invoice Not Submitted",t.bad]];
+    const g = defs.map(([k,label,color])=>({ k, label, color, rows:[], amt:0 }));
+    const other = { k:"other", label:"Other / blank", color:t.muted2||t.muted, rows:[], amt:0 };
+    rows.forEach(r=>{ const st = rowStatus(r); const x = g.find(z=>z.k===st) || other; x.rows.push(r); x.amt += gnum(r,["amount"]); });
+    return other.rows.length ? [...g, other] : g;
+  },[rows,t]);
+  const n = rows.length || 1, R = 46, SW = 16, C0 = 2*Math.PI*R;
+  let off = 0;
+  return (
+    <div style={{padding:"14px 18px",display:"flex",gap:18,alignItems:"flex-start",flexWrap:"wrap"}}>
+      <svg width={120} height={120} viewBox="0 0 120 120" role="img" aria-label="Status distribution" style={{flexShrink:0}}>
+        <circle cx={60} cy={60} r={R} fill="none" stroke={t.surf3} strokeWidth={SW}/>
+        {groups.map(g=>{ const len = g.rows.length/n*C0; const el = len>0 ? <circle key={g.k} cx={60} cy={60} r={R} fill="none" stroke={g.color} strokeWidth={SW} strokeDasharray={`${Math.max(0,len-1.5)} ${C0}`} strokeDashoffset={-off} transform="rotate(-90 60 60)"/> : null; off += len; return el; })}
+        <text x={60} y={58} textAnchor="middle" fontSize={20} fontWeight={800} fill={t.ink} fontFamily="inherit" style={{fontVariantNumeric:"tabular-nums"}}>{rows.length.toLocaleString()}</text>
+        <text x={60} y={76} textAnchor="middle" fontSize={12} fill={t.muted} fontFamily="inherit">records</text>
+      </svg>
+      <div style={{flex:"1 1 220px",minWidth:0,display:"flex",flexDirection:"column",gap:8}}>
+        {groups.map(g=>{ const open = exp===g.k; return (
+          <div key={g.k}>
+            <button type="button" onClick={()=>g.rows.length&&setExp(e=>e===g.k?null:g.k)} aria-expanded={open} disabled={!g.rows.length}
+              style={{width:"100%",display:"grid",gridTemplateColumns:"auto minmax(0,1fr) auto",gap:8,alignItems:"center",padding:"7px 10px",borderRadius:10,border:`1px solid ${open?g.color:t.line}`,background:t.surf2,cursor:g.rows.length?"pointer":"default",fontFamily:"inherit",textAlign:"left"}}>
+              <span style={{width:10,height:10,borderRadius:3,background:g.color}}/>
+              <span style={{fontSize:12.5,fontWeight:600,color:t.ink,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{g.label}</span>
+              <span style={{fontSize:12.5,color:t.ink2,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}><strong style={{color:t.ink}}>{g.rows.length.toLocaleString()}</strong> · {pct(g.rows.length,n)}% · <span title={fmtRpFull(g.amt)}>{fmtRpWord(g.amt)}</span></span>
+            </button>
+            {open&&<RecList items={g.rows.map(recItem).sort((a,b)=>b.amt-a.amt)} tone={g.color} empty="No records" t={t}/>}
+          </div>
+        ); })}
       </div>
-      {isExp&&pending.length>0&&(
-        <div style={{marginTop:6,borderRadius:10,background:t.badBg,borderTop:`1px solid ${t.badBd}`,borderRight:`1px solid ${t.badBd}`,borderBottom:`1px solid ${t.badBd}`,borderLeft:`3px solid ${t.bad}`,padding:"8px 10px"}}>
-          <div style={{fontSize:12,color:t.bad,letterSpacing:"0.01em",marginBottom:5,fontWeight:600}}>Pending · {pending.length} records</div>
-          <div style={{display:"flex",flexDirection:"column",gap:4,maxHeight:200,overflowY:"auto"}}>
-            {pending.slice(0,30).map((r,j)=>(
-              <div key={j} style={{display:"grid",gridTemplateColumns:"auto 1fr auto",gap:7,padding:"4px 6px",borderBottom:`1px solid ${t.badBd}`,fontSize:12,alignItems:"start"}}>
-                <span style={{fontVariantNumeric:"tabular-nums",fontSize:12,fontWeight:700,color:t.bad}}>{r.po||"—"}</span>
-                <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{r.name}</span>
-                <span style={{fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted,textAlign:"right",whiteSpace:"nowrap"}}>{r.month}{r.amt&&<><br/>{fmtMoney(r.amt)}</>}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      {isExp&&pending.length===0&&(
-        <div style={{marginTop:6,padding:"8px 10px",borderRadius:10,background:t.surf2,border:`1px solid ${t.line}`,fontSize:12,fontStyle:"italic",color:t.muted}}>No pending records match the current filters.</div>
-      )}
     </div>
   );
 }
@@ -1718,42 +1750,41 @@ function computeInsights(rows) {
   const wk0 = new Date(today.getTime() - ((today.getDay()+6)%7)*DAY); // Senin minggu ini
   const wk1 = new Date(wk0.getTime()+7*DAY), wk2 = new Date(wk0.getTime()+14*DAY);
   const k = { total:0, n:rows.length, paid:0, paidN:0, out:0, outN:0, notSub:0, notSubAmt:0, cycSum:0, cycN:0 };
-  const out = [], due = { this:[], next:[] }, notSub = [];
-  const owners = {};
+  const open = [], owners = {};
   rows.forEach(r=>{
-    const amt = gnum(r,["amount"]), st = rowStatus(r), flow = rowFlow(r), name = ownerName(r) || "—";
-    const invV = gcell(r,H_INV), clrV = gcell(r,H_CLR);
-    const paid = isPaidStatus(st), proc = isProcessStatus(st);
+    const amt = gnum(r,["amount"]), st = rowStatus(r), name = ownerName(r) || "—";
+    const invV = gcell(r,H_INV_COUPA,null) || gcell(r,H_INV), clrV = gcell(r,H_CLR);
+    const paid = isPaidStatus(st), proc = isProcessStatus(st), ns = isNotSubStatus(st);
     k.total += amt;
     if (paid) { k.paid += amt; k.paidN++; }
     if (proc) { k.out += amt; k.outN++; }
-    if (isNotSubStatus(st)) { k.notSub++; k.notSubAmt += amt; }
+    if (ns) { k.notSub++; k.notSubAmt += amt; }
+    const invD = toDate(invV), clrD = toDate(clrV), clvD = toDate(gcell(r,H_CLV)), estRaw = toDate(gcell(r,H_EST));
+    const est = estRaw ? dayStart(estRaw) : null;
     const cyc = workDaysBetween(invV, clrV);
     if (cyc!=null) { k.cycSum += cyc; k.cycN++; }
-    if (!owners[name]) owners[name] = { name, total:0, paid:0, out:0, ns:0, other:0, n:0 };
+    if (!owners[name]) owners[name] = { name, total:0, paid:0, n:0, open:0, openAmt:0, cycSum:0, cycN:0, onT:0, onN:0, late:0, oldest:null };
     const o = owners[name]; o.total += amt; o.n++;
-    if (paid) o.paid += amt; else if (proc) o.out += amt; else if (isNotSubStatus(st)) o.ns += amt; else o.other += amt;
-    if (!proc && (paid || clrV)) return;
-    const invD = toDate(invV), estD = toDate(gcell(r,H_EST));
-    const days = invD ? Math.max(0, Math.round((today - dayStart(invD))/DAY)) : null;
-    const isAgRow = r._source==="agency";
-    const stage = (isNotSubStatus(st) || !invV) ? (isAgRow ? (gcell(r,H_BAST_APP) ? "Waiting invoice submission" : gcell(r,H_BAST_RCV) ? "Waiting BAST approval" : "Waiting for BAST") : "Waiting for invoice")
-      : !gcell(r,H_CLV) ? "CLV verification"
-      : !clrV ? "Waiting for bank" : (st || "—");
+    if (paid) o.paid += amt;
+    if (cyc!=null) { o.cycSum += cyc; o.cycN++; }
+    if (clrD && est) { o.onN++; if (dayStart(clrD) <= est) o.onT++; }
+    if (paid || clrV) return;
+    // Masih terbuka (belum dibayar & belum clearing)
+    const sofar = invD ? workDaysBetween(invD, today) : null;              // Invoice → hari ini (hari kerja)
+    const late = est && est < today ? (workDaysBetween(est, today) || 0) : 0; // hari kerja lewat Est. Date
     const mk = rowMonthKey(r);
-    const item = { name, title:gstr(r,["project title"])||"—", ref:refNo(r), inv:r._inv, invId:r._invId, flow, amt, days, est:estD?dayStart(estD):null, status:st, stage, period:mk?ymLabel(mk):"—" };
-    if (isNotSubStatus(st)) notSub.push(item);
-    if (proc) { item.bucket = days==null ? "nod" : days<=14 ? "b0" : days<=30 ? "b15" : "b30"; out.push(item); }
-    if (item.est && !paid && !clrV) { if (item.est>=wk0 && item.est<wk1) due.this.push(item); else if (item.est>=wk1 && item.est<wk2) due.next.push(item); }
+    const item = { name, title:gstr(r,["project title"])||"—", inv:r._inv, invId:r._invId, amt, status:st, ns, proc,
+      invD, clvD, est, cyc:sofar, late, period:mk?ymLabel(mk):"—" };
+    open.push(item);
+    o.open++; o.openAmt += amt;
+    if (late>0) o.late++;
+    if (sofar!=null && (o.oldest==null || sofar>o.oldest)) o.oldest = sofar;
   });
-  out.sort((a,b)=>(b.days??-1)-(a.days??-1));
-  due.this.sort((a,b)=>a.est-b.est); due.next.sort((a,b)=>a.est-b.est);
-  notSub.sort((a,b)=>(a.est||Infinity)-(b.est||Infinity));
   // rentang bulan program di data (untuk menjelaskan cakupan KPI)
   const mks = rows.map(rowMonthKey).filter(Boolean);
   const lo = mks.length ? Math.min(...mks) : 0, hi = mks.length ? Math.max(...mks) : 0;
   const monthSpan = lo ? (lo===hi ? ymLabel(lo) : `${ymLabel(lo)} – ${ymLabel(hi)}`) : "";
-  return { k, out, due, notSub, owners:Object.values(owners), wk0, wk1, wk2, monthSpan };
+  return { k, open, owners:Object.values(owners), wk0, wk1, wk2, today, monthSpan };
 }
 
 /* ── KPI: 4 kartu (nominal besar + jumlah kecil) ── */
@@ -1815,32 +1846,15 @@ function SlaStrip({ steps, bnExp, setBnExp, t }) {
 }
 
 function DashTab(props) {
-  const { t, w, grand, grandPartnerCount, filtAgg, filtRaw, src, funnelStages, bnResults, funnelExp, setFunnelExp, bnExp, setBnExp } = props;
+  const { t, w, grandPartnerCount, filtAgg, filtRaw, src, bnResults, bnExp, setBnExp } = props;
   const isAg = src==="agency";
   const ins = useMemo(()=>computeInsights(filtRaw),[filtRaw]);
   const monthsCount = useMemo(()=>unique(filtAgg.map(r=>r.month)).length,[filtAgg]);
-  const flowLbl = isAg ? "BAST Received → BAST Approved → Invoice Submission → CLV → Bank Clearing" : "Reva → Surat Pemberitahuan → Invoice → CLV → Bank Clearing";
   const bastMissing = isAg && props.bastCols && (!props.bastCols.rcv || !props.bastCols.app);
   return (
     <>
       <KpiCards ins={ins} partnerCount={grandPartnerCount} monthsCount={monthsCount} isAg={isAg} w={w} t={t}/>
-      <div style={{display:"grid",gridTemplateColumns:w>=1000&&isAg?"1fr 1fr":"1fr",gap:14,marginBottom:14}}>
-        {/* Funnel hanya untuk Agency; Partner memakai Success Rate di tab Distribution Fee & Champions */}
-        {isAg&&<Card t={t} pad={false}>
-          <CardHead title="Payment Progress" accent={C.teal} sub={`${flowLbl} · click "pending" to see records`} t={t}/>
-          <div style={{padding:18,display:"flex",gap:18,alignItems:"flex-start",flexWrap:"wrap"}}>
-            {w>=480&&<div style={{flexShrink:0}}>
-              {(()=>{
-                const W=150,H=Math.max(110,funnelStages.length*40),pad=4,sH=(H-pad*2)/funnelStages.length,maxV=grand.n||1;
-                return <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{display:"block"}} role="img" aria-label="Payment funnel">{funnelStages.map((s,i)=>{ const w1=(s.val/maxV)*(W-10); const nv=funnelStages[i+1]?funnelStages[i+1].val:s.val; const w2=(nv/maxV)*(W-10); const x1a=(W-w1)/2,x1b=x1a+w1,x2a=(W-w2)/2,x2b=x2a+w2,y1=pad+i*sH,y2=y1+sH-1; const darkTxt=!!s.darkText; return <g key={s.key}><path d={`M${x1a},${y1} L${x1b},${y1} L${x2b},${y2} L${x2a},${y2} Z`} fill={s.color} opacity={.95}/><text x={W/2} y={y1+sH/2+4} textAnchor="middle" fill={darkTxt?"#1a1a1a":"#fff"} fontSize={12} fontWeight="700" fontFamily="inherit">{pct(s.val,grand.n)}%</text></g>; })}</svg>;
-              })()}
-            </div>}
-            <div style={{flex:1,minWidth:200}}>
-              <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:t.muted,padding:"0 8px 6px"}}><span>Total records</span><strong style={{fontVariantNumeric:"tabular-nums",color:t.ink}}>{grand.n.toLocaleString()}</strong></div>
-              {funnelStages.map((s,i)=>{ const prev=i>0?funnelStages[i-1]:null; const drop=(prev?prev.val:grand.n)-s.val; return <FunnelRowItem key={s.key} s={s} prevKey={prev?prev.key:null} drop={drop} isExp={funnelExp===s.key} filtRaw={filtRaw} grand={grand} onToggle={()=>setFunnelExp(k=>k===s.key?null:s.key)} t={t}/>; })}
-            </div>
-          </div>
-        </Card>}
+      <div style={{display:"grid",gridTemplateColumns:"1fr",gap:14,marginBottom:14}}>
         <Card t={t} pad={false}>
           <CardHead title="SLA by Step" accent={C.red} sub="Avg working days vs target · % on time · click a step for the longest cases" t={t}/>
           {bastMissing&&<div style={{margin:"12px 18px 0",padding:"8px 12px",borderRadius:10,background:t.infoBg,border:`1px solid ${t.infoBd}`,fontSize:12.5,color:t.ink2,lineHeight:1.5}}>BAST steps need <strong>BAST Received Date</strong> and <strong>BAST Approved Date</strong> columns in the Agency sheet. They are not in the uploaded data yet, so those steps show &ldquo;no data&rdquo; and are left out of the funnel.</div>}
@@ -1850,6 +1864,16 @@ function DashTab(props) {
               {[{c:t.good,l:"≥80% on time"},{c:t.warn,l:"50–79%"},{c:t.bad,l:"<50%"}].map(x=><span key={x.l} style={{display:"inline-flex",alignItems:"center",gap:5}}><span style={{width:8,height:8,borderRadius:2,background:x.c}}/>{x.l}</span>)}
             </div>
           </div>
+        </Card>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:w>=1000?"minmax(0,1fr) minmax(0,1fr)":"1fr",gap:14,marginBottom:14,alignItems:"start"}}>
+        <Card t={t} pad={false}>
+          <CardHead title="Completion Funnel" sub={isAg?`Total → ${props.bastCols?.rcv||props.bastCols?.app?"BAST → ":""}Invoice Submitted → CLV → Bank Cleared · click "pending" to list records`:"Total → Surat Pemberitahuan → Invoice Submitted → CLV → Bank Cleared · click \"pending\" to list records"} t={t}/>
+          {filtRaw.length===0?<EmptyNote t={t}>No data available</EmptyNote>:<CompletionFunnel rows={filtRaw} isAg={isAg} bastCols={props.bastCols} t={t}/>}
+        </Card>
+        <Card t={t} pad={false}>
+          <CardHead title="Status Distribution" sub="Records by payment status · click a status to list its records" t={t}/>
+          {filtRaw.length===0?<EmptyNote t={t}>No data available</EmptyNote>:<StatusDistribution rows={filtRaw} t={t}/>}
         </Card>
       </div>
       <DetailsTabs {...props} ins={ins} isAg={isAg}/>
@@ -1862,7 +1886,7 @@ function DetailsTabs(props) {
   const { t, w, ins, isAg, exportSummary } = props;
   const [tab, setTab] = useState("out");
   const tabs = [
-    { id:"out",  label:"Outstanding", count:ins.out.length },
+    { id:"out",  label:"Outstanding", count:ins.open.length },
     { id:"own",  label:isAg?"Agencies":"Partners", count:ins.owners.length },
   ];
   const cur = tabs.some(x=>x.id===tab) ? tab : "out";
@@ -1877,7 +1901,7 @@ function DetailsTabs(props) {
           <Btn t={t} variant="primary" sm onClick={()=>exportSummary("xlsx")} title="Filtered monthly summary as Excel">Excel</Btn>
         </div>
       </div>
-      {cur==="out"  && <OutstandingTab ins={ins} isAg={isAg} w={w} t={t}/>}
+      {cur==="out"  && <OutstandingTab ins={ins} isAg={isAg} w={w} t={t} showToast={props.showToast}/>}
       {cur==="own"  && <PartnersTab ins={ins} isAg={isAg} w={w} t={t}/>}
     </Card>
   );
@@ -1888,127 +1912,185 @@ function Chip({ active, onClick, children, t, tone }) {
   return <button type="button" onClick={onClick} aria-pressed={active} style={{fontFamily:"inherit",fontSize:12,fontWeight:600,padding:"5px 12px",borderRadius:99,cursor:"pointer",whiteSpace:"nowrap",border:`1px solid ${active?ac:t.line2}`,background:active?ac:t.surf,color:active?"#fff":t.ink2,transition:"all .15s"}}>{children}</button>;
 }
 
-function SortTh({ col, sort, setSort, left, children, t }) {
+function SortTh({ col, sort, setSort, left, wrap, children, t }) {
   const on = sort.col===col;
-  return <th onClick={()=>setSort(s=>({col,dir:s.col===col&&s.dir==="desc"?"asc":"desc"}))} aria-sort={on?(sort.dir==="asc"?"ascending":"descending"):"none"} style={{...thS(t,left),cursor:"pointer",color:on?C.teal:t.muted,fontWeight:on?700:500}}>{children}{on?(sort.dir==="asc"?" ▲":" ▼"):""}</th>;
+  return <th onClick={()=>setSort(s=>({col,dir:s.col===col&&s.dir==="desc"?"asc":"desc"}))} aria-sort={on?(sort.dir==="asc"?"ascending":"descending"):"none"} style={{...thS(t,left),...(wrap?{whiteSpace:"normal",lineHeight:1.25,minWidth:64,maxWidth:96}:{}),cursor:"pointer",color:on?C.teal:t.muted,fontWeight:on?700:500}}>{children}{on?(sort.dir==="asc"?" ▲":" ▼"):""}</th>;
 }
 
 function PartnersTab({ ins, isAg, w, t }) {
-  const [sort, setSort] = useState({ col:"total", dir:"desc" });
+  const [sort, setSort] = useState({ col:"late", dir:"desc" });
   const list = useMemo(()=>{
-    const arr = ins.owners.map(o=>({ ...o, pPaid: o.total ? o.paid/o.total*100 : 0 }));
+    const arr = ins.owners.map(o=>({ ...o,
+      pPaid: o.total ? o.paid/o.total*100 : 0,
+      avg: o.cycN ? o.cycSum/o.cycN : null,
+      pOn: o.onN ? o.onT/o.onN*100 : null }));
     const { col, dir } = sort, m = dir==="asc" ? 1 : -1;
-    arr.sort((a,b)=>col==="name" ? m*a.name.localeCompare(b.name) : m*(a[col]-b[col]));
+    const v = (o) => o[col]==null ? -1 : o[col];
+    arr.sort((a,b)=> col==="name" ? m*a.name.localeCompare(b.name) : (m*(v(a)-v(b)) || b.open-a.open || b.total-a.total));
     return arr;
   },[ins.owners,sort]);
   const phone = w<640;
-  const hasOther = list.some(o=>o.other>0);
   if (!list.length) return <EmptyNote t={t}>No data available</EmptyNote>;
-  const amt = (v, color) => <td style={{...tdS(t),color:v?(color||t.ink2):t.muted}} title={v?fmtRpFull(v):undefined}>{v?fmtMiliar(v):"—"}</td>;
+  const anyOn = list.some(o=>o.onN>0);
+  const num = (x, color, title) => <td style={{...tdS(t),color:x==null||x===0?t.muted:(color||t.ink2)}} title={title}>{x==null?"—":x}</td>;
   return (
     <div style={{padding:"12px 16px 16px"}}>
-      <div style={{fontSize:12.5,color:t.muted,marginBottom:10,lineHeight:1.5}}>
-        Total = <strong style={{color:t.ink2}}>Paid</strong> + <strong style={{color:t.warnDark}}>In process</strong> (Payment Process) + <strong style={{color:t.badDark}}>Not submitted</strong> (Invoice Not Submitted){hasOther?" + other status":""}. Amounts in Rp; hover for the full value.
-      </div>
-      <div style={{maxHeight:460,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10,width:"fit-content",maxWidth:"100%"}}>
-        <table style={{borderCollapse:"collapse"}}>
+      <div style={{maxHeight:460,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10}}>
+        <table style={{width:"100%",borderCollapse:"collapse"}}>
           <thead><tr>
             <SortTh col="name" left sort={sort} setSort={setSort} t={t}>{isAg?"Agency":"Partner"}</SortTh>
+            {!phone&&<SortTh col="n" sort={sort} setSort={setSort} t={t}>Invoices</SortTh>}
             <SortTh col="total" sort={sort} setSort={setSort} t={t}>Total</SortTh>
-            {!phone&&<SortTh col="paid" sort={sort} setSort={setSort} t={t}>Paid</SortTh>}
-            <SortTh col="out" sort={sort} setSort={setSort} t={t}>In process</SortTh>
-            {!phone&&<SortTh col="ns" sort={sort} setSort={setSort} t={t}>Not submitted</SortTh>}
-            {!phone&&hasOther&&<SortTh col="other" sort={sort} setSort={setSort} t={t}>Other</SortTh>}
-            <SortTh col="pPaid" sort={sort} setSort={setSort} t={t}>% Paid</SortTh>
+            {!phone&&<SortTh col="pPaid" sort={sort} setSort={setSort} t={t}>Paid %</SortTh>}
+            <SortTh col="open" sort={sort} setSort={setSort} t={t}>Open</SortTh>
+            {!phone&&<SortTh col="avg" wrap sort={sort} setSort={setSort} t={t}>Avg Invoice→ Clearing</SortTh>}
+            {!phone&&<SortTh col="pOn" wrap sort={sort} setSort={setSort} t={t}>% on time</SortTh>}
+            <SortTh col="late" wrap sort={sort} setSort={setSort} t={t}>Late now</SortTh>
+            {!phone&&<SortTh col="oldest" wrap sort={sort} setSort={setSort} t={t}>Oldest open</SortTh>}
           </tr></thead>
-          <tbody>{list.map((o,i)=>{ const p=Math.round(o.pPaid); return (
+          <tbody>{list.map((o,i)=>(
             <tr key={o.name} style={{background:i%2===1?t.rowStripe:"transparent"}}>
-              <td style={{...tdS(t,true),fontWeight:600,color:t.ink,maxWidth:phone?150:300,paddingRight:24}} title={o.name}>{o.name}</td>
+              <td style={{...tdS(t,true),fontWeight:600,color:t.ink,maxWidth:phone?150:260}} title={o.name}>{o.name}</td>
+              {!phone&&num(o.n)}
               <td style={{...tdS(t),fontWeight:700,color:t.ink}} title={fmtRpFull(o.total)}>{fmtMiliar(o.total)}</td>
-              {!phone&&amt(o.paid)}
-              {amt(o.out, t.warnDark)}
-              {!phone&&amt(o.ns, t.badDark)}
-              {!phone&&hasOther&&amt(o.other)}
-              <td style={tdS(t)} title={`Paid ${fmtRpFull(o.paid)} of ${fmtRpFull(o.total)}`}><PctBadge val={p} t={t}/></td>
+              {!phone&&<td style={tdS(t)} title={`Paid ${fmtRpFull(o.paid)} of ${fmtRpFull(o.total)}`}><PctBadge val={Math.round(o.pPaid)} t={t}/></td>}
+              {num(o.open, t.warnDark, o.open?`${fmtRpFull(o.openAmt)} in process or not submitted`:undefined)}
+              {!phone&&num(o.avg==null?null:`${o.avg.toFixed(1).replace(".",",")} d`, null, o.cycN?`Average of ${plural(o.cycN,"cleared invoice")}, working days`:undefined)}
+              {!phone&&<td style={tdS(t)} title={o.onN?`${o.onT} of ${o.onN} cleared on or before Est. Date`:"No cleared invoice has an Est. Date"}>{o.pOn==null?<span style={{color:t.muted}}>—</span>:<PctBadge val={Math.round(o.pOn)} t={t}/>}</td>}
+              {num(o.late, t.badDark)}
+              {!phone&&num(o.oldest==null?null:`${o.oldest} d`, o.oldest>15?t.badDark:o.oldest>5?t.warnDark:null, o.oldest!=null?"Working days since the invoice date of the oldest open invoice":undefined)}
             </tr>
-          ); })}</tbody>
+          ))}</tbody>
         </table>
+      </div>
+      <div style={{fontSize:12,color:t.muted,marginTop:8,lineHeight:1.6}}>
+        Open = in process + not submitted. Avg Invoice→Clearing = working days for cleared invoices. Late now = open invoices past their Est. Date. Oldest open = working days since the invoice date of the oldest open invoice.
+        {!anyOn&&" % on time needs an Est. Date on cleared invoices; the data only has Est. Dates on open invoices, so it shows “—”."}
       </div>
     </div>
   );
 }
 
-/* ── Outstanding: daftar tindak lanjut ── */
-function OutstandingTab({ ins, isAg, w, t }) {
-  const [view, setView] = useState("all"); // all | b0 | b15 | b30 | nod | notsub | this | next
-  const cnt = (b) => ins.out.filter(x=>x.bucket===b).length;
+const inWeek = (x, a, b) => !!x.est && x.est>=a && x.est<b;
+const OUT_VIEWS = [
+  { id:"all",    label:"All",            f:()=>true },
+  { id:"late",   label:"Late",           f:(x)=>x.late>0, tone:C.red },
+  { id:"this",   label:"Due this week",  f:(x,ins)=>inWeek(x,ins.wk0,ins.wk1) },
+  { id:"next",   label:"Due next week",  f:(x,ins)=>inWeek(x,ins.wk1,ins.wk2) },
+  { id:"notsub", label:"Not submitted",  f:(x)=>x.ns, tone:C.red },
+];
+/* ── Outstanding: tagihan yang belum clearing, dengan tanggal tiap tahap + keterlambatan ── */
+function OutstandingTab({ ins, isAg, w, t, showToast }) {
+  const [view, setView] = useState("all"); // all | late | this | next | notsub
+  const [sort, setSort] = useState({ col:"late", dir:"desc" });
+  const [grouped, setGrouped] = useState(false);
+  const [openG, setOpenG] = useState({});
+  const views = OUT_VIEWS;
+  const cur = views.find(v=>v.id===view) || views[0];
   const rows = useMemo(()=>{
-    if (view==="this" || view==="next") return ins.due[view];
-    if (view==="notsub") return ins.notSub;
-    return view==="all" ? ins.out : ins.out.filter(x=>x.bucket===view);
-  },[ins,view]);
+    const { col, dir } = sort, m = dir==="asc" ? 1 : -1;
+    const f = (OUT_VIEWS.find(v=>v.id===view) || OUT_VIEWS[0]).f;
+    const val = (x) => col==="late" ? x.late : col==="cyc" ? (x.cyc ?? -1) : col==="amt" ? x.amt : col==="est" ? (x.est ? x.est.getTime() : Infinity) : 0;
+    return ins.open.filter(x=>f(x,ins)).sort((a,b)=> col==="name" ? m*a.name.localeCompare(b.name) : (m*(val(a)-val(b)) || b.amt-a.amt));
+  },[ins,view,sort]);
+  const groups = useMemo(()=>{
+    if (!grouped) return [];
+    const g = {};
+    rows.forEach(x=>{ (g[x.name] ||= { name:x.name, items:[], amt:0, late:0 }); g[x.name].items.push(x); g[x.name].amt += x.amt; if (x.late>0) g[x.name].late++; });
+    return Object.values(g).sort((a,b)=>b.late-a.late || b.amt-a.amt);
+  },[rows,grouped]);
   const amt = rows.reduce((a,r)=>a+r.amt,0);
   const phone = w<640;
-  const showInv = !phone && rows.some(a=>a.inv||a.invId); // kolom Invoice disembunyikan bila kosong semua
-  const today = dayStart(new Date());
-  const dayClr = (d) => d==null ? t.muted : d>30 ? t.bad : d>14 ? t.warnDark : t.ink2;
-  const title = view==="this" ? "Due this week" : view==="next" ? "Due next week" : view==="notsub" ? "Invoice not submitted" : "Total outstanding";
-  const sub = view==="this"||view==="next"
-    ? `Unpaid, Est. Pay Date ${fmtDate(view==="this"?ins.wk0:ins.wk1)} – ${fmtDate(new Date((view==="this"?ins.wk1:ins.wk2).getTime()-DAY))}`
-    : view==="notsub" ? "Status Invoice Not Submitted" : "Status Payment Process · oldest first";
-  // Sorotan kuning dilapis di atas warna header solid → tetap opak di tema terang & gelap
-  const estTh = { ...thS(t,true), background:`linear-gradient(${C.yellow}40,${C.yellow}40),${t.surf2}`, color:t.ink, fontWeight:700 };
+  const own = isAg ? "Agency" : "Partner";
+  const pend = <span style={{display:"inline-block",padding:"1px 6px",borderRadius:99,background:t.warnBg,border:`1px solid ${t.warnBd}`,color:t.warnDark,fontSize:12,fontWeight:600}}>pending</span>;
+  const dt = (d) => d ? fmtDayMon(d) : pend;
+  const estBg = `linear-gradient(${C.yellow}40,${C.yellow}40),${t.surf2}`;
+  const th = (left) => ({ ...thS(t,left), padding:"8px 8px" });
+  const td = (left) => ({ ...tdS(t,left), padding:"7px 8px" });
+  const thW = { ...th(false), whiteSpace:"normal", lineHeight:1.25, minWidth:64, maxWidth:96 };
+  const cols = phone ? 4 : 9;
+  const exportXlsx = async () => {
+    const XLSX = await getXLSX();
+    const data = rows.map(x=>({ "Invoice Number":x.inv||"", "Invoice ID":x.invId||"", "Project Title":x.title, [own]:x.name, Period:x.period, Status:x.status||"",
+      Amount:Math.round(x.amt), "Invoice Date":fmtDayMon(x.invD)||"pending", "CLV Date":fmtDayMon(x.clvD)||"pending", "Est. Date":fmtDayMon(x.est)||"",
+      "Clearing Bank Date":"pending", "Invoice→Clearing (working days so far)":x.cyc??"", "Late (working days past Est. Date)":x.est?x.late:"" }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws["!cols"] = [18,12,48,32,10,20,16,14,14,14,18,16,16].map(wch=>({wch}));
+    for (let r=1; r<=data.length; r++) { const c = ws[XLSX.utils.encode_cell({r,c:6})]; if (c && c.t==="n") c.z = '"Rp "#,##0'; }
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Outstanding");
+    XLSX.writeFile(wb, `${isAg?"agency":"partner"}_outstanding_${cur.id}_${new Date().toISOString().slice(0,10)}.xlsx`);
+    showToast?.("Outstanding list downloaded — Excel","success");
+  };
+  const renderRow = (x, i) => (
+    <tr key={i} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+      <td style={{...td(true),maxWidth:phone?110:140}} title={invLabel(x.inv,x.invId)}>
+        <div style={{color:t.ink,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis"}}>{x.inv || (x.invId ? "—" : pend)}</div>
+        {x.invId&&<div style={{fontSize:12,color:t.muted}}>ID {x.invId}</div>}
+      </td>
+      <td style={{...td(true),maxWidth:phone?150:w<1250?170:260}} title={`${x.title}\n${x.name}`}>
+        <div style={{color:t.ink2,overflow:"hidden",textOverflow:"ellipsis"}}>{x.title}</div>
+        {!grouped&&<div style={{fontSize:12,color:t.muted,overflow:"hidden",textOverflow:"ellipsis"}}>{x.name}</div>}
+      </td>
+      <td style={{...td(false),color:t.ink}} title={fmtRpFull(x.amt)}>{fmtRpWord(x.amt)}</td>
+      {!phone&&<td style={td(false)}>{x.ns ? pend : dt(x.invD)}</td>}
+      {!phone&&<td style={td(false)}>{dt(x.clvD)}</td>}
+      {!phone&&<td style={{...td(false),fontWeight:700,color:x.late>0?t.bad:t.ink,background:x.late>0?t.badBg:`${C.yellow}14`}}>{x.est?fmtDayMon(x.est):"—"}</td>}
+      {!phone&&<td style={td(false)}>{pend}</td>}
+      {!phone&&<td style={{...td(false),color:t.ink2}} title={x.invD?`${fmtDayMon(x.invD)} → today`:"No invoice date yet"}>{x.cyc==null?"—":plural(x.cyc,"day")}</td>}
+      <td style={td(false)}>{!x.est ? <span style={{color:t.muted}}>—</span> : x.late>0
+        ? <span style={{display:"inline-block",padding:"1px 8px",borderRadius:99,background:t.badBg,border:`1px solid ${t.badBd}`,color:t.badDark,fontSize:12,fontWeight:700}}>{plural(x.late,"day")} late</span>
+        : <span style={{fontSize:12,color:t.goodDark,fontWeight:600}}>on track</span>}</td>
+    </tr>
+  );
   return (
     <div style={{padding:18}}>
       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:12}}>
-        <Chip t={t} active={view==="all"} onClick={()=>setView("all")}>All outstanding · {ins.out.length}</Chip>
-        <Chip t={t} active={view==="b0"} onClick={()=>setView("b0")}>0–14 days · {cnt("b0")}</Chip>
-        <Chip t={t} active={view==="b15"} onClick={()=>setView("b15")} tone={C.yellowD}>15–30 days · {cnt("b15")}</Chip>
-        <Chip t={t} active={view==="b30"} onClick={()=>setView("b30")} tone={C.red}>&gt;30 days · {cnt("b30")}</Chip>
-        {cnt("nod")>0&&<Chip t={t} active={view==="nod"} onClick={()=>setView("nod")} tone={C.grey}>No invoice date · {cnt("nod")}</Chip>}
-        <Chip t={t} active={view==="notsub"} onClick={()=>setView("notsub")} tone={C.red}>Not submitted · {ins.notSub.length}</Chip>
+        {views.map(v=><Chip key={v.id} t={t} tone={v.tone} active={view===v.id} onClick={()=>setView(v.id)}>{v.label} · {ins.open.filter(x=>v.f(x,ins)).length}</Chip>)}
         <span style={{flex:"1 1 0"}}/>
-        <Chip t={t} active={view==="this"} onClick={()=>setView("this")} >Due this week · {ins.due.this.length}</Chip>
-        <Chip t={t} active={view==="next"} onClick={()=>setView("next")} >Due next week · {ins.due.next.length}</Chip>
+        <label style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12.5,color:t.ink2,cursor:"pointer"}}><input type="checkbox" checked={grouped} onChange={e=>{ setGrouped(e.target.checked); setOpenG({}); }}/>Group by {own.toLowerCase()}</label>
+        <Btn t={t} sm onClick={exportXlsx} disabled={!rows.length}>Export Excel</Btn>
       </div>
       <div style={{display:"flex",alignItems:"baseline",gap:12,flexWrap:"wrap",padding:"10px 14px",background:t.surf2,border:`1px solid ${t.line}`,borderRadius:12,marginBottom:10}}>
-        <span style={{fontSize:12.5,fontWeight:600,color:t.muted}}>{title}</span>
+        <span style={{fontSize:12.5,fontWeight:600,color:t.muted}}>{cur.id==="all"?"Total outstanding":cur.label}</span>
         <span style={{fontWeight:800,fontSize:20,color:t.ink,letterSpacing:"-0.02em"}} title={fmtRpFull(amt)}>{fmtRpWord(amt)}</span>
-        <span style={{fontSize:12,color:t.muted}}>{plural(rows.length,"record")} · {sub}</span>
+        <span style={{fontSize:12,color:t.muted}}>{plural(rows.length,"invoice")}{cur.id==="this"||cur.id==="next"?` · Est. Date ${fmtDate(cur.id==="this"?ins.wk0:ins.wk1)} – ${fmtDate(new Date((cur.id==="this"?ins.wk1:ins.wk2).getTime()-DAY))}`:" · not yet cleared by the bank"}</span>
       </div>
-      {rows.length===0 ? <EmptyNote t={t}>{view==="this"||view==="next"?"No payments due in this period":view==="notsub"?"No invoices waiting":"No outstanding payments"}</EmptyNote> : (
-        <div style={{maxHeight:440,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10}}>
+      {rows.length===0 ? <EmptyNote t={t}>{cur.id==="late"?"Nothing is late":cur.id==="notsub"?"No invoices waiting":cur.id==="all"?"No outstanding payments":"No payments due in this period"}</EmptyNote> : (
+        <div style={{maxHeight:460,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10}}>
           <table style={{width:"100%",borderCollapse:"collapse"}}>
             <thead><tr>
-              <th style={thS(t,true)}>{isAg?"Agency":"Partner"}</th>
-              {!phone&&<th style={thS(t,true)}>Project Title</th>}
-              <th style={estTh}>Est. Date</th>
-              {!phone&&<th style={thS(t,true)}>Period</th>}
-              {showInv&&<th style={thS(t,true)}>Invoice</th>}
-              <th style={thS(t)}>Outstanding</th>
-              {!phone&&<th style={thS(t,true)}>Status / Stage</th>}
-              {!phone&&<th style={thS(t)}>Days</th>}
+              <th style={th(true)}>Invoice</th>
+              <SortTh col="name" left sort={sort} setSort={setSort} t={t}>Project · {own}</SortTh>
+              <SortTh col="amt" sort={sort} setSort={setSort} t={t}>Amount</SortTh>
+              {!phone&&<th style={thW}>Invoice Date</th>}
+              {!phone&&<th style={thW}>CLV Date</th>}
+              {!phone&&<th style={{...thW,background:estBg,color:t.ink,fontWeight:700,cursor:"pointer"}} onClick={()=>setSort(s=>({col:"est",dir:s.col==="est"&&s.dir==="asc"?"desc":"asc"}))}>Est. Date{sort.col==="est"?(sort.dir==="asc"?" ▲":" ▼"):""}</th>}
+              {!phone&&<th style={thW}>Clearing Bank Date</th>}
+              {!phone&&<SortTh col="cyc" wrap sort={sort} setSort={setSort} t={t}>Invoice→ Clearing</SortTh>}
+              <SortTh col="late" sort={sort} setSort={setSort} t={t}>Late</SortTh>
             </tr></thead>
-            <tbody>{rows.slice(0,300).map((a,i)=>{
-              const late = a.est && a.est < today;
-              return (
-                <tr key={i} style={{background:i%2===1?t.rowStripe:"transparent"}}>
-                  <td style={{...tdS(t,true),maxWidth:phone?130:180,color:t.ink,fontWeight:600}} title={a.name}>{a.name}</td>
-                  {!phone&&<td style={{...tdS(t,true),maxWidth:w<1100?150:240}} title={a.title}>{a.title}</td>}
-                  <td style={{...tdS(t,true),fontWeight:700,background:late?t.badBg:`${C.yellow}14`,color:late?t.bad:t.ink}} title={late?"Estimation date has passed":undefined}>{a.est?fmtDate(a.est):"—"}</td>
-                  {!phone&&<td style={{...tdS(t,true)}}>{a.period}</td>}
-                  {showInv&&<td style={{...tdS(t,true),maxWidth:170,color:t.ink2}} title={invLabel(a.inv,a.invId)}>{invLabel(a.inv,a.invId)}</td>}
-                  <td style={{...tdS(t),color:t.ink}} title={fmtRpFull(a.amt)}>{fmtRpWord(a.amt)}</td>
-                  {!phone&&<td style={{...tdS(t,true),maxWidth:170}} title={a.status}>{a.stage}</td>}
-                  {!phone&&<td style={{...tdS(t),fontWeight:700,color:dayClr(a.days)}} title="Days since Invoice Submission">{a.days==null?"—":a.days}</td>}
-                </tr>
-              );
-            })}</tbody>
+            <tbody>
+              {!grouped && rows.slice(0,300).map((x,i)=>renderRow(x,i))}
+              {grouped && groups.map(g=>{ const op = !!openG[g.name]; return (
+                <React.Fragment key={g.name}>
+                  <tr onClick={()=>setOpenG(s=>({...s,[g.name]:!op}))} {...kbd(()=>setOpenG(s=>({...s,[g.name]:!op})))} aria-expanded={op} style={{cursor:"pointer",background:t.surf2}}>
+                    <td colSpan={2} style={{...td(true),maxWidth:phone?220:420,color:t.ink,fontWeight:700}} title={g.name}>{op?"▾":"▸"} {g.name} <span style={{fontWeight:500,color:t.muted}}>· {plural(g.items.length,"invoice")}</span></td>
+                    <td style={{...td(false),fontWeight:700,color:t.ink}} title={fmtRpFull(g.amt)}>{fmtRpWord(g.amt)}</td>
+                    {!phone&&<td colSpan={cols-4} style={td(false)}/>}
+                    <td style={{...td(false),fontWeight:700,color:g.late?t.badDark:t.muted}}>{g.late?`${g.late} late`:"—"}</td>
+                  </tr>
+                  {op && g.items.map((x,i)=>renderRow(x,i))}
+                </React.Fragment>
+              ); })}
+            </tbody>
           </table>
         </div>
       )}
-      {rows.length>300&&<div style={{fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted,marginTop:6}}>Showing 300 of {rows.length.toLocaleString()} — narrow the filters or use Raw Data for the rest.</div>}
-      <div style={{fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted,marginTop:8}}>Est. Date in red = already past today. Days = since Invoice Submission.</div>
+      {!grouped&&rows.length>300&&<div style={{fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted,marginTop:6}}>Showing 300 of {rows.length.toLocaleString()} — use Export Excel or Raw Data for the rest.</div>}
+      <div style={{fontSize:12,color:t.muted,marginTop:8,lineHeight:1.6}}>
+        <strong style={{color:t.ink2}}>Invoice→Clearing</strong> = working days from the invoice date (Coupa submission) until today, because the bank has not cleared it yet.{" "}
+        <strong style={{color:t.ink2}}>Late</strong> = working days past the Est. Date; &ldquo;on track&rdquo; means the Est. Date has not passed. &ldquo;Pending&rdquo; = that step has no date yet.
+      </div>
     </div>
   );
 }
@@ -2368,7 +2450,7 @@ const DC_STEPS = [
   { k:"clv",  label:"CLV",                done:(x)=>!!x.clv },
   { k:"clr",  label:"Clearing Bank",      done:(x)=>!!x.clr },
 ];
-const fmtDayMon = (d) => d ? d.toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}) : "";
+const fmtDayMon = (d) => d ? `${String(d.getDate()).padStart(2,"0")} ${MONTHS_SHORT[d.getMonth()+1]} ${d.getFullYear()}` : ""; // "21 Oct 2026" (tanpa "Sept" dari ICU)
 const MONTHS_LONG = ["","January","February","March","April","May","June","July","August","September","October","November","December"];
 const ymLong = (mk) => mk ? `${MONTHS_LONG[mk%100]} ${Math.floor(mk/100)}` : "";
 const dcEnt = (r) => String(entLabel(gstr(r,["=entity"]))||"").toUpperCase();
@@ -3128,7 +3210,7 @@ function AccrualEstimate({ acc, year, region, w, t, showToast }) {
   // Unduh persis isi tabel (bulan yang sedang tampil), angka sebagai angka dengan format Rp
   const download = async (kind) => {
     const XLSX = await getXLSX();
-    const today = new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"});
+    const today = new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}).replace("Sept","Sep");
     const head = ["Agency","Program Type",...months.map(ymLabel),"Total","Estimated months"];
     const body = acc.list.map(g=>[g.agency, g.prog+(g.noAccrue?" (no accrual)":""), ...months.map(m=>g.cells[m]?Math.round(g.cells[m].v):null), Math.round(rowTotal(g)), months.filter(m=>g.cells[m]?.est).map(ymLabel).join(", ")]);
     const foot = ["TOTAL","",...months.map(m=>Math.round(acc.tot[m].act+acc.tot[m].est)), Math.round(months.reduce((a,m)=>a+acc.tot[m].act+acc.tot[m].est,0)),""];
