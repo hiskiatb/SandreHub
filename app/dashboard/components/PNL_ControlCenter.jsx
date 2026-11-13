@@ -17,7 +17,7 @@ const MONTHS      = ["Januari","Februari","Maret","April","Mei","Juni","Juli","A
 const MONTH_SHORT = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
 const START_YEAR  = 2026;
 
-function getAvailableMonths() {
+function getAvailableMonths(variant = "v1") {
   const now    = new Date();
   const curY   = now.getFullYear();
   const curM   = now.getMonth();
@@ -28,7 +28,14 @@ function getAvailableMonths() {
       result.push({ month: MONTHS[m], year: y, label: `${MONTHS[m]} ${y}`, short: `${MONTH_SHORT[m]} ${y}` });
     }
   }
-  return result;
+  // CUTOVER V1/V2 (permintaan user - "untuk start periode di v2 ini hanya
+  // dari OKT 2026 dan untuk v1 hanya sampai SEP 2026"): V1 (pnl_reports)
+  // dihentikan per September 2026, V2 (pnl_reports_v2) mulai Oktober 2026.
+  const OCT_IDX = MONTHS.indexOf("Oktober");
+  if (variant === "v2") {
+    return result.filter((a) => a.year > START_YEAR || (a.year === START_YEAR && MONTHS.indexOf(a.month) >= OCT_IDX));
+  }
+  return result.filter((a) => a.year < START_YEAR || (a.year === START_YEAR && MONTHS.indexOf(a.month) < OCT_IDX));
 }
 
 const tk = (d) => ({
@@ -73,11 +80,11 @@ const DISABLED_BD     = (d) => d ? "rgba(220,38,38,0.28)" : "rgba(220,38,38,0.20
 const makeLocalKey = (row, month, year) =>
   `${row.partner_name}|${row.branch_name}|${row.mpc_mp3}|${month}|${year}`;
 
-function MonthPicker({ selected, onChange, t, d }) {
+function MonthPicker({ selected, onChange, t, d, variant = "v1" }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const panelRef = useRef(null);
-  const available = useMemo(() => getAvailableMonths(), []);
+  const available = useMemo(() => getAvailableMonths(variant), [variant]);
 
   useEffect(() => {
     const h = (e) => {
@@ -570,7 +577,7 @@ export default function PNLControlCenter({
   const d = theme === "dark";
   const t = tk(d);
 
-  const availableMonths = useMemo(() => getAvailableMonths(), []);
+  const availableMonths = useMemo(() => getAvailableMonths(variant), [variant]);
   const allKeys         = useMemo(() => availableMonths.map(a => `${a.month}|${a.year}`), [availableMonths]);
 
   const [selectedKeys, setSelectedKeys] = useState(() => allKeys);
@@ -979,7 +986,7 @@ export default function PNLControlCenter({
             style={{ flex:1,background:"transparent",border:"none",fontSize:13,fontWeight:500,color:t.hi,outline:"none",minWidth:0 }}
           />
         </div>
-        <MonthPicker selected={selectedKeys} onChange={setSelectedKeys} t={t} d={d}/>
+        <MonthPicker selected={selectedKeys} onChange={setSelectedKeys} t={t} d={d} variant={variant}/>
         {hasFilter && (
           <button onClick={clearFilters} style={{ display:"flex",alignItems:"center",gap:6,padding:"0 16px",height:40,borderRadius:10,background:d?"rgba(255,69,58,0.1)":"#FEE2E2",border:`1px solid ${d?"rgba(255,69,58,0.2)":"#FECACA"}`,cursor:"pointer",color:t.red,fontSize:13,fontWeight:600 }}>
             <X size={16} strokeWidth={2.5}/><span>Reset Filter</span>
@@ -1067,7 +1074,18 @@ export default function PNLControlCenter({
                       onMouseLeave={e=>e.currentTarget.style.background=rowBg}
                     >
                       <td style={{ padding:"9px 14px",borderRight:`1px solid ${t.lineH}`,overflow:"hidden" }}>
-                        <span style={{ display:"inline-block",padding:"3px 8px",borderRadius:5,fontSize:10,fontWeight:700,letterSpacing:"0.06em",textTransform:"uppercase",background:t.magentaBg,color:t.magenta,border:`1px solid ${t.magentaBd}`,whiteSpace:"nowrap" }}>{row.mpc_mp3}</span>
+                        {/* BARU (permintaan user - "untuk tipenya gunakan MDI semua untuk
+                            v2 ini"): V2 (mapping live dari mf_dse_database) sudah ga ada lagi
+                            klasifikasi MPC/MP3 per baris (row.mpc_mp3 selalu null) - utk V2
+                            tampilkan pill "MDI" drpd dash kosong, krn klasifikasinya sekarang
+                            berbasis MDI (Partner). V1 tetap tampilkan nilai mpc_mp3 asli / dash. */}
+                        {row.mpc_mp3 ? (
+                          <span style={{ display:"inline-block",padding:"3px 8px",borderRadius:5,fontSize:10,fontWeight:700,letterSpacing:"0.06em",textTransform:"uppercase",background:t.magentaBg,color:t.magenta,border:`1px solid ${t.magentaBd}`,whiteSpace:"nowrap" }}>{row.mpc_mp3}</span>
+                        ) : variant === "v2" ? (
+                          <span style={{ display:"inline-block",padding:"3px 8px",borderRadius:5,fontSize:10,fontWeight:700,letterSpacing:"0.06em",textTransform:"uppercase",background:t.magentaBg,color:t.magenta,border:`1px solid ${t.magentaBd}`,whiteSpace:"nowrap" }}>MDI</span>
+                        ) : (
+                          <span style={{ fontSize:12,color:t.lo }}>—</span>
+                        )}
                       </td>
                       <td style={{ padding:"9px 14px",borderRight:`1px solid ${t.lineH}`,overflow:"hidden" }}>
                         <div style={{ fontWeight:700,fontSize:13,color:t.hi,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",letterSpacing:"-0.01em" }}>{row.partner_name}</div>

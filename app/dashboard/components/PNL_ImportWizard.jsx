@@ -1010,13 +1010,18 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
       if(pbError)throw pbError;
 
       // Semua periode yang tersedia di aplikasi (Jan START_YEAR → bulan berjalan),
-      // sama seperti daftar bulan di PNL Control Center.
+      // sama seperti daftar bulan di PNL Control Center. Wizard ini KHUSUS
+      // V1 (pnl_reports, tidak ada versi V2-nya) - CUTOVER (permintaan user
+      // - "untuk v1 hanya sampai SEP 2026"): periode dibatasi sampai
+      // September 2026 saja, tidak ada bulan setelahnya.
       const START_YEAR=2026;
       const now=new Date();const curY=now.getFullYear(),curM=now.getMonth();
       const periods=[];
       for(let y=START_YEAR;y<=curY;y++){
+        if(y>2026)break;
         const maxM=y===curY?curM:11;
-        for(let m=0;m<=maxM;m++)periods.push({month:ID_MONTHS[m],year:String(y)});
+        const cappedMaxM=y===2026?Math.min(maxM,8):maxM; // 8 = indeks September
+        for(let m=0;m<=cappedMaxM;m++)periods.push({month:ID_MONTHS[m],year:String(y)});
       }
 
       // Mapping partner (dedup partner_name × branch_name × mpc_mp3).

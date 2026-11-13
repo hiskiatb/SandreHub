@@ -7094,21 +7094,38 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           const priorLatest = priorRows.reduce((max, r) => (!max || r.period > max ? r.period : max), null);
           const isLatestOrOnly = !priorLatest || period >= priorLatest;
           if (isLatestOrOnly) {
-            const livePayload = {};
-            if (periodPayload.ds_name !== (dse?.ds_name || null)) livePayload.ds_name = periodPayload.ds_name;
-            if (periodPayload.dse_status !== (dse?.dse_status || null)) livePayload.dse_status = periodPayload.dse_status;
-            if (periodPayload.join_date !== (dse?.join_date || null)) livePayload.join_date = periodPayload.join_date;
-            if (Object.keys(livePayload).length) {
-              const { error: eLive } = await supabase.from("mf_dse_database").update(livePayload).eq("dse_code", code);
-              if (eLive) throw eLive;
-              // UPDATE (status per tanggal): kalau status DSE ini ikut
-              // diubah, refresh index riwayat status (statusEvents) biar
-              // counting Active/Vacant di Ringkasan langsung akurat tanpa
-              // perlu reload halaman - trigger DB sudah nyatet baris
-              // history-nya duluan (synchronous, dalam transaksi UPDATE
-              // yg sama).
-              if (livePayload.dse_status !== undefined) loadStatusEvents();
-            }
+            // FIX (temuan user - "ketracking dengan baik kan kapan dia
+            // vacant kapan dia active di database?" -> ternyata TIDAK:
+            // livePayload DULU cuma diisi kalau field itu beda dari NILAI
+            // `dse` yg di-closure di awal handleSaveDse - kalau closure itu
+            // sendiri sudah basi (mis. 2 save beruntun dalam waktu
+            // berdekatan, atau dseList blm sempat refetch), perbandingan
+            // bisa "ketipu" nganggep ga ada perubahan padahal kolom live
+            // sebenarnya BEDA dari snapshot period yg baru disimpan ->
+            // kolom live nyangkut status lama SELAMANYA tanpa ada tanda
+            // apa pun (persis kasus ACEHBESA2102: snapshot period sudah
+            // "Active", kolom live nyangkut "Vacant"). Sekarang SELALU
+            // tulis ulang ds_name/dse_status/join_date ke mf_dse_database
+            // persis sama dgn periodPayload tiap kali ini period
+            // terbaru/satu2nya - independen dari nilai `dse` yg di-closure,
+            // supaya kolom live dijamin 100% konsisten dgn snapshot period
+            // terbaru setiap kali simpan (trigger history pun jadi selalu
+            // ikut nyatet tiap transisi status, ga ada lagi yg "bolong").
+            const livePayload = {
+              ds_name: periodPayload.ds_name,
+              dse_status: periodPayload.dse_status,
+              join_date: periodPayload.join_date,
+            };
+            const { error: eLive } = await supabase.from("mf_dse_database").update(livePayload).eq("dse_code", code);
+            if (eLive) throw eLive;
+            // UPDATE (status per tanggal): refresh index riwayat status
+            // (statusEvents) biar counting Active/Vacant di Ringkasan
+            // langsung akurat tanpa perlu reload halaman - trigger DB
+            // sudah nyatet baris history-nya duluan (synchronous, dalam
+            // transaksi UPDATE yg sama). Dipanggil tiap kali (bukan cuma
+            // kalau status berubah) krn sekarang livePayload SELALU
+            // ditulis - murah & aman dipanggil berulang.
+            loadStatusEvents();
           }
           setInfoPeriodsByDse((prev) => {
             const rows = (prev[code] || []).filter((r) => r.period !== period);

@@ -1,7 +1,7 @@
 "use client";
 /**
  * AdminLevelMapping.jsx — tab "Mapping & User Management" generik untuk
- * role level non-Branch/MC: Partner Level (admin_partner, kolom pt_name),
+ * role level non-Branch/MC: Partner Level (admin_partner, kolom mdi),
  * Circle (admin_circle, kolom circle), Region Level (admin_region, kolom
  * region) — permintaan user: "Tambahkan Partner Level, Circle, Region
  * Level dari data dse itu juga, untuk partner dan region masing masing 6

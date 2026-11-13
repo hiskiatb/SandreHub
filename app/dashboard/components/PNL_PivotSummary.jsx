@@ -446,7 +446,26 @@ function KpiCard({ label, value, tone, icon: Icon, primary, t }) {
   );
 }
 
-function TypePill({ mpc, t }) {
+function TypePill({ mpc, t, isV2 }) {
+  // BARU (permintaan user - "untuk tipenya gunakan MDI semua untuk v2
+  // ini"): V2 (mapping live dari mf_dse_database) sudah ga ada lagi
+  // klasifikasi MPC/MP3 per baris (mpc selalu null/kosong) - utk V2
+  // tampilkan pill "MDI" (bukan dash) krn klasifikasinya sekarang
+  // berbasis MDI (Partner), bukan MPC/MP3. V1 tetap tampilkan dash
+  // kalau datanya kosong.
+  if (!mpc) {
+    if (isV2) {
+      return (
+        <span style={{
+          display: "inline-flex", alignItems: "center", height: 19, padding: "0 7px",
+          borderRadius: 999, fontSize: 10, fontWeight: 700, letterSpacing: "0.04em",
+          textTransform: "uppercase", background: t.magentaBg, color: t.magenta,
+          border: `1px solid ${t.magentaBd}`, whiteSpace: "nowrap",
+        }}>MDI</span>
+      );
+    }
+    return <span style={{ fontSize: 11, color: t.mute }}>—</span>;
+  }
   return (
     <span style={{
       display: "inline-flex", alignItems: "center", height: 19, padding: "0 7px",
@@ -568,10 +587,21 @@ export default function PNL_PivotSummary({ theme, activeYear, userRole, partnerN
   const curYear  = now.getFullYear().toString();
   const curMIdx  = now.getMonth();
 
-  const availMonths = useMemo(
-    () => activeYear === curYear ? MONTHS_FULL.slice(0, curMIdx + 1) : MONTHS_FULL,
-    [activeYear, curYear, curMIdx]
-  );
+  // CUTOVER V1/V2 (permintaan user - "untuk start periode di v2 ini hanya
+  // dari OKT 2026 dan untuk v1 hanya sampai SEP 2026"): V1 (pnl_reports)
+  // dihentikan per September 2026, V2 (pnl_reports_v2) mulai Oktober 2026.
+  const availMonths = useMemo(() => {
+    const base = activeYear === curYear ? MONTHS_FULL.slice(0, curMIdx + 1) : MONTHS_FULL;
+    const y = Number(activeYear);
+    if (isV2) {
+      if (y < 2026) return [];
+      if (y === 2026) return base.slice(9); // Oktober, November, Desember
+      return base;
+    }
+    if (y > 2026) return []; // V1 dihentikan per September 2026
+    if (y === 2026) return base.slice(0, 9); // Januari..September
+    return base;
+  }, [activeYear, curYear, curMIdx, isV2]);
 
   const [raw,       setRaw]       = useState([]);
   const [loading,   setLoading]   = useState(true);
@@ -1446,7 +1476,7 @@ export default function PNL_PivotSummary({ theme, activeYear, userRole, partnerN
                               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.branch}</span>
                             </div>
                           </td>
-                          <td style={{ padding: "9px 12px" }}><TypePill mpc={b.mpc} t={t} /></td>
+                          <td style={{ padding: "9px 12px" }}><TypePill mpc={b.mpc} t={t} isV2={isV2} /></td>
                           {activeMths.map(m => <MonthCell key={m} md={b.months[m]} label={`${b.branch} · ${m}`} setTooltip={setTooltip} t={t} />)}
                           <YTDCell rev={yt.rev} exp={yt.exp} label={`${b.branch} · YTD`} setTooltip={setTooltip} t={t} />
                         </tr>

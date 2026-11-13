@@ -547,8 +547,22 @@ export default function DashboardPage() {
   const [savingName,        setSavingName]       = useState(false);
   const [navOpen,           setNavOpen]          = useState(true);
   const [sidebarCollapsed,  setSidebarCollapsed] = useState(false);
-  const [masterData,        setMasterData]       = useState([]);
-  const [regions,           setRegions]          = useState([]);
+  // CUTOVER V2 (permintaan user - "untuk v2 gunakan mapping partner ke mc
+  // menggunakan mf_dse_database"): V1 (pnl_reports) masih pakai
+  // partner_branches (dikelola manual lewat PNL Admin Panel, lihat
+  // refreshBranches di bawah) - V2 (pnl_reports_v2) sekarang live dari
+  // mf_dse_database (mdi=partner, mc=branch, region) supaya SELALU ikut
+  // data User Management terbaru, ga ada lagi daftar partner yg beda
+  // ejaan/basi kayak di partner_branches. RLS mf_dse_database sendiri yg
+  // membatasi baris sesuai role (admin_mc/admin_area/dst), jadi query V2
+  // di bawah TIDAK perlu filter manual partner_name/region lagi.
+  const [masterDataV1,      setMasterDataV1]     = useState([]);
+  const [masterDataV2,      setMasterDataV2]     = useState([]);
+  const masterData = useMemo(() => (PNL_MPX_V2_VIEWS.has(view) ? masterDataV2 : masterDataV1), [view, masterDataV1, masterDataV2]);
+  // regions diturunkan otomatis dari masterData yg lagi aktif (bukan state
+  // terpisah yg di-set manual) - supaya daftar Region di sidebar selalu
+  // konsisten sama sumber data V1/V2 yg lagi dipakai.
+  const regions = useMemo(() => [...new Set(masterData.map(i => i.region).filter(Boolean))].sort(), [masterData]);
   const [activeRegion,      setActiveRegion]     = useState("SUMATERA");
   const [activePartner,     setActivePartner]    = useState("");
   const [activeType,        setActiveType]       = useState("ALL");
@@ -666,7 +680,29 @@ export default function DashboardPage() {
   }, [activePartner, activeBranch, activeType, isMPX, profile?.partner_name, masterData]);
 
   const availableYears  = useMemo(() => Array.from({ length: CURRENT_YEAR - 2026 + 1 }, (_, i) => (2026 + i).toString()).reverse(), []);
-  const availableMonths = useMemo(() => Number(activeYear) === CURRENT_YEAR ? MONTHS.slice(0, CURRENT_MONTH_INDEX + 1) : MONTHS, [activeYear]);
+  // CUTOVER V1/V2 (permintaan user - "untuk start periode di v2 ini hanya
+  // dari OKT 2026 dan untuk v1 hanya sampai SEP 2026"): sidebar date-picker
+  // ini SATU state global (activeMonth/activeYear) dipakai bareng oleh form
+  // V1 (summary/pendapatan/pengeluaran, nulis ke pnl_reports) & V2
+  // (summary-v2/pendapatan-v2/pengeluaran-v2, nulis ke pnl_reports_v2) -
+  // supaya ga ada bulan yg kepilih dobel di 2 sistem, daftar bulan yg
+  // tampil dibatasi sesuai modul mana yg lagi dibuka (PNL_MPX_VIEWS vs
+  // PNL_MPX_V2_VIEWS, sudah didefinisikan di atas).
+  const availableMonths = useMemo(() => {
+    const base = Number(activeYear) === CURRENT_YEAR ? MONTHS.slice(0, CURRENT_MONTH_INDEX + 1) : MONTHS;
+    const y = Number(activeYear);
+    if (PNL_MPX_V2_VIEWS.has(view)) {
+      if (y < 2026) return [];
+      if (y === 2026) return base.slice(9); // Oktober, November, Desember
+      return base; // 2027 dst: tanpa batas atas
+    }
+    if (PNL_MPX_VIEWS.has(view)) {
+      if (y > 2026) return []; // V1 dihentikan per September 2026, tidak ada periode setelahnya
+      if (y === 2026) return base.slice(0, 9); // Januari..September
+      return base;
+    }
+    return base;
+  }, [activeYear, view]);
 
   const activeContextDisabledMonths = useMemo(() => {
     if (!activePartner || !activeBranch) return new Set();
@@ -745,9 +781,32 @@ export default function DashboardPage() {
         mapData = data || [];
       }
 
+      // V2 (mf_dse_database): live, RLS-scoped - lihat komentar di deklarasi
+      // masterDataV2 di atas. Skip utk role CSE/SDP/BSM/PIC sama seperti V1
+      // (role2 itu ga pernah masuk ke modul PNL sama sekali).
+      let mapDataV2 = [];
+      if (!isCseOrSdp) {
+        // FIX (temuan user - "ini harusnya isinya area / branch , bukan mc"):
+        // kolom "Kantor Cabang" di grid P&L V2 harus nampilin AREA (branch),
+        // BUKAN District (mc) - Pendapatan V2 memang levelnya Area (lihat
+        // komentar "untuk income levelnya area" / "area = branch ya").
+        // mc tetap dipakai terpisah di modul Depo/Pengeluaran V2 (level
+        // District), bukan di sini.
+        const { data: dseRows } = await supabase.from("mf_dse_database")
+          .select("mdi, branch, region").eq("is_revoked", false).not("mdi", "is", null).not("branch", "is", null);
+        const seen = new Set();
+        (dseRows || []).forEach((r) => {
+          const key = `${r.mdi}|${r.branch}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          mapDataV2.push({ partner_name: r.mdi, branch_name: r.branch, region: r.region, mpc_mp3: null });
+        });
+        mapDataV2.sort((a, b) => a.partner_name.localeCompare(b.partner_name));
+      }
+
       setProfile(prof);
-      setMasterData(mapData);
-      setRegions([...new Set(mapData.map(i => i.region))].sort());
+      setMasterDataV1(mapData);
+      setMasterDataV2(mapDataV2);
       if (prof?.role === "admin_partner_mdi" || prof?.role === "admin_mc") setActivePartner(prof?.partner_name || "");
       const lockedRegion = IOH_ROLE_REGION_MAP[prof?.role];
       if (lockedRegion) setActiveRegion(lockedRegion);
@@ -894,8 +953,7 @@ export default function DashboardPage() {
     if (lockedRegion) query = query.eq("region", lockedRegion);
     const { data } = await query;
     const mapData = data || [];
-    setMasterData(mapData);
-    setRegions([...new Set(mapData.map(i => i.region))].sort());
+    setMasterDataV1(mapData);
   }, [profile]);
 
   const navigate = (viewId) => {
@@ -1035,7 +1093,10 @@ export default function DashboardPage() {
                       <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
                         <button onClick={() => navigate("pnl-mpx")} className={`snav${(view === "pnl-mpx" || PNL_MPX_VIEWS.has(view)) ? " active" : ""}`} style={{ flex: 1 }}>
                           <span style={{ flexShrink: 0, display: "flex", opacity: (view === "pnl-mpx" || PNL_MPX_VIEWS.has(view)) ? 1 : 0.7 }}><PieChart size={14} /></span>
-                          <span style={{ flex: 1, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>MPX P&amp;L Report</span>
+                          {/* UPDATE (permintaan user - "untuk yang lama juga tandai sebagai V1"):
+                              label sidebar disamakan pola dgn V2 di bawah (ada suffix versi eksplisit),
+                              supaya jelas ini modul LAMA, bukan dianggap satu2nya versi. */}
+                          <span style={{ flex: 1, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>MPX P&amp;L Report V1</span>
                         </button>
                         <button onClick={(e) => { e.stopPropagation(); setPnlGroupOpen(v => !v); }} title={pnlGroupOpen ? "Sembunyikan sub-menu" : "Tampilkan sub-menu"}
                           style={{ flexShrink: 0, width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", cursor: "pointer", color: t.lo, borderRadius: 6, fontFamily: "inherit" }}>
@@ -1317,7 +1378,7 @@ export default function DashboardPage() {
                   {/* MPX P&L Report — satu menu, isinya 4 modul pelaporan P&L
                       (lihat PNL_MPX_Menu.jsx). */}
                   {!isMPX && !isAdminArea && (canMonitor || !isSDPMember || isSPM) && (
-                    <DashCard icon={<PieChart size={20} />} title="MPX P&L Report"
+                    <DashCard icon={<PieChart size={20} />} title="MPX P&L Report V1"
                       desc="Laporan P&L, Control Center, Pivot Summary, dan Import Data — 4 modul dalam satu menu."
                       tag="Profit & Loss" active={true} onClick={() => navigate("pnl-mpx")} t={t} d={d}
                       accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.12)" : "rgba(50,188,173,0.08)", bd: d ? "rgba(50,188,173,0.30)" : "rgba(50,188,173,0.20)", shadow: "rgba(50,188,173,0.20)" }} />
@@ -1644,7 +1705,7 @@ export default function DashboardPage() {
                   <AdminAreaMapping theme={theme} roleValue={umRole} roleOptions={USER_MGMT_ROLES} onRoleChange={setUmRole} />
                 ) : umRole === "admin_partner" ? (
                   <AdminLevelMapping theme={theme} roleValue={umRole} roleOptions={USER_MGMT_ROLES} onRoleChange={setUmRole}
-                    col="pt_name" roleKey="admin_partner" label="Partner Level" maxSlots={6} />
+                    col="mdi" roleKey="admin_partner" label="Partner Level" maxSlots={6} searchPlaceholder="Cari nama Partner (MDI)..." />
                 ) : umRole === "admin_circle" ? (
                   <AdminLevelMapping theme={theme} roleValue={umRole} roleOptions={USER_MGMT_ROLES} onRoleChange={setUmRole}
                     col="circle" roleKey="admin_circle" label="Circle" maxSlots={10} />
@@ -1692,7 +1753,7 @@ export default function DashboardPage() {
               <motion.div key="pnl-mpx" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
                   <div style={{ padding: "24px 28px" }}>
-                    <PNL_MPX_Menu theme={theme} onExit={() => navigate("overview")} onSelect={(id) => navigate(id)}
+                    <PNL_MPX_Menu theme={theme} title="MPX P&L Report V1" onExit={() => navigate("overview")} onSelect={(id) => navigate(id)}
                       items={[
                         !isSDPMember && !isMPX && { id: "summary", icon: PieChart, label: "Laporan P&L",
                           desc: "Analisis pendapatan harian, margin produk, dan pengeluaran operasional partner.", tag: "Profit & Loss",
