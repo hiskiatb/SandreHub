@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        @page { size: A4; margin: 0; }
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: 'Indosat', Arial, sans-serif; font-size: 13px; line-height: 1.45; color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+        .page { width: 210mm; height: 296mm; position: relative; overflow: hidden; padding: 40mm 22mm 40mm 22mm; page-break-after: always; }
+        .page:last-child { page-break-after: auto; }
+
+        .logo { position: absolute; top: 10mm; left: 18mm; height: 24mm; }
+        .footer { position: absolute; bottom: 12mm; left: 22mm; font-size: 8px; line-height: 1.35; z-index: 2; }
+        .footer b { font-size: 9px; }
+        .footer-web { position: absolute; bottom: 16mm; left: 54%; font-weight: bold; font-size: 13px; z-index: 2; }
+        .ornament { position: absolute; right: -38mm; bottom: -42mm; width: 95mm; height: 95mm; background-size: contain; background-repeat: no-repeat; background-position: center; z-index: 1; }
+
+        p { margin: 0 0 10px 0; }
+        .tujuan { margin: 14px 0 16px 0; }
+        table.ref { border-collapse: collapse; margin-bottom: 16px; }
+        table.ref td { padding: 1px 0; vertical-align: top; }
+
+        table.rincian { width: 100%; border-collapse: collapse; margin: 10px 0 14px 0; }
+        table.rincian td, table.rincian th { border: 1px solid #000; padding: 4px 6px; vertical-align: top; }
+        table.rincian th { background: #595959; color: #fff; font-weight: bold; text-align: center; }
+        table.rincian td.nilai { text-align: right; white-space: nowrap; }
+        table.rincian tr.bold td { font-weight: bold; }
+
+        .judul-ketentuan { font-weight: bold; text-decoration: underline; margin-bottom: 14px; }
+        ol { margin: 10px 0 14px 0; padding-left: 22px; }
+        ol li { margin-bottom: 2px; }
+        ol ul { list-style-type: circle; margin: 2px 0; padding-left: 24px; }
+        .ttd-box { height: 70px; margin: 4px 0; }
+        .ttd-box img { height: 70px; width: auto; display: block; }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <img class="logo" src="{{logo_atas}}" alt="Logo Indosat">
+
+        <p>Medan, {{tanggal}}</p>
+
+        <div class="tujuan">
+            Kepada Yth <b>Mitra Pengelola Cluster</b><br>
+            <b>{{nama_partner}}</b><br>
+            Di Tempat
+        </div>
+
+        <table class="ref">
+            <tr><td style="width: 55px;">No</td><td style="width: 12px;">:</td><td>{{no_surat}}</td></tr>
+            <tr><td>Perihal</td><td>:</td><td>{{perihal}}</td></tr>
+        </table>
+
+        {{isi_pembuka}}
+
+        <table class="rincian">
+            <tr><th colspan="2">{{judul_tabel}}<br>{{nama_partner}}<br>Periode {{periode}}</th></tr>
+            {{baris_komponen}}
+            <tr class="bold"><td>{{label_total}}</td><td class="nilai">{{total_dpp}}</td></tr>
+        </table>
+
+        <table class="rincian">
+            <tr><th style="width: 30%;">DESKRIPSI</th><th>KETERANGAN / NILAI</th></tr>
+            <tr><td>{{label_wilayah}}</td><td>{{daftar_branch}}</td></tr>
+            <tr><td style="vertical-align: middle;">Aktifitas</td><td>MPC harus melakukan serangkaian proses dari mulai registrasi outlet (channel penjualan) sampai terselesaikannya proses penjualan ke retailer/reseller/outlet (seluruh kategori yang terdaftar di system/aplikasi milik INDOSAT tersebut sehingga produk INDOSAT terdistribusi ke pelanggan.</td></tr>
+            <tr><td>SLA</td><td>Sesuai Tabel di atas</td></tr>
+            <tr><td>{{label_total}}</td><td class="nilai" style="vertical-align: bottom;">{{total_dpp}}</td></tr>
+            <tr><td>Ppn</td><td class="nilai">{{total_ppn}}</td></tr>
+            <tr><td>Pph23 {{pph_persen}}%</td><td class="nilai">{{total_pph}}</td></tr>
+            <tr class="bold"><td>Total Transfer</td><td class="nilai">{{total_transfer}}</td></tr>
+        </table>
+
+        <div class="footer"><b>Head Office</b><br>Jalan Medan Merdeka Barat No. 21<br>Jakarta 10110, Indonesia<br>P: (62-21) 3000 3001</div>
+        <div class="footer-web">www.ioh.co.id</div>
+        <div class="ornament" style="background-image: url('{{logo_bawah}}');"></div>
+    </div>
+
+    <div class="page">
+        <img class="logo" src="{{logo_atas}}" alt="Logo Indosat">
+
+        <div class="judul-ketentuan">Ketentuan Klaim Pembayaran</div>
+        {{isi_ketentuan}}
+
+        <p>Demikian disampaikan, atas perhatian dan kerjasamanya diucapkan terima kasih.<br>Salam hormat,</p>
+
+        <div id="ttd-surat" class="ttd-box">{{ttd_surat}}</div>
+        <div>{{nama_penandatangan}}<br>{{jabatan_penandatangan}}<br>{{unit_penandatangan}}</div>
+
+        <p style="margin-top: 22px;">Cc: {{cc_surat}}</p>
+
+        <div class="footer"><b>Head Office</b><br>Jalan Medan Merdeka Barat No. 21<br>Jakarta 10110, Indonesia<br>P: (62-21) 3000 3001</div>
+        <div class="footer-web">www.ioh.co.id</div>
+        <div class="ornament" style="background-image: url('{{logo_bawah}}');"></div>
+    </div>
+</body>
+</html>

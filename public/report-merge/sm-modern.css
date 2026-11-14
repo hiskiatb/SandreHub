@@ -1,0 +1,203 @@
+/*
+ * sm-modern.css — tampilan baru Partner SDP (sdp.html) & Partner MDI (mdi.html).
+ * Hanya CSS: dimuat SETELAH <style> asli, tidak mengubah HTML, ID, class, atau
+ * JavaScript halaman asli Smart Mail Sumatera. Hapus <link> ke file ini untuk
+ * kembali ke tampilan asli.
+ * Arah desain: selaras dengan Report Merge (font Indosat, warna brand Indosat,
+ * permukaan putih bersih, sudut membulat, bayangan halus).
+ */
+@font-face { font-family: 'Indosat'; src: url('/report-merge/fonts/IndosatMedium.ttf') format('truetype'); font-weight: 400 600; font-display: swap; }
+@font-face { font-family: 'Indosat'; src: url('/report-merge/fonts/IndosatBold.ttf') format('truetype'); font-weight: 700 900; font-display: swap; }
+
+:root {
+  --sm-bg: #F3F4F7;
+  --sm-surface: #FFFFFF;
+  --sm-surface-2: #F7F8FA;
+  --sm-line: #E4E6EC;
+  --sm-line-2: #D5D8E0;
+  --sm-ink: #1F2129;
+  --sm-ink-2: #4D4D4F;
+  --sm-muted: #6B6F7B;
+  --sm-teal: #32BCAD;
+  --sm-teal-d: #1E8C80;
+  --sm-red: #ED1C24;
+  --sm-pink: #EC008C;
+  --sm-yellow: #FFCB05;
+  --sm-radius: 14px;
+  --sm-radius-sm: 10px;
+  --sm-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 4px 16px rgba(16, 24, 40, .06);
+  --sm-shadow-lg: 0 12px 40px rgba(16, 24, 40, .16);
+  --sm-font: 'Indosat', 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* ---------- Dasar ---------- */
+* { font-family: var(--sm-font); }
+body { background: var(--sm-bg) !important; padding: 28px 20px 48px; color: var(--sm-ink-2); -webkit-font-smoothing: antialiased; }
+.bg-blur-container { background: var(--sm-bg) !important; }
+.blob { opacity: .12 !important; filter: blur(120px) !important; }
+::selection { background: rgba(50, 188, 173, .28); }
+
+/* ---------- Kartu utama ---------- */
+.card {
+  max-width: 1040px; background: var(--sm-surface) !important; backdrop-filter: none;
+  border: 1px solid var(--sm-line); border-radius: 20px; box-shadow: var(--sm-shadow); padding: 32px 36px;
+}
+.card::before, .modal-content::before {
+  height: 4px; background: linear-gradient(90deg, var(--sm-red), var(--sm-pink) 35%, var(--sm-yellow) 70%, var(--sm-teal));
+}
+.card::after, .modal-content::after { display: none; }
+
+/* Tombol kembali & aksi atas */
+.btn-back, a[href="/"] {
+  display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px !important; border-radius: 999px;
+  background: var(--sm-surface-2); border: 1px solid var(--sm-line); font-size: 13px !important; color: var(--sm-ink-2) !important;
+  transition: background .15s, border-color .15s;
+}
+.btn-back:hover, a[href="/"]:hover { background: #fff; border-color: var(--sm-teal); color: var(--sm-teal-d) !important; }
+.btn-link-sm, .btn-small {
+  border-radius: 999px !important; padding: 7px 14px !important; font-size: 12px !important; font-weight: 700;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .08); transition: transform .15s, box-shadow .15s, filter .15s;
+}
+.btn-link-sm:hover, .btn-small:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(16, 24, 40, .12); filter: brightness(1.03); }
+
+/* ---------- Pilihan mode (Blast Only / Generate / New Template) ---------- */
+.mode-container {
+  background: var(--sm-surface-2); border: 1px solid var(--sm-line); border-radius: 16px; padding: 6px; gap: 6px;
+}
+.mode-btn {
+  border: none !important; border-radius: 12px !important; background: transparent !important; box-shadow: none !important;
+  color: var(--sm-muted) !important; font-size: 13.5px !important; padding: 12px 10px !important; transform: none !important;
+}
+.mode-btn:hover { background: #fff !important; color: var(--sm-ink) !important; }
+.mode-btn.active {
+  background: linear-gradient(135deg, var(--sm-red), var(--sm-pink)) !important; color: #fff !important;
+  box-shadow: 0 6px 18px rgba(237, 28, 36, .28) !important;
+}
+.mode-btn.active * { color: #fff !important; }
+
+/* ---------- Bagian / form ---------- */
+.section {
+  border: 1px solid var(--sm-line) !important; border-radius: var(--sm-radius) !important; padding: 20px 22px !important;
+  box-shadow: none !important; background: var(--sm-surface) !important; margin-bottom: 18px !important;
+}
+.section > label.title { font-size: 15px !important; font-weight: 700 !important; color: var(--sm-ink) !important; border-bottom: 1px solid var(--sm-line) !important; padding-bottom: 12px !important; }
+.form-group label { font-size: 12.5px; font-weight: 700; color: var(--sm-ink-2); letter-spacing: .01em; }
+.form-control, select, input[type="text"], input[type="email"], input[type="number"], input[type="month"], input[type="date"], textarea {
+  border: 1px solid var(--sm-line-2) !important; border-radius: var(--sm-radius-sm) !important; padding: 10px 12px; font-size: 14px;
+  background: #fff !important; color: var(--sm-ink) !important; transition: border-color .15s, box-shadow .15s;
+}
+.form-control:focus, select:focus, input:focus, textarea:focus {
+  outline: none; border-color: var(--sm-teal) !important; box-shadow: 0 0 0 4px rgba(50, 188, 173, .16) !important;
+}
+small.hint { color: var(--sm-muted); }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--sm-teal); }
+
+/* Chip variabel / komponen */
+.param-chip, .chip, .var-btn {
+  border-radius: 999px !important; border: 1px solid var(--sm-line-2) !important; background: var(--sm-surface-2) !important;
+  color: var(--sm-ink-2) !important; font-weight: 600; transition: all .15s;
+}
+.param-chip:hover, .chip:hover, .var-btn:hover { border-color: var(--sm-teal) !important; background: rgba(50, 188, 173, .08) !important; color: var(--sm-teal-d) !important; }
+.param-chip.table-chip { background: rgba(50, 188, 173, .1) !important; border-color: rgba(50, 188, 173, .35) !important; color: var(--sm-teal-d) !important; }
+
+/* ---------- Area upload ---------- */
+#drop-zone, .modal-drop {
+  border: 2px dashed var(--sm-line-2) !important; border-radius: 16px !important; background: var(--sm-surface-2) !important;
+  min-height: 170px; transition: border-color .15s, background .15s;
+}
+#drop-zone:hover, #drop-zone.dragover, .modal-drop:hover, .modal-drop.dragover, .dragover {
+  border-color: var(--sm-teal) !important; background: rgba(50, 188, 173, .07) !important; transform: none !important;
+}
+#drop-zone p.drop-title { font-size: 17px; color: var(--sm-ink); }
+#drop-zone p.drop-subtitle { color: var(--sm-muted); }
+.pdf-drop { border: 2px dashed var(--sm-line-2) !important; border-radius: 14px !important; background: var(--sm-surface-2) !important; }
+.pdf-drop.dragover { border-color: var(--sm-teal) !important; background: rgba(50, 188, 173, .07) !important; }
+
+/* ---------- Tabel ---------- */
+.table-container { border: 1px solid var(--sm-line) !important; border-radius: 12px !important; background: #fff !important; }
+th {
+  background: var(--sm-surface-2) !important; color: var(--sm-muted) !important; font-size: 11.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .04em; box-shadow: inset 0 -1px 0 var(--sm-line) !important; padding: 11px 10px;
+}
+td { border-bottom: 1px solid #F0F1F4 !important; color: var(--sm-ink-2); }
+tbody tr:hover td { background: #FAFBFC; }
+
+/* ---------- Tombol utama ---------- */
+.btn-submit, .btn-download-all, .btn-download-excel, .btn-blast-main, .btn-download {
+  border-radius: 12px !important; padding: 14px !important; font-size: 14.5px !important; letter-spacing: .01em;
+  background: linear-gradient(135deg, var(--sm-red), var(--sm-pink)) !important; box-shadow: 0 8px 20px rgba(237, 28, 36, .22);
+  transition: transform .15s, box-shadow .15s, filter .15s;
+}
+.btn-submit:hover, .btn-download-all:hover, .btn-download-excel:hover, .btn-blast-main:hover, .btn-download:hover {
+  transform: translateY(-1px); box-shadow: 0 12px 26px rgba(237, 28, 36, .28); filter: brightness(1.03); opacity: 1 !important;
+}
+.btn-send-email, .btn-teal {
+  border-radius: 12px !important; background: linear-gradient(135deg, var(--sm-teal), var(--sm-teal-d)) !important;
+  box-shadow: 0 8px 20px rgba(50, 188, 173, .25);
+}
+.btn-send-email:hover { transform: translateY(-1px); filter: brightness(1.04); }
+.btn-apply, .btn-yellow { border-radius: 12px !important; box-shadow: 0 6px 16px rgba(255, 203, 5, .28); }
+.locked, .btn-submit:disabled, .btn-submit.locked {
+  background: #EDEFF3 !important; color: #A0A4AE !important; box-shadow: none !important; border: 1px solid var(--sm-line) !important; filter: none;
+}
+
+/* ---------- Pratinjau surat ---------- */
+#previewSection { border-top: 1px solid var(--sm-line) !important; padding-top: 24px !important; }
+iframe { border: 1px solid var(--sm-line) !important; border-radius: 14px !important; background: #F0F1F4 !important; box-shadow: var(--sm-shadow); }
+.btn-sdp-item, .btn-partner {
+  border-radius: 12px !important; border: 1px solid var(--sm-line) !important; background: #fff !important;
+  padding: 11px 12px !important; transition: border-color .15s, box-shadow .15s;
+}
+.btn-sdp-item:hover, .btn-partner:hover { border-color: var(--sm-teal) !important; box-shadow: 0 2px 10px rgba(16, 24, 40, .06); }
+.btn-sdp-item.active, .btn-partner.active {
+  background: linear-gradient(135deg, var(--sm-red), var(--sm-pink)) !important; border-color: transparent !important;
+  box-shadow: 0 6px 16px rgba(237, 28, 36, .22) !important;
+}
+.tab { border-radius: 999px !important; border: 1px solid var(--sm-line-2) !important; }
+.tab.active { background: var(--sm-teal) !important; border-color: var(--sm-teal) !important; color: #fff !important; }
+
+/* ---------- Status & badge ---------- */
+.badge { border-radius: 999px !important; padding: 4px 10px !important; }
+.tracker-icon { box-shadow: 0 0 0 4px #fff, 0 0 0 5px var(--sm-line) !important; }
+.tracker-step { background: transparent !important; }
+.tracker-step.completed .tracker-icon { background: var(--sm-teal) !important; box-shadow: 0 0 0 4px #fff, 0 0 0 5px var(--sm-teal) !important; }
+.tracker-step.active .tracker-icon { box-shadow: 0 0 0 4px #fff, 0 0 0 5px var(--sm-yellow) !important; }
+.status-tracker::before { background: var(--sm-line) !important; height: 2px !important; }
+.pulse-spinner { border-color: #EDEFF3 !important; border-top-color: var(--sm-teal) !important; }
+
+/* ---------- Modal (Template, Riwayat, Email Studio, notifikasi) ---------- */
+.modal { background-color: rgba(17, 19, 26, .45) !important; backdrop-filter: blur(6px) !important; }
+.modal-content {
+  border-radius: 20px !important; border: 1px solid var(--sm-line); box-shadow: var(--sm-shadow-lg) !important; padding: 28px 30px !important;
+}
+.close-btn {
+  width: 36px; height: 36px; border-radius: 50%; display: inline-flex !important; align-items: center; justify-content: center;
+  background: var(--sm-surface-2); border: 1px solid var(--sm-line); font-size: 22px !important; color: var(--sm-muted) !important;
+}
+.close-btn:hover { background: #fff; color: var(--sm-red) !important; border-color: var(--sm-red); }
+.preview-box { border: 1px solid var(--sm-line) !important; border-radius: 14px !important; background: #fff !important; box-shadow: inset 0 1px 0 #fff; }
+
+/* Riwayat: kartu folder */
+.folder-card {
+  border-radius: 16px !important; border: 1px solid var(--sm-line) !important; background: #fff !important;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04) !important;
+}
+.folder-card:hover { border-color: var(--sm-teal) !important; box-shadow: 0 10px 24px rgba(16, 24, 40, .1) !important; }
+
+/* Editor template (Quill) */
+.ql-toolbar.ql-snow { border-radius: 12px 12px 0 0 !important; border-color: var(--sm-line-2) !important; background: var(--sm-surface-2) !important; }
+.ql-container.ql-snow { border-radius: 0 0 12px 12px !important; border-color: var(--sm-line-2) !important; }
+
+/* ---------- Layar sempit ---------- */
+@media (max-width: 760px) {
+  body { padding: 14px 10px 32px; }
+  .card { padding: 22px 16px; border-radius: 16px; }
+  .mode-container { flex-direction: column; }
+  .form-row { flex-direction: column; gap: 0; }
+  #previewSection { flex-direction: column !important; }
+  #sidebarList, #previewPane { width: 100% !important; }
+  .top-actions { position: static !important; justify-content: flex-end; margin: 12px 0 10px; }
+  /* Tombol Beranda & Kelola Template / Riwayat di SDP diposisikan absolut oleh halaman asli: di HP dibuat mengalir */
+  .card > a[href="/"], .btn-back { position: static !important; margin-bottom: 10px; }
+  .card > div:has(> #btnOpenTemplateManager) { position: static !important; justify-content: flex-start; flex-wrap: wrap; margin-bottom: 14px; }
+}

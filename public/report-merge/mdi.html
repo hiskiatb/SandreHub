@@ -1,0 +1,1770 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<script>
+  // Shim integrasi SandraHub — halaman ini SALINAN APA ADANYA dari Smart Mail
+  // Sumatera (anggiesther/sa-automation). Logika aslinya tidak diubah; shim ini
+  // hanya (sama seperti public/report-merge/index.html):
+  //   1) mengarahkan fetch '/api/...', '/upload-sdp', '/approve-document',
+  //      '/downloads/...' ke '/api/smart-mail/...' (app/api/smart-mail/[...path]),
+  //   2) menambahkan header Authorization: Bearer <token sesi SandraHub>,
+  //   3) mengubah tombol "← Beranda" jadi kembali ke halaman pilih menu Report Merge.
+  (function () {
+    function findSupabaseAccessToken() {
+      try {
+        for (var i = 0; i < localStorage.length; i++) {
+          var k = localStorage.key(i);
+          if (k && /^sb-.*-auth-token$/.test(k)) {
+            var parsed = JSON.parse(localStorage.getItem(k) || 'null');
+            var token = parsed && (parsed.access_token || (parsed.currentSession && parsed.currentSession.access_token));
+            if (token) return token;
+          }
+        }
+      } catch (e) { /* fetch tetap jalan tanpa header */ }
+      return null;
+    }
+    function mapUrl(url) {
+      if (url.indexOf('/api/smart-mail/') === 0) return url;
+      if (url.indexOf('/api/') === 0) return '/api/smart-mail/' + url.slice(5);
+      if (/^\/(upload-sdp|approve-document|downloads\/)/.test(url)) return '/api/smart-mail' + url;
+      return null;
+    }
+    var originalFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      var url = typeof input === 'string' ? input : (input && input.url) || '';
+      var newUrl = mapUrl(url);
+      if (newUrl === null) return originalFetch(input, init);
+      var opts = Object.assign({}, init);
+      var token = findSupabaseAccessToken();
+      if (token) opts.headers = Object.assign({}, (init && init.headers) || {}, { Authorization: 'Bearer ' + token });
+      if (typeof input === 'string') return originalFetch(newUrl, opts);
+      return originalFetch(new Request(newUrl, input), opts);
+    };
+    document.addEventListener('click', function (e) {
+      var a = e.target.closest && e.target.closest('a[href="/"]');
+      if (!a) return;
+      e.preventDefault();
+      if (window.parent !== window) window.parent.postMessage({ rmOpen: 'home' }, location.origin);
+      else location.href = '/report-merge/home.html';
+    }, true);
+    // 4) Banner "mode lokal" saat dibuka di localhost tanpa kunci server (lihat app/api/smart-mail/[...path]).
+    window.addEventListener('DOMContentLoaded', function () {
+      originalFetch('/api/smart-mail/mode').then(function (r) { return r.json(); }).then(function (m) {
+        if (!m || !m.lokal) return;
+        var info = [];
+        if (m.db_lokal) info.push('data disimpan di database lokal');
+        if (m.email_lokal) info.push('email TIDAK benar-benar dikirim (hanya dicatat)');
+        var b = document.createElement('div');
+        b.textContent = '🧪 Mode lokal (localhost): ' + info.join(', ') + '. Di Vercel semuanya berjalan normal.';
+        b.style.cssText = 'position:relative;z-index:5;background:#FFCB05;color:#4D4D4F;font:600 12.5px Segoe UI,Arial,sans-serif;padding:7px 14px;text-align:center;';
+        document.body.insertBefore(b, document.body.firstChild);
+      }).catch(function () {});
+    });
+  })();
+</script>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistem SMS - Surat MDI</title>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
+    <style>
+        :root {
+            --ioh-dark: #4D4D4F; --ioh-red: #ED1C24; --ioh-yellow: #FFCB05;
+            --ioh-teal: #32BCAD; --ioh-purple: #C6168D; --ioh-pink: #EC008C;
+            --ioh-teal-dark: #27968a; --bg-light: #f4f7f6;
+        }
+
+        * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, sans-serif; color: var(--ioh-dark); }
+        body { background-color: #ffffff; display: flex; flex-direction: column; align-items: center; min-height: 100vh; margin: 0; padding: 40px 20px; position: relative; overflow-x: hidden; }
+
+        .bg-blur-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; overflow: hidden; z-index: -1; pointer-events: none; background: #ffffff; }
+        .blob { position: absolute; filter: blur(100px); opacity: 0.25; border-radius: 50%; }
+        .blob-1 { background-color: var(--ioh-teal); width: 250px; height: 250px; top: 5%; left: 10%; }
+        .blob-2 { background-color: var(--ioh-yellow); width: 280px; height: 280px; bottom: 10%; right: 10%; }
+        .blob-3 { background-color: var(--ioh-pink); width: 220px; height: 220px; top: 50%; left: 75%; transform: translate(-50%, -50%); }
+
+        .card { background: rgba(255, 255, 255, 0.95); width: 100%; max-width: 1000px; padding: 30px; border-radius: 12px; box-shadow: 0 8px 30px rgba(77, 77, 79, 0.08); position: relative; overflow: hidden; }
+        .card::before { content: ""; display: block; height: 6px; background: linear-gradient(to right, var(--ioh-teal), var(--ioh-yellow)); position: absolute; top: 0; left: 0; right: 0; }
+
+        .btn-back { position: absolute; top: 25px; left: 25px; font-size: 14px; font-weight: bold; text-decoration: none; }
+        .btn-back:hover { color: var(--ioh-red); }
+        .top-actions { position: absolute; top: 25px; right: 25px; display: flex; gap: 10px; }
+        .btn-link-sm { font-size: 13px; padding: 8px 15px; border-radius: 4px; border: none; font-weight: bold; cursor: pointer; color: #fff; }
+
+        .mode-container { display: flex; gap: 15px; margin-bottom: 25px; flex-wrap: wrap; }
+        .mode-btn { flex: 1; min-width: 180px; padding: 15px; text-align: center; border: 2px solid #ddd; border-radius: 8px; cursor: pointer; font-weight: bold; background: #fff; transition: 0.3s; font-size: 14px; }
+        .mode-btn:hover { border-color: var(--ioh-teal); background: #f0fdfa; }
+        .mode-btn.active { border-color: var(--ioh-red); background: linear-gradient(135deg, var(--ioh-red), var(--ioh-pink)); color: #fff; }
+
+        .section { padding: 15px; border: 1px solid #ced4da; border-radius: 6px; background: #fff; box-shadow: 0 4px 10px rgba(0,0,0,0.03); margin-bottom: 15px; }
+        .section > label.title { display: block; font-size: 15px; font-weight: 600; border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 15px; }
+
+        .form-row { display: flex; gap: 15px; flex-wrap: wrap; }
+        .form-group { margin-bottom: 12px; flex: 1; min-width: 200px; }
+        .form-group label { display: block; margin-bottom: 5px; font-weight: 600; font-size: 13px; }
+        .form-control { width: 100%; padding: 9px 10px; border: 1px solid #ced4da; border-radius: 6px; font-size: 14px; background: #fff; }
+        .form-control:focus { outline: none; border-color: var(--ioh-red); box-shadow: 0 0 0 3px rgba(237, 28, 36, 0.15); }
+        textarea.form-control { line-height: 1.5; }
+        small.hint { font-size: 11px; color: #6c757d; }
+
+        #drop-zone { border: 2.5px dashed var(--ioh-red); padding: 30px 20px; text-align: center; cursor: pointer; border-radius: 10px; background: rgba(255, 245, 245, 0.5); margin-bottom: 10px; }
+        #drop-zone:hover, #drop-zone.dragover { background: rgba(255, 230, 231, 0.8); border-color: var(--ioh-yellow); }
+
+        .chip { display: inline-flex; align-items: center; gap: 6px; background: #f1f3f5; border: 1px solid #ced4da; padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; cursor: pointer; margin: 0 6px 6px 0; }
+        .form-group label.chip { display: inline-flex; margin-bottom: 6px; }
+        input[type="checkbox"] { accent-color: var(--ioh-red); width: 16px; height: 16px; cursor: pointer; }
+
+        .table-container { max-height: 320px; overflow-y: auto; border: 1px solid #ced4da; border-radius: 6px; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th { background-color: #f8f9fa; position: sticky; top: 0; padding: 9px; text-align: center; box-shadow: 0 2px 2px -1px rgba(0,0,0,0.1); z-index: 1; }
+        td { padding: 7px 9px; border-bottom: 1px solid #eee; vertical-align: top; }
+        td.num { text-align: right; white-space: nowrap; }
+
+        .btn-submit { width: 100%; padding: 12px; background: linear-gradient(135deg, var(--ioh-red), 60%, var(--ioh-pink)); color: white !important; border: none; border-radius: 6px; font-weight: bold; font-size: 14px; cursor: pointer; margin-top: 10px; }
+        .btn-submit:hover { opacity: 0.9; }
+        .btn-submit:disabled, .btn-submit.locked { background: #e9ecef; color: #adb5bd !important; cursor: not-allowed; pointer-events: none; }
+        .btn-teal { background: var(--ioh-teal); }
+        .btn-yellow { background: var(--ioh-yellow); color: #000 !important; }
+        .pdf-drop { border: 2px dashed #ced4da; border-radius: 8px; padding: 16px; text-align: center; background: #fafafa; transition: 0.2s; }
+        .modal-drop { border: 2.5px dashed var(--ioh-red); padding: 40px 20px; text-align: center; cursor: pointer; border-radius: 10px; background: rgba(255, 245, 245, 0.5); margin-bottom: 12px; }
+        .modal-drop:hover, .modal-drop.dragover { background: rgba(255, 230, 231, 0.8); border-color: var(--ioh-yellow); }
+        .file-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px; border-bottom: 1px solid #f1f1f1; }
+        .file-row button { background: none; border: none; color: var(--ioh-red); cursor: pointer; font-weight: bold; }
+        .pdf-drop.dragover { border-color: var(--ioh-pink); background: #fff0f8; }
+        .var-btn { padding: 5px 10px; font-size: 12px; border-radius: 4px; border: 1px solid var(--ioh-teal); background: #fff; color: var(--ioh-teal); font-weight: bold; cursor: pointer; }
+        .var-btn:hover { background: var(--ioh-teal); color: #fff; }
+        .btn-small { padding: 6px 12px; font-size: 12px; border-radius: 4px; border: none; font-weight: bold; cursor: pointer; background: var(--ioh-yellow); color: #000; }
+
+        #previewSection, #emailSection, #approvalPanel { display: none; }
+        .preview-wrap { display: flex; gap: 20px; flex-wrap: wrap; }
+        #sidebarList { flex: 1; min-width: 240px; max-height: 560px; overflow-y: auto; }
+        #previewPane { flex: 2; min-width: 320px; }
+        iframe { width: 100%; height: 560px; border: 1px solid #ccc; border-radius: 8px; background: #eee; }
+        .btn-partner { display: block; width: 100%; padding: 10px; margin-bottom: 8px; background: #f8f9fa; border: 1px solid #dee2e6; text-align: left; cursor: pointer; border-radius: 6px; font-size: 13px; }
+        .btn-partner.active { background: linear-gradient(135deg, var(--ioh-red), 60%, var(--ioh-pink)); border-color: transparent; }
+        .btn-partner.active * { color: #fff; }
+        .tabs { display: flex; gap: 8px; margin-bottom: 10px; }
+        .tab { padding: 6px 14px; border-radius: 20px; border: 1px solid #ced4da; background: #fff; font-size: 12px; font-weight: bold; cursor: pointer; }
+        .tab.active { background: var(--ioh-teal); border-color: var(--ioh-teal); color: #fff; }
+        .badge { padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+        .badge-wait { background: #fff3cd; color: #856404; }
+        .badge-ok { background: #d4edda; color: #155724; }
+        .badge-fail { background: #f8d7da; color: #721c24; }
+        .badge-info { background: #d1ecf1; color: #0c5460; }
+
+        .pulse-spinner { border: 4px solid #f3f3f3; border-top: 4px solid var(--ioh-red); border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 10px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        .preview-box { background: #f9fafb; border: 1px solid #e5e7eb; padding: 18px; border-radius: 8px; font-size: 14px; line-height: 1.6; }
+        .preview-box .label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #6c757d; }
+        .status-ok { color: #155724; font-weight: bold; }
+        .status-fail { color: var(--ioh-red); font-weight: bold; }
+        #infoBox { font-size: 13px; font-weight: bold; text-align: center; margin: 8px 0; }
+
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(77,77,79,0.6); }
+        .modal-content { background-color: #f0f2f5; margin: 4% auto; padding: 25px; border-radius: 12px; width: 95%; max-width: 1000px; position: relative; }
+        .close-btn { float: right; font-size: 28px; font-weight: bold; cursor: pointer; line-height: 1; }
+        .close-btn:hover { color: var(--ioh-red); }
+        .folder-grid { display: flex; flex-wrap: wrap; gap: 20px; }
+        .folder-card { background: #fff; border: 1px solid #dee2e6; border-radius: 8px; padding: 18px 15px; width: 170px; text-align: center; cursor: pointer; transition: 0.2s; }
+        .folder-card:hover { transform: translateY(-3px); border-color: var(--ioh-yellow); box-shadow: 0 8px 15px rgba(0,0,0,0.1); }
+        .folder-card .icon { font-size: 36px; margin-bottom: 8px; }
+        .folder-card .name { font-size: 13px; font-weight: bold; word-break: break-word; }
+        .folder-card .count { font-size: 11px; color: #6c757d; margin-top: 6px; }
+        .tpl-item { padding: 10px; border: 1px solid #eee; border-radius: 6px; background: #fafafa; display: flex; justify-content: space-between; align-items: center; cursor: pointer; margin-bottom: 8px; }
+        .tpl-item:hover { border-color: var(--ioh-teal); }
+    </style>
+    <!-- [SandraHub] Tampilan baru (hanya CSS, logic tidak berubah). Hapus baris ini untuk kembali ke tampilan asli. -->
+    <link rel="stylesheet" href="/report-merge/sm-modern.css">
+</head>
+<body>
+    <div class="bg-blur-container">
+        <div class="blob blob-1"></div><div class="blob blob-2"></div><div class="blob blob-3"></div>
+    </div>
+
+    <div class="card">
+        <a href="/" class="btn-back">← Beranda</a>
+        <div class="top-actions">
+            <button type="button" id="btnOpenTemplateManager" class="btn-link-sm" style="background: var(--ioh-pink);">⚙️ Kelola Template</button>
+            <button type="button" id="btnOpenHistory" class="btn-link-sm" style="background: var(--ioh-teal);">🕰️ Riwayat Surat</button>
+        </div>
+
+        <div style="text-align: center; margin: 45px 0 20px 0;">
+            <h2 style="margin: 0;">Surat Partner MDI (MPC)</h2>
+            <p style="margin: 6px 0 0 0; font-size: 13px; color: #6c757d;">LETTER + BAST per nama partner, dikirim dalam 1 email berisi 2 lampiran.</p>
+        </div>
+
+        <div class="mode-container">
+            <div class="mode-btn" data-mode="BLAST">🚀 Blast Email Only</div>
+            <div class="mode-btn active" data-mode="GENERATE">📄 Generate & Blast Email</div>
+            <div class="mode-btn" data-mode="NEW_TEMP">✍️ New Template</div>
+        </div>
+
+        <!-- 📊 EXCEL -->
+        <div class="section">
+            <label class="title" style="color: var(--ioh-red);">📊 Upload Data Sumber (Excel)</label>
+            <div id="drop-zone">
+                <b>📥 Tarik & Lepas File Excel di Sini</b><br>
+                <small class="hint">Atau klik untuk memilih file. 1 baris = 1 branch. Branch dengan nama partner yang sama otomatis digabung.</small>
+                <input type="file" id="fileInput" accept=".xlsx, .xls, .xlsb" style="display: none;">
+            </div>
+            <div id="infoBox"></div>
+            <div class="form-group" id="sheetGroup" style="display: none;">
+                <label>📁 Pilih Sheet Data</label>
+                <select id="sheetSelect" class="form-control"></select>
+            </div>
+        </div>
+
+        <!-- 💰 KOMPONEN FEE (kolom Excel lain dibaca otomatis dari judul kolom) -->
+        <div class="section" id="komponenSection" style="display: none;">
+            <label class="title" style="color: var(--ioh-teal);">💰 Komponen Fee</label>
+            <div class="form-group">
+                <label>Kolom yang dijumlahkan menjadi DPP (tampil di tabel atas surat)</label>
+                <div id="komponenChecks"></div>
+                <small class="hint">PPN, PPh23, dan Total dihitung otomatis dari DPP jika kolomnya tidak ada di Excel.</small>
+            </div>
+        </div>
+
+        <!-- 🏢 DAFTAR PARTNER -->
+        <div class="section" id="partnerSection" style="display: none;">
+            <label class="title">🏢 Daftar Partner MDI <span id="partnerCount" style="font-weight: normal; font-size: 13px;"></span></label>
+            <input type="text" id="searchInput" class="form-control" placeholder="🔍 Cari nama partner / branch" style="margin-bottom: 10px;">
+            <div class="table-container">
+                <table>
+                    <thead><tr><th style="width: 40px;"><input type="checkbox" id="checkAll" checked></th><th>Nama Partner</th><th>Branch</th><th>DPP</th><th>Email</th></tr></thead>
+                    <tbody id="partnerTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 📄 UPLOAD PDF (BLAST ONLY) -->
+        <div class="section" id="blastPdfSection" style="display: none; border: 1.5px dashed var(--ioh-pink);">
+            <label class="title" style="color: var(--ioh-pink);">📄 Upload File PDF yang Akan Dikirim</label>
+            <p style="font-size: 12px; margin-top: 0;">Klik tombol Upload untuk membuka popup, lalu tarik &amp; lepas banyak file Surat / BAST sekaligus (atau pilih file / folder). File bisa ditambah lagi kapan saja. Sistem membaca <b>nama partner</b> (atau ID partner) dan <b>type</b> dari nama file, lalu mencocokkannya ke kolom Excel (mis. PARTNER_NAME dan TYPE) untuk mengambil Email To/CC. File dengan partner + type yang sama dikirim dalam 1 email.<br>Contoh nama file: <code>Surat Pemberitahuan ADI CIPTA SURYA TEKNIK, PT_DF.pdf</code> dan <code>BAST ADI CIPTA SURYA TEKNIK, PT_DF.pdf</code>.</p>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>📝 File Surat</label>
+                    <div class="pdf-drop" id="dropSurat" data-jenis="surat">
+                        <button type="button" class="btn-small" data-buka-upload="surat" style="padding: 10px 18px; font-size: 13px;">📂 Upload File Surat</button>
+                        <div class="hint" id="blastSuratList" style="margin-top: 8px; font-weight: bold;">Belum ada file</div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>📑 File BAST</label>
+                    <div class="pdf-drop" id="dropBast" data-jenis="bast">
+                        <button type="button" class="btn-small" data-buka-upload="bast" style="padding: 10px 18px; font-size: 13px;">📂 Upload File BAST</button>
+                        <div class="hint" id="blastBastList" style="margin-top: 8px; font-weight: bold;">Belum ada file</div>
+                    </div>
+                </div>
+            </div>
+            <button type="button" id="btnResetBlastFile" class="btn-small">↺ Kosongkan File</button>
+            <div id="pdfMatchStatus" style="font-size: 12px; margin-top: 10px; max-height: 180px; overflow-y: auto;"></div>
+        </div>
+
+        <!-- 📝 PILIH TEMPLATE (GENERATE & BLAST ONLY) -->
+        <div class="section" id="templateSection">
+            <label class="title" style="color: var(--ioh-teal);">📝 <span id="templateSectionTitle">Pilih Template Surat (Dari Sistem)</span></label>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Jenis Surat</label>
+                    <select id="templateSelect" class="form-control"><option value="">Memuat template...</option></select>
+                </div>
+                <div class="form-group">
+                    <label>Nama Program</label>
+                    <input type="text" id="namaProgram" class="form-control" value="Distribution Fee">
+                    <small class="hint">Dipakai di judul tabel ("DPP ..."), judul BAST, dan isi email.</small>
+                </div>
+            </div>
+        </div>
+
+        <!-- ✍️ NEW TEMPLATE -->
+        <div class="section" id="newTemplateSection" style="display: none; border: 1.5px solid var(--ioh-yellow); background: #fffcf0;">
+            <label class="title" style="color: #b38f00; display: flex; justify-content: space-between; align-items: center;">
+                <span>✍️ Buat Template Surat MDI Manual</span>
+                <button type="button" id="btnSaveNewTemplate" class="btn-small" style="background: var(--ioh-teal); color: #fff;">💾 Simpan Template</button>
+            </label>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Jenis Surat (Perihal & Subject Email)</label>
+                    <input type="text" id="customJenisSurat" class="form-control" placeholder="Contoh: Surat Pemberitahuan Imbalan Jasa Territory Support">
+                </div>
+                <div class="form-group">
+                    <label>Nama Program</label>
+                    <input type="text" id="customNamaProgram" class="form-control" placeholder="Contoh: Territory Support">
+                </div>
+            </div>
+            <p style="font-size: 12px; margin: 0 0 8px 0;">Variabel: <code>{{jenis_surat}}</code> <code>{{nama_program}}</code> <code>{{nama_partner}}</code> <code>{{periode}}</code> <code>{{batas_invoice}}</code> <code>{{pph_persen}}</code>. Format: baris <code>1. ...</code> = daftar bernomor, <code>- ...</code> = sub-poin, <code>**teks**</code> = tebal, baris kosong = paragraf baru.</p>
+            <div class="form-group">
+                <label>Paragraf Pembuka (di atas tabel rincian)</label>
+                <textarea id="customPembuka" class="form-control" rows="3"></textarea>
+            </div>
+            <div class="form-group">
+                <label>Ketentuan Klaim Pembayaran (halaman 2)</label>
+                <textarea id="customKetentuan" class="form-control" rows="12"></textarea>
+            </div>
+            <details class="pengaturan-box" style="margin-bottom: 12px;">
+                <summary style="cursor: pointer; font-weight: bold; font-size: 13px;">⚙️ Pengaturan Layout Surat &amp; BAST</summary>
+                <div class="form-row" style="margin-top: 10px;">
+                    <div class="form-group"><label>Perihal</label><input type="text" id="customPerihal" class="form-control"></div>
+                    <div class="form-group"><label>Judul Tabel Rincian</label><input type="text" id="customJudulTabel" class="form-control"></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label>Label Baris Total</label><input type="text" id="customLabelTotal" class="form-control"></div>
+                    <div class="form-group"><label>Label Wilayah</label><input type="text" id="customLabelWilayah" class="form-control" placeholder="Branch / Region"></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label>Judul BAST (baris ke-2)</label><input type="text" id="customJudulBast" class="form-control"></div>
+                    <div class="form-group"><label>Rincian Perolehan di BAST</label><select id="customRincianBast" class="form-control"><option value="branch">Per Branch</option><option value="komponen">Per Komponen Fee</option></select></div>
+                </div>
+                <small class="hint">Variabel yang bisa dipakai: <code>{{jenis_surat}}</code> <code>{{nama_program}}</code> <code>{{NAMA_PROGRAM}}</code> (huruf besar) <code>{{nama_partner}}</code> <code>{{periode}}</code>.</small>
+            </details>
+            <small class="hint">Kop surat, tabel rincian, tanda tangan, dan BAST otomatis ditambahkan oleh sistem.</small>
+        </div>
+
+        <!-- 📅 DETAIL SURAT -->
+        <div class="section">
+            <label class="title" style="color: var(--ioh-teal);">📅 Detail Surat</label>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Periode Program</label>
+                    <input type="month" id="periodeMonth" class="form-control">
+                </div>
+                <div class="form-group only-surat">
+                    <label>Tanggal Surat</label>
+                    <input type="date" id="tanggalSurat" class="form-control">
+                </div>
+                <div class="form-group only-surat">
+                    <label>Batas Akhir Invoice</label>
+                    <input type="date" id="batasInvoice" class="form-control">
+                </div>
+            </div>
+            <div class="form-row only-surat">
+                <div class="form-group">
+                    <label>Nomor Surat Awal</label>
+                    <input type="number" id="noSuratAwal" class="form-control" placeholder="Contoh: 7340">
+                    <small class="hint">Bertambah 1 untuk tiap partner. Diabaikan jika kolom No Surat di Excel terisi.</small>
+                </div>
+                <div class="form-group">
+                    <label style="display: flex; justify-content: space-between;">Akhiran No. Surat <a href="https://forms.office.com/pages/responsepage.aspx?id=RgIIdyw0LkioZER6T2Ez8bApKyGPSdlJr6bl15GKUB9UM0ZHSTgzWFJDUzAwN0lWQkNWSkhKRlZKTS4u&route=shorturl" target="_blank" style="font-size: 11px;">🔗 Buat No. Surat</a></label>
+                    <input type="text" id="noSuratAkhiran" class="form-control" value="/P00-PHC0/EOM/2026">
+                </div>
+                <div class="form-group" style="max-width: 110px; min-width: 90px;">
+                    <label>PPN (%)</label>
+                    <input type="number" id="ppnPersen" class="form-control" value="11" step="0.01">
+                </div>
+                <div class="form-group" style="max-width: 110px; min-width: 90px;">
+                    <label>PPh23 (%)</label>
+                    <input type="number" id="pphPersen" class="form-control" value="2" step="0.01">
+                </div>
+            </div>
+        </div>
+
+        <!-- ✍️ TANDA TANGAN -->
+        <div class="section only-surat">
+            <label class="title">✍️ Penandatangan</label>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>LETTER - Nama</label>
+                    <input type="text" id="ttdSuratNama" class="form-control" value="David Ferdinand">
+                </div>
+                <div class="form-group">
+                    <label>LETTER - Jabatan</label>
+                    <input type="text" id="ttdSuratJabatan" class="form-control" value="SVP - Head of Sales & Distribution Circle Sumatra">
+                </div>
+                <div class="form-group">
+                    <label>LETTER - Unit</label>
+                    <input type="text" id="ttdSuratUnit" class="form-control" value="Group Sales & Distribution Sumatera">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>LETTER - Cc</label>
+                    <input type="text" id="ccSurat" class="form-control" value="Circle Head, HOR, HOS & HCO">
+                </div>
+                <div class="form-group">
+                    <label>LETTER - Gambar Tanda Tangan (opsional)</label>
+                    <input type="file" id="ttdSuratFile" class="form-control" accept="image/png, image/jpeg">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>BAST Pihak Pertama (Penyetuju & Penandatangan)</label>
+                    <select id="approverSelect" class="form-control">
+                        <option value="rengga" data-nama="Rengga Permana" data-jabatan="Head of Channel Operation Sumatera" data-email="rengga.permana@ioh.co.id" selected>Rengga Permana - Head of Channel Operation Sumatera</option>
+                        <option value="anjar" data-nama="Anjar Budi Kurniawan" data-jabatan="Head of Region North Sumatera" data-email="Anjar.Kurniawan@ioh.co.id">Anjar Budi Kurniawan - Head of Region North Sumatera</option>
+                        <option value="anjaya" data-nama="Anjaya Satriya Adinata" data-jabatan="Head of Region Central Sumatera" data-email="anjaya.adinata@ioh.co.id">Anjaya Satriya Adinata - Head of Region Central Sumatera</option>
+                        <option value="yesias" data-nama="Yesias Petrus Boeboe" data-jabatan="Head of Region South Sumatera" data-email="yesias.boeboe@ioh.co.id">Yesias Petrus Boeboe - Head of Region South Sumatera</option>
+                        <option value="ahmad" data-nama="Ahmad Mujaini" data-jabatan="Head of Distribution North Sumatera" data-email="ahmad.mujaini@ioh.co.id">Ahmad Mujaini - Head of Regional Operation North Sumatera</option>
+                        <option value="agung" data-nama="Agung Hery Purwanto" data-jabatan="Head of Distribution Central Sumatera" data-email="agung.purwanto@ioh.co.id">Agung Hery Purwanto - Head of Regional Operation Central Sumatera</option>
+                        <option value="pompi" data-nama="Pompi Saefudin" data-jabatan="Head of Distribution South Sumatera" data-email="pompi.saefudin@ioh.co.id">Pompi Saefudin - Head of Regional Operation South Sumatera</option>
+                    </select>
+                    <small class="hint">Link persetujuan dikirim ke orang ini. Setelah disetujui, tanda tangannya otomatis masuk ke BAST.</small>
+                </div>
+            </div>
+        </div>
+
+        <button type="button" id="btnSubmit" class="btn-submit">📄 Buat Surat MDI</button>
+
+        <!-- 👁️ PREVIEW -->
+        <div id="previewSection" class="section" style="margin-top: 20px;">
+            <label class="title" style="display: flex; justify-content: space-between; align-items: center;">
+                <span>👁️ Preview Surat <span id="lblBatch" style="font-weight: normal; font-size: 12px; color: #6c757d;"></span></span>
+                <span id="badgeStatus" class="badge badge-wait">Status: Belum Disetujui</span>
+            </label>
+            <div class="preview-wrap">
+                <div id="sidebarList"></div>
+                <div id="previewPane">
+                    <div class="tabs">
+                        <button type="button" class="tab active" data-doc="letter">LETTER</button>
+                        <button type="button" class="tab" data-doc="bast">BAST</button>
+                    </div>
+                    <iframe id="previewFrame"></iframe>
+                    <button type="button" id="btnRequestApproval" class="btn-submit btn-yellow">✉️ Request Persetujuan dan Tanda Tangan</button>
+                    <button type="button" id="btnDownloadAll" class="btn-submit btn-teal locked">📥 Download Semua (ZIP)</button>
+                    <small id="textLockInfo" style="display: block; color: var(--ioh-red); font-weight: 600; font-size: 11px; margin-top: 5px; text-align: center;">*Surat belum ditandatangani. Request persetujuan dulu agar bisa download dan blast email.</small>
+                </div>
+            </div>
+
+            <div id="approvalPanel" style="margin-top: 15px; background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 20px; text-align: center;">
+                <div id="approvalWaiting">
+                    <div class="pulse-spinner"></div>
+                    <b id="approvalStatusText">Mengirim permintaan persetujuan...</b>
+                    <p style="font-size: 13px; color: #6c757d; margin: 6px 0 12px 0;">Link persetujuan dikirim ke <b id="lblSignerInfo" style="color: var(--ioh-teal);"></b>. Halaman ini otomatis berlanjut setelah disetujui.</p>
+                    <button type="button" id="btnSimulateApprove" class="btn-small">⚙️ Mode Simulasi: Langsung Setujui (Auto-Sign)</button>
+                </div>
+                <div id="approvalRejected" style="display: none;">
+                    <div style="font-size: 40px;">❌</div>
+                    <b style="color: var(--ioh-red);">Permintaan Ditolak</b>
+                    <p style="font-size: 13px;">Alasan: <i id="lblRejectionReason">-</i></p>
+                    <p style="font-size: 12px; color: #6c757d;">Perbaiki data di atas lalu klik "Buat Ulang Surat MDI".</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ✉️ EMAIL -->
+        <div id="emailSection" class="section">
+            <label class="title" style="color: var(--ioh-red);">✉️ Blast Email</label>
+            <div class="preview-wrap">
+                <div style="flex: 1.2; min-width: 320px;">
+                    <div class="form-group">
+                        <label>Template Email Tersimpan</label>
+                        <div style="display: flex; gap: 8px;">
+                            <select id="emailTemplateSelect" class="form-control" style="flex: 1;"><option value="">-- Pilih template email --</option></select>
+                            <button type="button" id="btnHapusEmailTemplate" class="btn-small" style="background: none; color: var(--ioh-red); border: 1px solid var(--ioh-red);">🗑️ Hapus</button>
+                        </div>
+                    </div>
+                    <div style="margin-bottom: 12px; background: #f8f9fa; padding: 10px; border-radius: 6px; border: 1px solid #e9ecef;">
+                        <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Sisipkan variabel (klik untuk menambahkan di posisi kursor pada Subject / Isi Email):</label>
+                        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                            <button type="button" class="var-btn" data-var="{{jenis_surat}}">Jenis Surat</button>
+                            <button type="button" class="var-btn" data-var="{{nama_program}}">Nama Program</button>
+                            <button type="button" class="var-btn" data-var="{{nama_partner}}">Nama Partner</button>
+                            <button type="button" class="var-btn" data-var="{{periode}}">Periode</button>
+                            <button type="button" class="var-btn" data-var="{{type}}">Type</button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Judul Email (Subject)</label>
+                        <input type="text" id="emailSubject" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label>Isi Email (Body)</label>
+                        <textarea id="emailBody" class="form-control" rows="16"></textarea>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                        <button type="button" id="btnTerapkanSemua" class="btn-small" style="background: var(--ioh-pink); color: #fff;">✅ Terapkan ke Semua Email</button>
+                        <button type="button" id="btnResetEmail" class="btn-small">↺ Kembalikan Teks Default</button>
+                    </div>
+                    <div style="display: flex; gap: 8px; margin-top: 10px;">
+                        <input type="text" id="namaEmailTemplate" class="form-control" placeholder="Nama template email, mis. Email Tactical" style="flex: 1;">
+                        <button type="button" id="btnSimpanEmailTemplate" class="btn-small" style="background: var(--ioh-teal); color: #fff;">💾 Simpan Template Email</button>
+                    </div>
+                    <div id="emailTemplateStatus" style="font-size: 12px; margin-top: 6px;"></div>
+                    <div id="terapkanStatus" style="font-size: 12px; margin-top: 10px;"></div>
+                </div>
+                <div style="flex: 1; min-width: 300px;">
+                    <label style="font-size: 12px; font-weight: 600;">Preview untuk partner:</label>
+                    <select id="emailPreviewSelect" class="form-control" style="margin: 5px 0 10px 0;"></select>
+                    <div class="preview-box">
+                        <div class="label">Kepada</div><div id="liveTo" style="margin-bottom: 8px; word-break: break-all;"></div>
+                        <div class="label">Subject</div><div id="liveSubject" style="font-weight: 600; margin-bottom: 8px;"></div>
+                        <div class="label">Lampiran</div><div id="liveAttach" style="font-size: 12px; margin-bottom: 8px;"></div>
+                        <div class="label">Isi</div><div id="liveBody"></div>
+                    </div>
+                </div>
+            </div>
+            <button type="button" id="btnSendEmail" class="btn-submit">🚀 Kirim Email ke Semua Partner</button>
+            <div id="sendResult" style="margin-top: 15px;"></div>
+        </div>
+    </div>
+
+    <!-- MODAL KELOLA TEMPLATE -->
+    <div id="uploadModal" class="modal">
+        <div class="modal-content" style="max-width: 720px;">
+            <span class="close-btn" data-close="uploadModal">&times;</span>
+            <h3 style="margin-top: 0; color: var(--ioh-pink); border-bottom: 2px solid #ccc; padding-bottom: 10px;" id="uploadModalTitle">Upload File</h3>
+            <div id="modalDropZone" class="modal-drop">
+                <b>📥 Tarik &amp; Lepas File PDF di Sini</b><br>
+                <small class="hint">Bisa banyak file sekaligus atau 1 folder. Atau klik area ini untuk memilih file.</small>
+            </div>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;">
+                <button type="button" class="btn-small" id="btnModalPilihFile">📄 Pilih File</button>
+                <button type="button" class="btn-small" id="btnModalPilihFolder" style="background: var(--ioh-teal); color: #fff;">📁 Pilih Folder</button>
+                <button type="button" class="btn-small" id="btnModalKosongkan" style="background: none; color: var(--ioh-red); border: 1px solid var(--ioh-red);">🗑️ Kosongkan</button>
+            </div>
+            <input type="file" id="modalFileInput" accept="application/pdf" multiple style="display: none;">
+            <input type="file" id="modalFolderInput" webkitdirectory multiple style="display: none;">
+            <div style="background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 10px; max-height: 260px; overflow-y: auto;">
+                <div style="font-size: 13px; font-weight: bold; margin-bottom: 6px;" id="modalFileCount">0 file</div>
+                <div id="modalFileList" style="font-size: 12px;"></div>
+            </div>
+            <button type="button" id="btnModalSelesai" class="btn-submit btn-teal" style="margin-top: 15px;">✅ Selesai</button>
+        </div>
+    </div>
+
+    <div id="templateModal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" data-close="templateModal">&times;</span>
+            <h3 style="margin-top: 0; color: var(--ioh-pink); border-bottom: 2px solid #ccc; padding-bottom: 10px;">⚙️ Kelola Template Surat MDI</h3>
+            <div class="preview-wrap">
+                <div style="flex: 1; min-width: 260px; background: #fff; border-radius: 8px; padding: 15px; border: 1px solid #ddd; max-height: 560px; overflow-y: auto;">
+                    <h4 style="margin-top: 0;">Daftar Template</h4>
+                    <div id="templateList"></div>
+                </div>
+                <div style="flex: 2; min-width: 320px; background: #fff; border-radius: 8px; padding: 20px; border: 1px solid #ddd;">
+                    <h4 style="margin-top: 0;" id="tplFormTitle">Tambah Template Baru</h4>
+                    <div class="form-group"><label>Kode Template (unik, tanpa spasi)</label><input type="text" id="tplKode" class="form-control" placeholder="Contoh: MDI_TERRITORY_SUPPORT"></div>
+                    <div class="form-group"><label>Jenis Surat</label><input type="text" id="tplJenis" class="form-control"></div>
+                    <div class="form-group"><label>Nama Program</label><input type="text" id="tplProgram" class="form-control"></div>
+                    <div class="form-group"><label>Paragraf Pembuka</label><textarea id="tplPembuka" class="form-control" rows="3"></textarea></div>
+                    <div class="form-group"><label>Ketentuan Klaim Pembayaran</label><textarea id="tplKetentuan" class="form-control" rows="10"></textarea></div>
+                    <details class="pengaturan-box" style="margin-bottom: 12px;">
+                <summary style="cursor: pointer; font-weight: bold; font-size: 13px;">⚙️ Pengaturan Layout Surat &amp; BAST</summary>
+                <div class="form-row" style="margin-top: 10px;">
+                    <div class="form-group"><label>Perihal</label><input type="text" id="tplPerihal" class="form-control"></div>
+                    <div class="form-group"><label>Judul Tabel Rincian</label><input type="text" id="tplJudulTabel" class="form-control"></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label>Label Baris Total</label><input type="text" id="tplLabelTotal" class="form-control"></div>
+                    <div class="form-group"><label>Label Wilayah</label><input type="text" id="tplLabelWilayah" class="form-control" placeholder="Branch / Region"></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label>Judul BAST (baris ke-2)</label><input type="text" id="tplJudulBast" class="form-control"></div>
+                    <div class="form-group"><label>Rincian Perolehan di BAST</label><select id="tplRincianBast" class="form-control"><option value="branch">Per Branch</option><option value="komponen">Per Komponen Fee</option></select></div>
+                </div>
+                <small class="hint">Variabel yang bisa dipakai: <code>{{jenis_surat}}</code> <code>{{nama_program}}</code> <code>{{NAMA_PROGRAM}}</code> (huruf besar) <code>{{nama_partner}}</code> <code>{{periode}}</code>.</small>
+            </details>
+                    <div style="display: flex; gap: 10px;">
+                        <button type="button" id="btnTplSave" class="btn-submit btn-teal" style="margin-top: 0;">💾 Simpan Template</button>
+                        <button type="button" id="btnTplReset" class="btn-submit btn-yellow" style="margin-top: 0;">Batal</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL RIWAYAT -->
+    <div id="historyModal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" data-close="historyModal">&times;</span>
+            <button type="button" id="btnClearHistory" class="btn-link-sm" style="background: var(--ioh-red); float: right; margin-right: 15px; font-size: 12px; padding: 6px 12px;">🗑️ Hapus Semua Riwayat MDI</button>
+            <h3 id="historyTitle" style="margin-top: 0; color: var(--ioh-teal); border-bottom: 2px solid #ccc; padding-bottom: 10px;">🗂️ Riwayat Surat MDI</h3>
+            <div id="historyBody"></div>
+        </div>
+    </div>
+
+    <script>
+        const BULAN = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+        const DEFAULT_SUBJECT = '{{jenis_surat}} MPC {{nama_partner}} Periode {{periode}}';
+        const DEFAULT_BODY = `Rekan MPC yang terhormat,
+
+Kami sampaikan Surat {{nama_program}} MPC {{nama_partner}} Periode {{periode}} Untuk klaim imbalan jasa ini, mohon agar dapat mengikuti ketentuan klaim yang tertulis dalam surat terlampir.
+
+Sesuai dengan prosedur yang berlaku, proses klaim tersebut dilakukan melalui COUPA.
+Apabila ada hal yang kurang jelas, dapat menghubungi:
+- Saila Mahdina Tasha - saila.tasha@ioh.co.id
+- Irfan Awal Fahreza - irfan.fahreza@ioh.co.id
+- Rika Marselia - rika.marselia@ioh.co.id
+
+Demikian kami sampaikan, terima kasih atas perhatian dan kerjasamanya.
+
+Terima kasih,
+Sales Performance Management Sumatera`;
+
+        // Kolom Excel dibaca otomatis berdasarkan judul kolom (tidak perlu dicocokkan manual)
+        const MAPPING = [
+            { key: 'partner', label: 'Nama Partner *', cocok: ['partner name', 'nama partner', 'partner_name', 'nama mpc', 'mpc', 'partner', 'nama mitra', 'mitra'] },
+            { key: 'branch', label: 'Branch *', cocok: ['branch', 'nama branch', 'cabang'], surat: true },
+            { key: 'email_to', label: 'Email To', cocok: ['email to', 'email_to', 'email'], tolak: 'cc' },
+            { key: 'email_cc', label: 'Email CC', cocok: ['email cc', 'email_cc', 'cc'] },
+            { key: 'type', label: 'Type', cocok: ['type', 'tipe', 'type program', 'program type'] },
+            { key: 'partner_id', label: 'ID Partner', cocok: ['partner id', 'partner_id', 'id partner', 'id_partner', 'vendor id', 'vendor_id', 'kode vendor', 'vendor code', 'kode partner', 'supplier id', 'id mpc'] },
+            { key: 'pic_nama', label: 'Nama Pihak Kedua (BAST)', cocok: ['nama pic', 'nama direktur', 'pic', 'direktur', 'nama pihak kedua', 'pihak kedua'], surat: true },
+            { key: 'pic_jabatan', label: 'Jabatan Pihak Kedua (BAST)', cocok: ['jabatan pic', 'jabatan', 'jabatan direktur'], surat: true },
+            { key: 'no_surat', label: 'No Surat (opsional)', cocok: ['no surat', 'nomor surat', 'no_surat', 'no ref'], surat: true },
+            { key: 'ppn', label: 'PPN (opsional)', cocok: ['ppn'], surat: true },
+            { key: 'pph', label: 'PPh23 (opsional)', cocok: ['pph23', 'pph 23', 'pph'], surat: true },
+            { key: 'total', label: 'Total Transfer (opsional)', cocok: ['total transfer', 'total'], surat: true },
+        ];
+        const KOMPONEN_DEFAULT = ['sla', 'territory development support', 'tactical & turs', 'tactical', 'sales margin', 'sales support'];
+
+        let appMode = 'GENERATE';
+        let allSheets = {};
+        let rows = [];
+        let columns = [];
+        let kolomMap = {};
+        let partners = [];
+        let templates = [];
+        let defaultPembuka = '';
+        let defaultKetentuan = '';
+        let defaultPengaturan = {};
+        let hasilGenerate = [];
+        let batchId = null;
+        let isApproved = false;
+        let approvalPending = false;
+        let pollingInterval = null;
+        let activeIndex = 0;
+        let activeDoc = 'letter';
+        let jenisSuratAktif = '';
+        let namaProgramAktif = '';
+
+        const $ = (id) => document.getElementById(id);
+        const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const toNumber = (v) => {
+            if (typeof v === 'number') return v;
+            const s = String(v ?? '').trim();
+            if (s === '' || s === '-') return 0;
+            const n = Number(s.replace(/[^0-9]/g, ''));
+            return s.includes('-') ? -n : n;
+        };
+        const formatRp = (n) => `${n < 0 ? '-' : ''}Rp.${Math.abs(Math.round(n)).toLocaleString('id-ID')}`;
+        // Alamat email dari sel Excel: dipecah di ; , spasi, baris baru, tab; karakter tak terlihat dibuang.
+        // Bentuk "Nama <email>" / "mailto:" diambil alamatnya. Potongan berisi "@" yang formatnya salah dicatat sebagai tidak valid.
+        const POLA_EMAIL = /^[A-Za-z0-9._%+'-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$/;
+        function bacaEmail(nilai) {
+            const valid = [], invalid = [];
+            String(nilai ?? '')
+                .replace(/[\u00A0\u200B-\u200D\u2060\uFEFF]/g, ' ')
+                .replace(/mailto:/gi, ' ')
+                .split(/[;,\s]+/)
+                .map(x => x.replace(/^[<("'\[]+|[>)"'\].:]+$/g, '').trim())
+                .filter(Boolean)
+                .forEach(x => {
+                    if (POLA_EMAIL.test(x)) valid.push(x);
+                    else if (x.includes('@')) invalid.push(x);
+                });
+            return { valid, invalid };
+        }
+        function tambahEmail(arr, nilai, catatInvalid) {
+            const { valid, invalid } = bacaEmail(nilai);
+            valid.forEach(e => { if (!arr.some(x => x.toLowerCase() === e.toLowerCase())) arr.push(e); });
+            if (catatInvalid) invalid.forEach(catatInvalid);
+        }
+        const normalisasi = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+        // ---------------- DEFAULT TANGGAL & PERIODE ----------------
+        (function initTanggal() {
+            const now = new Date();
+            const pad = (n) => String(n).padStart(2, '0');
+            const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+            $('periodeMonth').value = `${prev.getFullYear()}-${pad(prev.getMonth() + 1)}`;
+            $('tanggalSurat').value = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+            const batas = new Date(now.getTime() + 6 * 86400000);
+            $('batasInvoice').value = `${batas.getFullYear()}-${pad(batas.getMonth() + 1)}-${pad(batas.getDate())}`;
+            $('noSuratAkhiran').value = `/P00-PHC0/EOM/${now.getFullYear()}`;
+        })();
+
+        function getPeriode() {
+            const v = $('periodeMonth').value;
+            if (!v) return '';
+            const [y, m] = v.split('-');
+            return `${BULAN[Number(m) - 1]} ${y}`;
+        }
+
+        // Pengaturan layout (perihal, judul tabel, label, BAST) dibaca/diisi dari form dengan prefix custom/tpl
+        const FIELD_PENGATURAN = { perihal: 'Perihal', judul_tabel: 'JudulTabel', label_total: 'LabelTotal', label_wilayah: 'LabelWilayah', judul_bast: 'JudulBast', rincian_bast: 'RincianBast' };
+        function bacaFormPengaturan(prefix) {
+            const hasil = {};
+            Object.entries(FIELD_PENGATURAN).forEach(([key, id]) => hasil[key] = $(prefix + id).value.trim());
+            return hasil;
+        }
+        function isiFormPengaturan(prefix, nilai) {
+            const p = { ...defaultPengaturan, ...(nilai || {}) };
+            Object.entries(FIELD_PENGATURAN).forEach(([key, id]) => $(prefix + id).value = p[key] || '');
+        }
+
+        // Jenis surat, nama program, dan isi surat sesuai mode aktif
+        function getIsiTemplate() {
+            if (appMode === 'NEW_TEMP') {
+                return { jenis_surat: $('customJenisSurat').value.trim(), nama_program: $('customNamaProgram').value.trim(), isi_pembuka: $('customPembuka').value, isi_ketentuan: $('customKetentuan').value, pengaturan: bacaFormPengaturan('custom') };
+            }
+            const t = templates.find(x => x.kode === $('templateSelect').value) || {};
+            return { jenis_surat: t.jenis_surat || '', nama_program: $('namaProgram').value.trim(), isi_pembuka: t.isi_pembuka || defaultPembuka, isi_ketentuan: t.isi_ketentuan || defaultKetentuan, pengaturan: t.pengaturan || defaultPengaturan };
+        }
+
+        // ---------------- MODE ----------------
+        function setAppMode(mode) {
+            appMode = mode;
+            document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+            const blast = mode === 'BLAST';
+            document.querySelectorAll('.only-surat').forEach(el => el.style.display = blast ? 'none' : '');
+            $('blastPdfSection').style.display = blast ? 'block' : 'none';
+            $('templateSection').style.display = mode === 'NEW_TEMP' ? 'none' : 'block';
+            $('newTemplateSection').style.display = mode === 'NEW_TEMP' ? 'block' : 'none';
+            $('templateSectionTitle').innerText = blast ? 'Jenis Surat (untuk subject & isi email)' : 'Pilih Template Surat (Dari Sistem)';
+            $('btnSubmit').innerText = blast ? '🔗 Cocokkan PDF & Buka Blast Email' : mode === 'NEW_TEMP' ? '📄 Generate Surat dari Template Baru' : '📄 Buat Surat MDI';
+            if (mode === 'NEW_TEMP' && !$('customKetentuan').value) {
+                $('customPembuka').value = defaultPembuka;
+                $('customKetentuan').value = defaultKetentuan;
+                isiFormPengaturan('custom');
+            }
+            if (columns.length) renderMapping();
+            tampilkanSectionExcel();
+            if (blast) cocokkanPdf();
+        }
+        // Mode Blast: partner dibaca dari nama file PDF, jadi tabel partner & komponen tidak ditampilkan
+        function tampilkanSectionExcel() {
+            const ada = columns.length > 0 && appMode !== 'BLAST';
+            $('komponenSection').style.display = ada ? 'block' : 'none';
+            $('partnerSection').style.display = ada ? 'block' : 'none';
+        }
+        document.querySelectorAll('.mode-btn').forEach(b => b.addEventListener('click', () => setAppMode(b.dataset.mode)));
+
+        // ---------------- TEMPLATE ----------------
+        async function loadTemplates(pilih) {
+            try {
+                const res = await fetch('/api/mdi/templates');
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error);
+                templates = data.data;
+                defaultPembuka = data.default_pembuka;
+                defaultKetentuan = data.default_ketentuan;
+                defaultPengaturan = data.default_pengaturan || {};
+                const sebelumnya = pilih || $('templateSelect').value;
+                $('templateSelect').innerHTML = templates.map(t => `<option value="${esc(t.kode)}">${esc(t.jenis_surat)}</option>`).join('');
+                if (templates.some(t => t.kode === sebelumnya)) $('templateSelect').value = sebelumnya;
+                $('templateSelect').dispatchEvent(new Event('change'));
+                renderTemplateList();
+            } catch (err) {
+                $('templateSelect').innerHTML = '<option value="">Gagal memuat template</option>';
+            }
+        }
+        $('templateSelect').addEventListener('change', function() {
+            const t = templates.find(x => x.kode === this.value);
+            if (t) $('namaProgram').value = t.nama_program;
+            updateEmailPreview();
+        });
+        ['namaProgram', 'periodeMonth', 'customJenisSurat', 'customNamaProgram'].forEach(id => $(id).addEventListener('input', updateEmailPreview));
+
+        async function simpanTemplate(data) {
+            const res = await fetch('/api/mdi/templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+            const hasil = await res.json();
+            if (!hasil.success) throw new Error(hasil.error);
+            await loadTemplates(hasil.kode);
+            return hasil;
+        }
+
+        $('btnSaveNewTemplate').addEventListener('click', async () => {
+            const isi = getIsiTemplate();
+            if (!isi.jenis_surat || !isi.nama_program) return alert('Isi Jenis Surat dan Nama Program terlebih dahulu.');
+            const kode = prompt('Kode template (unik, tanpa spasi):', 'MDI_' + normalisasi(isi.nama_program).toUpperCase());
+            if (!kode) return;
+            try {
+                await simpanTemplate({ kode, ...isi });
+                alert('Template MDI berhasil disimpan dan bisa dipilih di mode Generate.');
+            } catch (err) { alert('Gagal menyimpan template: ' + err.message); }
+        });
+
+        function renderTemplateList() {
+            $('templateList').innerHTML = templates.map(t => `
+                <div class="tpl-item" data-kode="${esc(t.kode)}">
+                    <div><b style="color: var(--ioh-teal); font-size: 12px;">${esc(t.kode)}</b><br><span style="font-size: 12px;">${esc(t.jenis_surat)}</span></div>
+                    ${Number(t.is_system) === 1 ? '<small class="hint">sistem</small>' : `<button type="button" class="btn-small tpl-hapus" data-kode="${esc(t.kode)}" style="background: none; color: var(--ioh-red);">🗑️</button>`}
+                </div>`).join('');
+            document.querySelectorAll('.tpl-item').forEach(el => el.addEventListener('click', () => isiFormTemplate(el.dataset.kode)));
+            document.querySelectorAll('.tpl-hapus').forEach(el => el.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                if (!confirm(`Hapus template ${el.dataset.kode}?`)) return;
+                await fetch(`/api/mdi/templates/${encodeURIComponent(el.dataset.kode)}`, { method: 'DELETE' });
+                resetFormTemplate();
+                loadTemplates();
+            }));
+        }
+        function isiFormTemplate(kode) {
+            const t = templates.find(x => x.kode === kode);
+            if (!t) return;
+            $('tplFormTitle').innerText = `Edit Template: ${t.kode}`;
+            $('tplKode').value = t.kode;
+            $('tplKode').readOnly = true;
+            $('tplJenis').value = t.jenis_surat;
+            $('tplProgram').value = t.nama_program;
+            $('tplPembuka').value = t.isi_pembuka || '';
+            $('tplKetentuan').value = t.isi_ketentuan || '';
+            isiFormPengaturan('tpl', t.pengaturan);
+        }
+        function resetFormTemplate() {
+            $('tplFormTitle').innerText = 'Tambah Template Baru';
+            $('tplKode').readOnly = false;
+            ['tplKode', 'tplJenis', 'tplProgram'].forEach(id => $(id).value = '');
+            $('tplPembuka').value = defaultPembuka;
+            $('tplKetentuan').value = defaultKetentuan;
+            isiFormPengaturan('tpl');
+        }
+        $('btnTplReset').addEventListener('click', resetFormTemplate);
+        $('btnTplSave').addEventListener('click', async () => {
+            try {
+                await simpanTemplate({ kode: $('tplKode').value, jenis_surat: $('tplJenis').value, nama_program: $('tplProgram').value, isi_pembuka: $('tplPembuka').value, isi_ketentuan: $('tplKetentuan').value, pengaturan: bacaFormPengaturan('tpl') });
+                alert('Template berhasil disimpan!');
+                resetFormTemplate();
+            } catch (err) { alert('Gagal menyimpan template: ' + err.message); }
+        });
+        $('btnOpenTemplateManager').addEventListener('click', () => { resetFormTemplate(); $('templateModal').style.display = 'block'; });
+        document.querySelectorAll('[data-close]').forEach(el => el.addEventListener('click', () => $(el.dataset.close).style.display = 'none'));
+
+        // ---------------- UPLOAD EXCEL ----------------
+        const dropZone = $('drop-zone');
+        dropZone.addEventListener('click', () => $('fileInput').click());
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.classList.remove('dragover'); if (e.dataTransfer.files[0]) uploadExcel(e.dataTransfer.files[0]); });
+        $('fileInput').addEventListener('change', (e) => { if (e.target.files[0]) uploadExcel(e.target.files[0]); });
+
+        async function uploadExcel(file) {
+            $('infoBox').innerText = `⏳ Membaca ${file.name}...`;
+            const formData = new FormData();
+            formData.append('excelFile', file);
+            try {
+                const res = await fetch('/upload-sdp', { method: 'POST', body: formData });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error);
+                allSheets = data.parsedData;
+                $('sheetSelect').innerHTML = data.sheetNames.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+                const mdiSheet = data.sheetNames.find(s => /mdi|mpc|mpx/i.test(s)) || data.sheetNames[0];
+                $('sheetSelect').value = mdiSheet;
+                $('sheetGroup').style.display = 'block';
+                $('infoBox').innerText = `✅ ${file.name} terbaca (${data.sheetNames.length} sheet)`;
+                loadSheet(mdiSheet);
+            } catch (err) {
+                $('infoBox').innerText = `❌ Gagal membaca Excel: ${err.message}`;
+            }
+        }
+        $('sheetSelect').addEventListener('change', function() { loadSheet(this.value); });
+
+        function loadSheet(name) {
+            rows = allSheets[name] || [];
+            columns = [];
+            rows.forEach(r => Object.keys(r).forEach(k => { if (!k.startsWith('__EMPTY') && !columns.includes(k)) columns.push(k); }));
+            renderMapping();
+            tampilkanSectionExcel();
+        }
+
+        function tebakKolom(cocok, tolak, kolom = columns) {
+            const lower = kolom.map(c => (tolak && c.toLowerCase().includes(tolak)) ? '' : c.toLowerCase().trim());
+            for (const kata of cocok) {
+                const idx = lower.indexOf(kata);
+                if (idx >= 0) return kolom[idx];
+            }
+            for (const kata of cocok) {
+                const idx = lower.findIndex(c => c.includes(kata));
+                if (idx >= 0) return kolom[idx];
+            }
+            return '';
+        }
+
+        function renderMapping() {
+            const komponenSebelumnya = document.querySelectorAll('.komponen-check').length ? getKomponen() : null;
+            const dipakai = [];
+            kolomMap = {};
+            MAPPING.forEach(m => {
+                let tebakan = tebakKolom(m.cocok, m.tolak);
+                if (dipakai.includes(tebakan)) tebakan = '';
+                if (tebakan) dipakai.push(tebakan);
+                kolomMap[m.key] = tebakan;
+            });
+
+            const numerik = columns.filter(c => !dipakai.includes(c) && rows.some(r => typeof r[c] === 'number'));
+            $('komponenChecks').innerHTML = numerik.length === 0
+                ? '<i style="font-size: 12px; color: #888;">Tidak ada kolom angka yang terdeteksi.</i>'
+                : numerik.map(c => {
+                    const centang = komponenSebelumnya ? komponenSebelumnya.includes(c) : KOMPONEN_DEFAULT.includes(c.toLowerCase().trim());
+                    return `<label class="chip"><input type="checkbox" class="komponen-check" value="${esc(c)}" ${centang ? 'checked' : ''}> ${esc(c)}</label>`;
+                }).join('');
+
+            document.querySelectorAll('.komponen-check').forEach(el => el.addEventListener('change', buildPartners));
+            buildPartners();
+        }
+
+        const getMapping = () => kolomMap;
+        const getKomponen = () => Array.from(document.querySelectorAll('.komponen-check:checked')).map(c => c.value);
+
+        // Gabungkan baris per nama partner (unik = nama partner, beda branch tetap 1 surat)
+        function buildPartners() {
+            const map = getMapping();
+            const komponen = getKomponen();
+            const grup = new Map();
+            if (map.partner) {
+                rows.forEach(r => {
+                    const nama = String(r[map.partner] ?? '').trim();
+                    if (!nama) return;
+                    const kunci = nama.toUpperCase().replace(/\s+/g, ' ');
+                    if (!grup.has(kunci)) grup.set(kunci, { partner_name: nama, branches: [], email_to: [], email_cc: [], pic_nama: '', pic_jabatan: '', no_surat: '' });
+                    const p = grup.get(kunci);
+                    const branch = { nama: map.branch ? String(r[map.branch] ?? '').trim() : '', komponen: {} };
+                    komponen.forEach(k => branch.komponen[k] = toNumber(r[k]));
+                    if (map.ppn && r[map.ppn] !== '') branch.ppn = toNumber(r[map.ppn]);
+                    if (map.pph && r[map.pph] !== '') branch.pph = toNumber(r[map.pph]);
+                    if (map.total && r[map.total] !== '') branch.total = toNumber(r[map.total]);
+                    p.branches.push(branch);
+                    if (map.email_to) tambahEmail(p.email_to, r[map.email_to]);
+                    if (map.email_cc) tambahEmail(p.email_cc, r[map.email_cc]);
+                    if (map.pic_nama && !p.pic_nama) p.pic_nama = String(r[map.pic_nama] ?? '').trim();
+                    if (map.pic_jabatan && !p.pic_jabatan) p.pic_jabatan = String(r[map.pic_jabatan] ?? '').trim();
+                    if (map.no_surat && !p.no_surat) p.no_surat = String(r[map.no_surat] ?? '').trim();
+                });
+            }
+            partners = Array.from(grup.values()).map(p => ({ ...p, dpp: p.branches.reduce((s, b) => s + Object.values(b.komponen).reduce((a, v) => a + v, 0), 0), checked: true }));
+            renderPartnerTable();
+            if (appMode === 'BLAST') cocokkanPdf();
+        }
+
+        function renderPartnerTable() {
+            const q = $('searchInput').value.toLowerCase();
+            const tbody = $('partnerTableBody');
+            if (!getMapping().partner) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: red; font-weight: bold;">Kolom nama partner tidak ditemukan di Excel. Beri judul kolom "PARTNER_NAME" atau "Nama Partner".</td></tr>';
+                $('partnerCount').innerText = '';
+                return;
+            }
+            tbody.innerHTML = partners.map((p, i) => {
+                const cari = `${p.partner_name} ${p.branches.map(b => b.nama).join(' ')}`.toLowerCase();
+                if (q && !cari.includes(q)) return '';
+                return `<tr>
+                    <td style="text-align: center;"><input type="checkbox" class="partner-check" data-index="${i}" ${p.checked ? 'checked' : ''}></td>
+                    <td><b>${esc(p.partner_name)}</b></td>
+                    <td>${esc(p.branches.map(b => b.nama).join(', '))} <small class="hint">(${p.branches.length})</small></td>
+                    <td class="num">${formatRp(p.dpp)}</td>
+                    <td style="font-size: 11px; word-break: break-all;">${p.email_to.length ? esc(p.email_to.join('; ')) : '<span class="status-fail">Kosong</span>'}</td>
+                </tr>`;
+            }).join('') || '<tr><td colspan="5" style="text-align: center;">-- Tidak ada data --</td></tr>';
+            document.querySelectorAll('.partner-check').forEach(c => c.addEventListener('change', function() { partners[this.dataset.index].checked = this.checked; updateCount(); if (appMode === 'BLAST') cocokkanPdf(); }));
+            updateCount();
+        }
+        function updateCount() {
+            $('partnerCount').innerText = `(${partners.filter(p => p.checked).length} dipilih dari ${partners.length} partner, ${rows.length} baris)`;
+        }
+        $('searchInput').addEventListener('input', renderPartnerTable);
+        $('checkAll').addEventListener('change', function() { partners.forEach(p => p.checked = this.checked); renderPartnerTable(); });
+
+        // ---------------- BLAST EMAIL ONLY: COCOKKAN PDF ----------------
+        // File Surat & BAST diupload terpisah (bisa berkali-kali, file menumpuk). Tiap file dicocokkan ke
+        // baris Excel berdasarkan nama partner (atau ID partner) + type yang tertulis di nama file.
+        let blastFiles = { surat: [], bast: [] };
+        let hasilCocok = [];
+        let fileTidakCocok = [];
+        const tokenNama = (s) => ` ${String(s ?? '').toLowerCase().replace(/\.pdf$/, '').replace(/[^a-z0-9]+/g, ' ').trim()} `;
+        const tanpaNolDepan = (s) => String(s ?? '').trim().replace(/^0+/, '');
+
+        // File baru selalu ditambahkan (tidak menimpa). Hanya PDF yang diambil, misalnya saat memilih 1 folder.
+        function tambahFile(jenis, daftar) {
+            Array.from(daftar || []).filter(f => /\.pdf$/i.test(f.name)).forEach(f => {
+                if (!blastFiles[jenis].some(x => x.name === f.name)) {
+                    blastFiles[jenis].push(f);
+                    bacaIsiFile(f).then(cocokkanPdf);
+                }
+            });
+            cocokkanPdf();
+        }
+
+        // Isi PDF dibaca langsung saat file ditambahkan, agar file yang tidak bisa dibaca browser
+        // (mis. file OneDrive yang belum terunduh / sudah dipindah) ketahuan sebelum email dikirim.
+        const isiFile = new WeakMap();
+        function bacaIsiFile(f) {
+            if (!isiFile.has(f)) {
+                const proses = f.arrayBuffer().then(buf => {
+                    const bytes = new Uint8Array(buf);
+                    if (bytes.length === 0) throw new Error('file kosong (0 byte)');
+                    let biner = '';
+                    for (let i = 0; i < bytes.length; i += 0x8000) biner += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+                    return { b64: btoa(biner), ukuran: bytes.length };
+                }).catch(err => ({ error: err.message || 'tidak bisa dibaca' }));
+                proses.then(hasil => proses.hasil = hasil);
+                isiFile.set(f, proses);
+            }
+            return isiFile.get(f);
+        }
+        const statusFile = (f) => isiFile.get(f)?.hasil;
+        // Popup upload: drag & drop / pilih file / pilih folder, untuk Surat atau BAST
+        let jenisUpload = 'surat';
+        const pasangDrop = (zona, ambilJenis) => {
+            zona.addEventListener('dragover', (e) => { e.preventDefault(); zona.classList.add('dragover'); });
+            zona.addEventListener('dragleave', () => zona.classList.remove('dragover'));
+            zona.addEventListener('drop', async (e) => {
+                e.preventDefault();
+                zona.classList.remove('dragover');
+                tambahFile(ambilJenis(), await ambilFileDrop(e.dataTransfer));
+            });
+        };
+        function renderModalUpload() {
+            const daftar = blastFiles[jenisUpload];
+            $('modalFileCount').innerText = `${daftar.length} file ${jenisUpload === 'surat' ? 'Surat' : 'BAST'}`;
+            $('modalFileList').innerHTML = daftar.length === 0
+                ? '<i style="color: #888;">Belum ada file.</i>'
+                : daftar.map((f, i) => {
+                    const st = statusFile(f);
+                    const info = !st ? '<small class="hint">⏳ membaca...</small>' : st.error ? `<small class="status-fail">❌ tidak bisa dibaca: ${esc(st.error)}</small>` : `<small class="hint">${Math.round(st.ukuran / 1024)} KB</small>`;
+                    return `<div class="file-row"><span>📄 ${esc(f.name)} ${info}</span><button type="button" data-hapus-file="${i}" title="Hapus">✕</button></div>`;
+                }).join('');
+            document.querySelectorAll('[data-hapus-file]').forEach(btn => btn.addEventListener('click', () => {
+                blastFiles[jenisUpload].splice(Number(btn.dataset.hapusFile), 1);
+                cocokkanPdf();
+            }));
+        }
+        function bukaUpload(jenis) {
+            jenisUpload = jenis;
+            $('uploadModalTitle').innerText = jenis === 'surat' ? '📝 Upload File Surat' : '📑 Upload File BAST';
+            renderModalUpload();
+            $('uploadModal').style.display = 'block';
+        }
+        document.querySelectorAll('[data-buka-upload]').forEach(btn => btn.addEventListener('click', () => bukaUpload(btn.dataset.bukaUpload)));
+        document.querySelectorAll('.pdf-drop[data-jenis]').forEach(zona => pasangDrop(zona, () => zona.dataset.jenis));
+        pasangDrop($('modalDropZone'), () => jenisUpload);
+        $('modalDropZone').addEventListener('click', () => $('modalFileInput').click());
+        $('btnModalPilihFile').addEventListener('click', () => $('modalFileInput').click());
+        $('btnModalPilihFolder').addEventListener('click', () => $('modalFolderInput').click());
+        ['modalFileInput', 'modalFolderInput'].forEach(id => $(id).addEventListener('change', function() { tambahFile(jenisUpload, this.files); this.value = ''; }));
+        $('btnModalKosongkan').addEventListener('click', () => { blastFiles[jenisUpload] = []; cocokkanPdf(); });
+        $('btnModalSelesai').addEventListener('click', () => $('uploadModal').style.display = 'none');
+
+        // Drag & drop: file biasa atau folder (isi folder dibaca rekursif)
+        async function ambilFileDrop(dt) {
+            const entries = Array.from(dt.items || []).map(it => it.webkitGetAsEntry && it.webkitGetAsEntry()).filter(Boolean);
+            if (entries.length === 0) return Array.from(dt.files || []);
+            const hasil = [];
+            const baca = async (entry) => {
+                if (entry.isFile) return hasil.push(await new Promise((res, rej) => entry.file(res, rej)));
+                const reader = entry.createReader();
+                let batch;
+                do {
+                    batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+                    for (const e of batch) await baca(e);
+                } while (batch.length > 0);
+            };
+            for (const e of entries) await baca(e);
+            return hasil;
+        }
+        $('btnResetBlastFile').addEventListener('click', () => { blastFiles = { surat: [], bast: [] }; cocokkanPdf(); });
+
+        // Target blast = kombinasi unik nama partner + type dari Excel
+        // Sheet terpilih dibaca dulu. Kombinasi partner + type yang tidak ada di sheet itu dilengkapi dari sheet lain
+        // (mis. baris MP3 ada di sheet berbeda dengan baris MPC).
+        function buildTargetBlast() {
+            const grup = new Map();
+            const sheetLain = Object.keys(allSheets).filter(s => allSheets[s] !== rows);
+            const namaSheet = [$('sheetSelect').value, ...sheetLain];
+            [rows, ...sheetLain.map(s => allSheets[s] || [])].forEach((dataSheet, urutan) => {
+                const kolomSheet = [];
+                dataSheet.forEach(r => Object.keys(r).forEach(k => { if (!k.startsWith('__EMPTY') && !kolomSheet.includes(k)) kolomSheet.push(k); }));
+                const map = {};
+                MAPPING.forEach(m => map[m.key] = tebakKolom(m.cocok, m.tolak, kolomSheet));
+                if (!map.partner || (urutan > 0 && !map.email_to)) return;
+                const kunciSheet = new Set();
+                dataSheet.forEach((r, idxBaris) => {
+                    const nama = String(r[map.partner] ?? '').trim();
+                    if (!nama) return;
+                    const type = map.type ? String(r[map.type] ?? '').trim() : '';
+                    const key = `${nama.toUpperCase().replace(/\s+/g, ' ')}|${type.toUpperCase()}`;
+                    if (urutan > 0 && grup.has(key) && !kunciSheet.has(key)) return;
+                    kunciSheet.add(key);
+                    if (!grup.has(key)) grup.set(key, { key, partner_name: nama, type, partner_id: '', email_to: [], email_cc: [], email_invalid: [] });
+                    const t = grup.get(key);
+                    // Nomor baris Excel (baris 1 = judul kolom) untuk menunjukkan sel yang bermasalah
+                    const lokasi = (kolom) => (alamat) => t.email_invalid.push(`"${alamat}" (sheet ${namaSheet[urutan]}, kolom ${kolom}, baris ${idxBaris + 2})`);
+                    if (map.email_to) tambahEmail(t.email_to, r[map.email_to], lokasi(map.email_to));
+                    if (map.email_cc) tambahEmail(t.email_cc, r[map.email_cc], lokasi(map.email_cc));
+                    if (map.partner_id && !t.partner_id) t.partner_id = String(r[map.partner_id] ?? '').trim();
+                });
+            });
+            return Array.from(grup.values());
+        }
+
+        // Type di nama file: type yang dikenal dari Excel (terpanjang), atau kata terakhir nama file (mis. "..._MP3.pdf")
+        const KATA_UMUM = ['surat', 'pemberitahuan', 'bast', 'letter', 'attachment', 'com', 'incentive', 'pt', 'cv', 'tbk', 'final', 'signed', 'copy'];
+        function bacaTypeFile(file, partner, semuaType) {
+            const tokenFile = tokenNama(file.name);
+            const dikenal = semuaType.filter(t => tokenFile.includes(tokenNama(t))).sort((a, b) => b.length - a.length);
+            if (dikenal.length) return dikenal[0];
+            const kataPartner = tokenNama(partner.partner_name).trim().split(' ');
+            const akhir = tokenFile.trim().split(' ').pop();
+            return akhir && /^[a-z0-9]{2,8}$/.test(akhir) && !/^\d+$/.test(akhir) && !kataPartner.includes(akhir) && !KATA_UMUM.includes(akhir) ? akhir.toUpperCase() : '';
+        }
+
+        function cariTarget(file, targets) {
+            const namaFile = normalisasi(file.name);
+            const token = tokenNama(file.name).trim().split(' ');
+            // Skor partner: ID partner cocok paling kuat, lalu nama partner terpanjang (agar "ABC JAYA" tidak tertukar dengan "ABC")
+            const skor = (t) => {
+                if (t.partner_id && token.some(x => tanpaNolDepan(x) && tanpaNolDepan(x) === tanpaNolDepan(t.partner_id.toLowerCase()))) return 10000;
+                const n = normalisasi(t.partner_name);
+                return n && namaFile.includes(n) ? n.length : 0;
+            };
+            const berskor = targets.map(t => ({ t, s: skor(t) })).filter(x => x.s > 0);
+            if (berskor.length === 0) return { alasan: 'nama partner tidak ditemukan di Excel' };
+            const terbaik = Math.max(...berskor.map(x => x.s));
+            const kandidat = berskor.filter(x => x.s === terbaik).map(x => x.t);
+            if (kandidat.length === 1 && !kandidat[0].type) return { target: kandidat[0] };
+            // Partner punya beberapa type: pilih type yang tertulis di nama file (type terpanjang menang)
+            const tokenFile = tokenNama(file.name);
+            const cocokType = kandidat.filter(t => t.type && tokenFile.includes(tokenNama(t.type)));
+            if (cocokType.length === 0) {
+                // Type di file (mis. MP3) tidak ada di Excel untuk partner ini: tetap dikirim sebagai email terpisah
+                // memakai Email To/CC partner yang sama dari type lain, dengan peringatan.
+                const semuaType = [...new Set(targets.map(t => t.type).filter(Boolean))];
+                const typeFile = bacaTypeFile(file, kandidat[0], semuaType);
+                if (!typeFile) return { alasan: `type tidak terbaca dari nama file (type partner ini di Excel: ${kandidat.map(t => t.type || '-').join(', ')})` };
+                const sumber = kandidat[0];
+                const key = `${sumber.partner_name.toUpperCase().replace(/\s+/g, ' ')}|${typeFile.toUpperCase()}`;
+                let pengganti = targets.find(t => t.key === key);
+                if (!pengganti) {
+                    pengganti = { ...sumber, key, type: typeFile, email_to: [...sumber.email_to], email_cc: [...sumber.email_cc], email_invalid: [...(sumber.email_invalid || [])], typeSumber: kandidat.map(t => t.type).filter(Boolean).join(', ') };
+                    targets.push(pengganti);
+                }
+                return { target: pengganti };
+            }
+            const panjang = Math.max(...cocokType.map(t => tokenNama(t.type).length));
+            const pilihan = cocokType.filter(t => tokenNama(t.type).length === panjang);
+            return pilihan.length === 1 ? { target: pilihan[0] } : { alasan: 'cocok ke lebih dari 1 baris Excel' };
+        }
+
+        function cocokkanPdf() {
+            const semua = [...blastFiles.surat.map(f => ({ f, jenis: 'surat' })), ...blastFiles.bast.map(f => ({ f, jenis: 'bast' }))];
+            $('blastSuratList').innerText = blastFiles.surat.length ? `✅ ${blastFiles.surat.length} file Surat` : 'Belum ada file';
+            $('blastBastList').innerText = blastFiles.bast.length ? `✅ ${blastFiles.bast.length} file BAST` : 'Belum ada file';
+            if ($('uploadModal').style.display === 'block') renderModalUpload();
+            hasilCocok = [];
+            fileTidakCocok = [];
+            if (semua.length === 0) { $('pdfMatchStatus').innerHTML = ''; return; }
+            const targets = buildTargetBlast();
+            if (targets.length === 0) {
+                $('pdfMatchStatus').innerHTML = `<span class="status-fail">⚠️ ${columns.length ? 'Kolom nama partner tidak ditemukan di Excel (beri judul "PARTNER_NAME" atau "Nama Partner").' : 'Upload Excel data partner terlebih dahulu agar Email To/CC terisi.'}</span>`;
+                return;
+            }
+            const perTarget = new Map();
+            semua.forEach(({ f, jenis }) => {
+                const hasil = cariTarget(f, targets);
+                if (!hasil.target) return fileTidakCocok.push({ f, jenis, alasan: hasil.alasan });
+                if (!perTarget.has(hasil.target.key)) perTarget.set(hasil.target.key, { target: hasil.target, surat: [], bast: [] });
+                perTarget.get(hasil.target.key)[jenis].push(f);
+            });
+            hasilCocok = Array.from(perTarget.values()).sort((a, b) => `${a.target.partner_name} ${a.target.type}`.localeCompare(`${b.target.partner_name} ${b.target.type}`));
+            const gagalBaca = semua.filter(({ f }) => statusFile(f)?.error);
+            const label = (t) => `${esc(t.partner_name)}${t.type ? ` · <span style="color: var(--ioh-pink);">${esc(t.type)}</span>` : ''}`;
+            $('pdfMatchStatus').innerHTML =
+                `<b>${hasilCocok.length} email (partner + type) terbaca dari ${semua.length} file:</b><br>`
+                + hasilCocok.map(h => {
+                    const kurang = [!h.surat.length && 'Surat', !h.bast.length && 'BAST'].filter(Boolean);
+                    return `${kurang.length || h.target.typeSumber || h.target.email_invalid?.length || !h.target.email_to.length ? '⚠️' : '✅'} <b>${label(h.target)}</b> → ${h.target.email_to.length ? esc(h.target.email_to.join('; ')) : '<span class="status-fail">Email To kosong</span>'}`
+                        + (kurang.length ? ` <span style="color: #856404;">(${kurang.join(' & ')} belum ada)</span>` : '')
+                        + (h.target.email_cc.length ? `<br><small>CC: ${esc(h.target.email_cc.join('; '))}</small>` : '')
+                        + (h.target.email_invalid?.length ? `<br><small class="status-fail">❌ Alamat email tidak valid (dilewati): ${h.target.email_invalid.map(esc).join(', ')}</small>` : '')
+                        + (h.target.typeSumber ? `<br><small style="color: #856404;">⚠️ Type ${esc(h.target.type)} tidak ada di Excel untuk partner ini, jadi Email To/CC diambil dari baris type ${esc(h.target.typeSumber)}. Tetap dikirim sebagai email terpisah.</small>` : '')
+                        + `<br><small style="color: #6c757d;">📝 ${h.surat.map(f => esc(f.name)).join(', ') || '-'} &nbsp;|&nbsp; 📑 ${h.bast.map(f => esc(f.name)).join(', ') || '-'}</small>`;
+                }).join('<br>')
+                + (gagalBaca.length ? `<br><br><span class="status-fail"><b>⚠️ ${gagalBaca.length} file tidak bisa dibaca browser:</b></span><br>` + gagalBaca.map(({ f }) => `<small>${esc(f.name)} — ${esc(statusFile(f).error)}</small>`).join('<br>') + '<br><small>Jika file ada di OneDrive, klik kanan folder &gt; <b>Always keep on this device</b>, tunggu sampai terunduh, lalu hapus &amp; upload ulang file tersebut.</small>' : '')
+                + (fileTidakCocok.length ? `<br><br><span class="status-fail"><b>❌ ${fileTidakCocok.length} file tidak cocok (tidak dikirim):</b></span><br>` + fileTidakCocok.map(x => `<small>${x.jenis === 'surat' ? '📝' : '📑'} ${esc(x.f.name)} — ${esc(x.alasan)}</small>`).join('<br>') : '');
+        }
+
+        // ---------------- SUBMIT ----------------
+        const bacaFileBase64 = (file) => new Promise((resolve) => {
+            if (!file) return resolve('');
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => resolve('');
+            reader.readAsDataURL(file);
+        });
+
+        $('btnSubmit').addEventListener('click', () => appMode === 'BLAST' ? prosesBlastOnly() : prosesGenerate());
+
+        async function prosesBlastOnly() {
+            const isi = getIsiTemplate();
+            if (!getPeriode() || !isi.jenis_surat) return alert('Jenis surat dan periode wajib diisi.');
+            cocokkanPdf();
+            const siap = hasilCocok;
+            if (siap.length === 0) return alert('Belum ada PDF yang cocok. Pastikan nama file PDF mengandung nama partner (dan type) yang ada di Excel.');
+            const pinjamEmail = hasilCocok.filter(h => h.target.typeSumber);
+            const peringatan = [
+                fileTidakCocok.length && `${fileTidakCocok.length} file tidak cocok dan TIDAK akan dikirim.`,
+                pinjamEmail.length && `${pinjamEmail.length} email memakai Email To/CC dari type lain karena type-nya tidak ada di Excel (${pinjamEmail.map(h => `${h.target.partner_name} · ${h.target.type}`).join(', ')}).`,
+            ].filter(Boolean);
+            if (peringatan.length && !confirm(`${peringatan.join('\n\n')}\n\nLanjutkan?`)) return;
+
+            batchId = `BLAST-MANUAL-MDI-${Date.now()}`;
+            jenisSuratAktif = isi.jenis_surat;
+            namaProgramAktif = isi.nama_program;
+            isApproved = true;
+            approvalPending = false;
+            hasilGenerate = siap.map(h => ({
+                key: h.target.key,
+                partner_name: h.target.partner_name,
+                type: h.target.type,
+                branches: [],
+                email_to: h.target.email_to.join('; '),
+                email_cc: h.target.email_cc.join('; '),
+                files: [...h.surat, ...h.bast],
+                filenames: [...h.surat, ...h.bast].map(f => f.name),
+            }));
+
+            const records = hasilGenerate.flatMap(h => h.filenames.map(f => ({
+                batch_id: batchId, jenis_surat: `MDI - ${jenisSuratAktif}`, periode: getPeriode(), sdp_id: h.type ? `${h.partner_name} - ${h.type}` : h.partner_name, partner_name: h.partner_name,
+                brand: 'MDI', type_sdp: 'MDI BLAST', email_to: h.email_to, email_cc: h.email_cc, status: 'approved', is_approved: 1, is_blasted: 0, filename: f, tabel_html: ''
+            })));
+            fetch('/api/save-history-blast-only', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ records }) }).catch(() => {});
+
+            $('previewSection').style.display = 'none';
+            tampilkanEmail();
+        }
+
+        async function prosesGenerate() {
+            const dipilih = partners.filter(p => p.checked);
+            const isi = getIsiTemplate();
+            const periode = getPeriode();
+            if (dipilih.length === 0) return alert('Upload Excel dan pilih minimal 1 partner terlebih dahulu.');
+            if (getKomponen().length === 0) return alert('Pilih minimal 1 kolom Komponen Fee.');
+            if (!isi.jenis_surat || !isi.nama_program || !periode) return alert('Jenis surat, nama program, dan periode wajib diisi.');
+
+            const noAwal = parseInt($('noSuratAwal').value, 10);
+            const akhiran = $('noSuratAkhiran').value.trim();
+            if (dipilih.some(p => !p.no_surat) && isNaN(noAwal)) return alert('Isi Nomor Surat Awal (atau kolom No Surat di Excel).');
+
+            let urut = 0;
+            const payloadPartners = dipilih.map(p => ({
+                partner_name: p.partner_name,
+                branches: p.branches,
+                email_to: p.email_to.join('; '),
+                email_cc: p.email_cc.join('; '),
+                pic_nama: p.pic_nama,
+                pic_jabatan: p.pic_jabatan,
+                no_surat: p.no_surat || `${noAwal + (urut++)}${akhiran}`,
+            }));
+
+            const approver = $('approverSelect').selectedOptions[0];
+            const opsi = {
+                ...isi,
+                periode,
+                kode_periode: $('periodeMonth').value,
+                tanggal_surat: $('tanggalSurat').value,
+                batas_invoice: $('batasInvoice').value,
+                ppn_persen: Number($('ppnPersen').value),
+                pph_persen: Number($('pphPersen').value),
+                komponen: getKomponen(),
+                penandatangan_surat: { nama: $('ttdSuratNama').value, jabatan: $('ttdSuratJabatan').value, unit: $('ttdSuratUnit').value },
+                cc_surat: $('ccSurat').value,
+                pihak_pertama: { nama: approver.dataset.nama, jabatan: approver.dataset.jabatan },
+                ttd_surat: await bacaFileBase64($('ttdSuratFile').files[0]),
+            };
+
+            const btn = $('btnSubmit');
+            btn.disabled = true;
+            batchId = `MDI-${Date.now()}`;
+            jenisSuratAktif = isi.jenis_surat;
+            namaProgramAktif = isi.nama_program;
+            isApproved = false;
+            approvalPending = false;
+            hasilGenerate = [];
+            const chunkSize = 3;
+            try {
+                for (let i = 0; i < payloadPartners.length; i += chunkSize) {
+                    btn.innerText = `⏳ Membuat surat ${Math.min(i + chunkSize, payloadPartners.length)} / ${payloadPartners.length} partner...`;
+                    const res = await fetch('/api/mdi/generate', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ...opsi, batch_id: batchId, partners: payloadPartners.slice(i, i + chunkSize) })
+                    });
+                    const data = await res.json();
+                    if (!data.success) throw new Error(data.error);
+                    hasilGenerate.push(...data.results);
+                }
+            } catch (err) {
+                alert(`Gagal membuat surat: ${err.message}`);
+            } finally {
+                btn.disabled = false;
+                btn.innerText = '🔄 Buat Ulang Surat MDI';
+            }
+            if (hasilGenerate.length > 0) {
+                tampilkanPreview();
+                simpanSesi();
+            }
+        }
+
+        // ---------------- PREVIEW & APPROVAL ----------------
+        function tampilkanPreview() {
+            $('previewSection').style.display = 'block';
+            $('emailSection').style.display = 'none';
+            $('lblBatch').innerText = `Batch: ${batchId} • ${hasilGenerate.length} partner • ${hasilGenerate.length * 2} PDF`;
+            $('sidebarList').innerHTML = hasilGenerate.map((h, i) => `<button type="button" class="btn-partner" data-index="${i}"><b>${esc(h.partner_name)}</b><br><small>${esc(h.no_surat || '')} • ${(h.branches || []).length} branch</small></button>`).join('');
+            document.querySelectorAll('.btn-partner').forEach(b => b.addEventListener('click', () => pilihPartner(Number(b.dataset.index))));
+            pilihPartner(0);
+            updateStatusApproval();
+            $('previewSection').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function pilihPartner(i) {
+            activeIndex = i;
+            document.querySelectorAll('.btn-partner').forEach(b => b.classList.toggle('active', Number(b.dataset.index) === i));
+            const h = hasilGenerate[i];
+            if (h && h[activeDoc]) $('previewFrame').src = `${h[activeDoc].url}?t=${Date.now()}`;
+            $('emailPreviewSelect').value = i;
+            updateEmailPreview();
+        }
+
+        document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', function() {
+            activeDoc = this.dataset.doc;
+            document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === this));
+            pilihPartner(activeIndex);
+        }));
+
+        function updateStatusApproval() {
+            const badge = $('badgeStatus');
+            badge.className = `badge ${isApproved ? 'badge-ok' : 'badge-wait'}`;
+            badge.innerText = isApproved ? 'Status: Sudah Disetujui ✅' : approvalPending ? 'Status: Menunggu Persetujuan ⏳' : 'Status: Belum Disetujui';
+            $('btnRequestApproval').style.display = isApproved || approvalPending ? 'none' : 'block';
+            $('btnDownloadAll').classList.toggle('locked', !isApproved);
+            $('textLockInfo').style.display = isApproved ? 'none' : 'block';
+            $('approvalPanel').style.display = approvalPending && !isApproved ? 'block' : 'none';
+            if (isApproved) tampilkanEmail();
+        }
+
+        $('btnRequestApproval').addEventListener('click', async () => {
+            const approver = $('approverSelect').selectedOptions[0];
+            if (!confirm(`Kirim link persetujuan surat ke ${approver.dataset.nama} (${approver.dataset.email})?`)) return;
+
+            const summary = `<table style="width: 100%; border-collapse: collapse; font-size: 11px;" border="1" cellpadding="5">
+                <thead><tr style="background: #f2f2f2;"><th>No Surat</th><th>Nama Partner</th><th>Branch</th><th>DPP</th><th>Total Transfer</th><th>Email</th></tr></thead><tbody>
+                ${hasilGenerate.map(h => `<tr><td>${esc(h.no_surat)}</td><td>${esc(h.partner_name)}</td><td>${esc((h.branches || []).join(', '))}</td><td style="text-align: right;">${formatRp(h.total.dpp)}</td><td style="text-align: right;">${formatRp(h.total.total)}</td><td>${esc(h.email_to)}</td></tr>`).join('')}
+                </tbody></table>`;
+
+            approvalPending = true;
+            $('lblSignerInfo').innerText = `${approver.dataset.nama} (${approver.dataset.email})`;
+            $('approvalStatusText').innerText = 'Mengirim permintaan persetujuan...';
+            $('approvalWaiting').style.display = 'block';
+            $('approvalRejected').style.display = 'none';
+            updateStatusApproval();
+            try {
+                const res = await fetch('/api/request-approval', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ batch_id: batchId, approver_id: approver.value, approver_name: approver.dataset.nama, approver_email: approver.dataset.email, summary_html: summary })
+                });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error);
+                $('approvalStatusText').innerText = '✅ Email persetujuan terkirim. Menunggu persetujuan...';
+                simpanSesi();
+                mulaiPolling();
+            } catch (err) {
+                approvalPending = false;
+                updateStatusApproval();
+                alert('Gagal mengirim permintaan persetujuan: ' + err.message);
+            }
+        });
+
+        function mulaiPolling() {
+            if (pollingInterval) clearInterval(pollingInterval);
+            pollingInterval = setInterval(async () => {
+                try {
+                    const res = await fetch(`/api/check-approval?batch_id=${encodeURIComponent(batchId)}`);
+                    const data = await res.json();
+                    if (data.is_approved && data.status === 'approved') persetujuanBerhasil();
+                    else if (data.status === 'rejected') {
+                        clearInterval(pollingInterval);
+                        $('approvalWaiting').style.display = 'none';
+                        $('approvalRejected').style.display = 'block';
+                        $('lblRejectionReason').innerText = data.reason || 'Tidak ada alasan tertulis.';
+                    }
+                } catch (e) {}
+            }, 5000);
+        }
+
+        $('btnSimulateApprove').addEventListener('click', async function() {
+            this.innerText = '⚙️ Sedang Menyelesaikan Proses...';
+            this.disabled = true;
+            try {
+                await fetch(`/approve-document?batch_id=${encodeURIComponent(batchId)}`);
+                persetujuanBerhasil();
+            } catch (err) { alert('Simulasi setuju otomatis gagal berjalan.'); }
+            finally { this.disabled = false; this.innerText = '⚙️ Mode Simulasi: Langsung Setujui (Auto-Sign)'; }
+        });
+
+        function persetujuanBerhasil() {
+            if (pollingInterval) clearInterval(pollingInterval);
+            isApproved = true;
+            approvalPending = false;
+            updateStatusApproval();
+            pilihPartner(activeIndex);
+            simpanSesi();
+        }
+
+        $('btnDownloadAll').addEventListener('click', async function() {
+            this.disabled = true;
+            this.innerText = '⏳ Menyiapkan ZIP...';
+            try {
+                const zip = new JSZip();
+                for (const h of hasilGenerate) {
+                    for (const doc of [h.letter, h.bast]) {
+                        const res = await fetch(doc.url);
+                        if (res.ok) zip.file(doc.filename, await res.blob());
+                    }
+                }
+                saveAs(await zip.generateAsync({ type: 'blob' }), `Surat_MDI_${batchId}.zip`);
+            } finally {
+                this.disabled = false;
+                this.innerText = '📥 Download Semua (ZIP)';
+            }
+        });
+
+        // ---------------- SESI (bertahan saat halaman di-refresh) ----------------
+        function simpanSesi() {
+            if (!batchId || batchId.startsWith('BLAST-MANUAL')) return;
+            try {
+                sessionStorage.setItem('mdi_app_state', JSON.stringify({ batchId, hasilGenerate, isApproved, approvalPending, jenisSuratAktif, namaProgramAktif, signer: $('lblSignerInfo').innerText }));
+            } catch (e) {}
+        }
+        function pulihkanSesi() {
+            try {
+                const state = JSON.parse(sessionStorage.getItem('mdi_app_state') || 'null');
+                if (!state || !state.hasilGenerate || state.hasilGenerate.length === 0) return;
+                ({ batchId, hasilGenerate, isApproved, approvalPending, jenisSuratAktif, namaProgramAktif } = state);
+                $('lblSignerInfo').innerText = state.signer || '';
+                tampilkanPreview();
+                if (approvalPending && !isApproved) {
+                    $('approvalStatusText').innerText = 'Menunggu persetujuan...';
+                    mulaiPolling();
+                }
+            } catch (e) {}
+        }
+
+        // ---------------- EMAIL ----------------
+        (function initEmail() {
+            let subject = DEFAULT_SUBJECT, body = DEFAULT_BODY;
+            try {
+                subject = localStorage.getItem('mdi_email_subject') || subject;
+                body = localStorage.getItem('mdi_email_body') || body;
+            } catch (e) {}
+            $('emailSubject').value = subject;
+            $('emailBody').value = body;
+        })();
+
+        ['emailSubject', 'emailBody'].forEach(id => $(id).addEventListener('input', () => {
+            try {
+                localStorage.setItem('mdi_email_subject', $('emailSubject').value);
+                localStorage.setItem('mdi_email_body', $('emailBody').value);
+            } catch (e) {}
+            updateEmailPreview();
+        }));
+        $('btnResetEmail').addEventListener('click', () => {
+            $('emailSubject').value = DEFAULT_SUBJECT;
+            $('emailBody').value = DEFAULT_BODY;
+            try { localStorage.removeItem('mdi_email_subject'); localStorage.removeItem('mdi_email_body'); } catch (e) {}
+            updateEmailPreview();
+        });
+        $('emailPreviewSelect').addEventListener('change', function() { pilihPartner(Number(this.value)); });
+
+        // Tombol variabel: sisipkan di posisi kursor pada field email yang terakhir diklik
+        let fieldEmailAktif = $('emailBody');
+        ['emailSubject', 'emailBody'].forEach(id => $(id).addEventListener('focus', () => fieldEmailAktif = $(id)));
+        document.querySelectorAll('.var-btn').forEach(btn => {
+            btn.addEventListener('mousedown', (e) => e.preventDefault());
+            btn.addEventListener('click', () => {
+                const el = fieldEmailAktif;
+                const awal = el.selectionStart ?? el.value.length;
+                const akhir = el.selectionEnd ?? el.value.length;
+                el.value = el.value.slice(0, awal) + btn.dataset.var + el.value.slice(akhir);
+                el.focus();
+                el.selectionStart = el.selectionEnd = awal + btn.dataset.var.length;
+                el.dispatchEvent(new Event('input'));
+            });
+        });
+
+        // Template email tersimpan di sistem
+        let emailTemplates = [];
+        async function loadEmailTemplates(pilih) {
+            try {
+                const res = await fetch('/api/mdi/email-templates');
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error);
+                emailTemplates = data.data;
+                $('emailTemplateSelect').innerHTML = '<option value="">-- Pilih template email --</option>' + emailTemplates.map(t => `<option value="${esc(t.nama)}">${esc(t.nama)}</option>`).join('');
+                if (pilih) $('emailTemplateSelect').value = pilih;
+            } catch (err) {}
+        }
+        $('emailTemplateSelect').addEventListener('change', function() {
+            const t = emailTemplates.find(x => x.nama === this.value);
+            if (!t) return;
+            $('emailSubject').value = t.subject;
+            $('emailBody').value = t.body;
+            $('namaEmailTemplate').value = t.nama;
+            $('emailBody').dispatchEvent(new Event('input'));
+        });
+        const statusTemplate = (pesan, ok) => $('emailTemplateStatus').innerHTML = `<span class="${ok ? 'status-ok' : 'status-fail'}">${esc(pesan)}</span>`;
+        $('btnSimpanEmailTemplate').addEventListener('click', async function() {
+            const nama = $('namaEmailTemplate').value.trim();
+            if (!nama) { statusTemplate('Isi nama template email terlebih dahulu.', false); return $('namaEmailTemplate').focus(); }
+            if (!$('emailSubject').value.trim() || !$('emailBody').value.trim()) return statusTemplate('Subject dan isi email tidak boleh kosong.', false);
+            this.disabled = true;
+            statusTemplate('⏳ Menyimpan...', true);
+            try {
+                const res = await fetch('/api/mdi/email-templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nama, subject: $('emailSubject').value, body: $('emailBody').value }) });
+                const teks = await res.text();
+                let hasil;
+                try { hasil = JSON.parse(teks); } catch (e) { throw new Error(`server membalas status ${res.status} (${teks.slice(0, 120)})`); }
+                if (!hasil.success) throw new Error(hasil.error || `status ${res.status}`);
+                await loadEmailTemplates(hasil.nama);
+                statusTemplate(`✅ Template email "${hasil.nama}" tersimpan dan bisa dipilih lagi dari daftar.`, true);
+            } catch (err) {
+                statusTemplate(`❌ Gagal menyimpan template email: ${err.message}`, false);
+            } finally { this.disabled = false; }
+        });
+
+        // Terapkan subject & isi email terbaru ke semua partner tujuan (menimpa teks khusus per partner, jika ada)
+        $('btnTerapkanSemua').addEventListener('click', () => {
+            if (hasilGenerate.length === 0) return alert('Belum ada email tujuan partner.');
+            if (!confirm(`Terapkan subject dan isi email ini ke ${hasilGenerate.length} email partner?`)) return;
+            hasilGenerate.forEach(h => { delete h.subject; delete h.pesan; });
+            updateEmailPreview();
+            $('terapkanStatus').innerHTML = `<b class="status-ok">✅ Diterapkan ke ${hasilGenerate.length} email.</b>
+                <div class="table-container" style="max-height: 200px; margin-top: 6px;"><table><thead><tr><th>Partner</th><th>Subject</th></tr></thead><tbody>
+                ${hasilGenerate.map(h => `<tr><td>${esc(h.partner_name)}${h.type ? ` · ${esc(h.type)}` : ''}</td><td>${esc(isiPlaceholder($('emailSubject').value, h))}</td></tr>`).join('')}
+                </tbody></table></div>`;
+        });
+        ['emailSubject', 'emailBody'].forEach(id => $(id).addEventListener('input', () => { if ($('terapkanStatus').innerHTML) $('terapkanStatus').innerHTML = '<span style="color: #856404;">✏️ Teks email berubah. Klik "Terapkan ke Semua Email" lagi untuk memperbarui ringkasan semua partner.</span>'; }));
+        $('btnHapusEmailTemplate').addEventListener('click', async () => {
+            const nama = $('emailTemplateSelect').value;
+            if (!nama) return alert('Pilih template email yang mau dihapus.');
+            if (!confirm(`Hapus template email "${nama}"?`)) return;
+            await fetch(`/api/mdi/email-templates/${encodeURIComponent(nama)}`, { method: 'DELETE' });
+            loadEmailTemplates();
+        });
+        loadEmailTemplates();
+
+        function tampilkanEmail() {
+            $('emailSection').style.display = 'block';
+            $('emailPreviewSelect').innerHTML = hasilGenerate.map((h, i) => `<option value="${i}">${esc(h.partner_name)}${h.type ? ` · ${esc(h.type)}` : ''}${h.is_blasted ? ' (sudah terkirim)' : ''}</option>`).join('');
+            $('sendResult').innerHTML = '';
+            $('emailPreviewSelect').value = activeIndex < hasilGenerate.length ? activeIndex : 0;
+            activeIndex = Number($('emailPreviewSelect').value);
+            updateEmailPreview();
+            $('emailSection').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        const namaLampiran = (h) => h.filenames || [h.letter.filename, h.bast.filename];
+
+        function isiPlaceholder(teks, h) {
+            return String(teks || '')
+                .replace(/{{type}}/gi, () => h.type || '')
+                .replace(/{{jenis_surat}}/gi, () => jenisSuratAktif || getIsiTemplate().jenis_surat)
+                .replace(/{{nama_program}}/gi, () => namaProgramAktif || getIsiTemplate().nama_program)
+                .replace(/{{nama_partner}}/gi, () => h.partner_name)
+                .replace(/{{periode}}/gi, () => getPeriode());
+        }
+
+        function updateEmailPreview() {
+            const h = hasilGenerate[activeIndex];
+            if (!h) return;
+            $('liveTo').innerHTML = `${esc(h.email_to) || '<span class="status-fail">Email kosong</span>'}${h.email_cc ? `<br><small>CC: ${esc(h.email_cc)}</small>` : ''}`;
+            $('liveSubject').innerText = isiPlaceholder($('emailSubject').value, h);
+            $('liveAttach').innerText = namaLampiran(h).map(f => `📎 ${f}`).join('\n');
+            $('liveBody').innerHTML = esc(isiPlaceholder($('emailBody').value, h)).replace(/\n/g, '<br>');
+        }
+
+        $('btnSendEmail').addEventListener('click', async function() {
+            const target = hasilGenerate.filter(h => !h.is_blasted);
+            if (target.length === 0) return alert('Semua partner pada batch ini sudah dikirimi email.');
+            if (!confirm(`Kirim email ke ${target.length} partner MDI? Setiap email berisi ${appMode === 'BLAST' ? 'semua PDF Surat & BAST yang cocok' : '2 lampiran (LETTER + BAST)'}.`)) return;
+
+            this.disabled = true;
+            const hasil = [];
+            // File upload (Blast Email Only) dikirim 1 partner per request agar tidak melebihi batas ukuran request Vercel (4,5 MB)
+            const chunkSize = target.some(h => h.files) ? 1 : 5;
+            const BATAS_REQUEST = 4.2 * 1024 * 1024;
+            try {
+                for (let i = 0; i < target.length; i += chunkSize) {
+                    this.innerText = `⏳ Mengirim ${Math.min(i + chunkSize, target.length)} / ${target.length}...`;
+                    const items = [];
+                    for (const h of target.slice(i, i + chunkSize)) {
+                        const item = { key: h.key || h.partner_name, partner_name: h.partner_name, type: h.type || '', email_to: h.email_to, email_cc: h.email_cc };
+                        if (h.files) {
+                            const isi = await Promise.all(h.files.map(f => bacaIsiFile(f)));
+                            const gagal = h.files.filter((f, idx) => isi[idx].error);
+                            if (gagal.length) {
+                                hasil.push({ key: item.key, type: item.type, partner_name: item.partner_name, is_success: false, status: `Tidak dikirim: file tidak bisa dibaca browser (${gagal.map(f => f.name).join(', ')}). Upload ulang file tersebut.` });
+                                continue;
+                            }
+                            item.attachments = h.files.map((f, idx) => ({ filename: f.name, content: isi[idx].b64 }));
+                        } else {
+                            item.filenames = namaLampiran(h);
+                        }
+                        items.push(item);
+                    }
+                    if (items.length === 0) continue;
+                    const body = JSON.stringify({ items, batch_id: batchId, subject: $('emailSubject').value, pesan: $('emailBody').value, jenis_surat: jenisSuratAktif, nama_program: namaProgramAktif, periode: getPeriode() });
+                    if (body.length > BATAS_REQUEST) {
+                        items.forEach(it => hasil.push({ key: it.key, type: it.type, partner_name: it.partner_name, is_success: false, status: `Tidak dikirim: total lampiran ${(body.length / 1.37 / 1024 / 1024).toFixed(1)} MB, melebihi batas ±3 MB per email. Perkecil ukuran PDF.` }));
+                        continue;
+                    }
+                    const res = await fetch('/api/mdi/send-emails', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+                    const teks = await res.text();
+                    let data;
+                    try { data = JSON.parse(teks); } catch (e) { throw new Error(`server membalas status ${res.status}${res.status === 413 ? ' (lampiran terlalu besar)' : ''}`); }
+                    if (!data.success) throw new Error(data.error);
+                    data.results.forEach(r => {
+                        const h = hasilGenerate.find(x => (x.key || x.partner_name) === (r.key || r.partner_name));
+                        if (h && r.is_success) h.is_blasted = true;
+                    });
+                    hasil.push(...data.results);
+                }
+            } catch (err) {
+                alert(`Pengiriman terhenti: ${err.message}`);
+            } finally {
+                this.disabled = false;
+                this.innerText = '🚀 Kirim Email ke Semua Partner';
+                simpanSesi();
+            }
+
+            const sukses = hasil.filter(h => h.is_success).length;
+            $('sendResult').innerHTML = `<p><b>${sukses} dari ${hasil.length} email terkirim.</b></p>
+                <div class="table-container"><table><thead><tr><th>Partner</th><th>Status</th></tr></thead><tbody>
+                ${hasil.map(h => `<tr><td>${esc(h.partner_name)}${h.type ? ` · ${esc(h.type)}` : ''}</td><td class="${h.is_success ? 'status-ok' : 'status-fail'}">${esc(h.status)}</td></tr>`).join('')}
+                </tbody></table></div>`;
+        });
+
+        // ---------------- RIWAYAT ----------------
+        let dataRiwayat = {};
+
+        function formatWaktu(raw) {
+            if (typeof raw === 'string' && !raw.includes('T')) raw = raw.replace(' ', 'T') + 'Z';
+            const d = new Date(raw);
+            return isNaN(d) ? '-' : new Intl.DateTimeFormat('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' }).format(d) + ' WIB';
+        }
+
+        async function bukaRiwayat() {
+            $('historyModal').style.display = 'block';
+            $('historyTitle').innerHTML = '🗂️ Riwayat Surat MDI';
+            $('historyBody').innerHTML = '<p style="text-align: center;">⏳ Memuat data riwayat...</p>';
+            try {
+                let res;
+                try { res = await fetch('/api/history?flow=mdi'); } catch (e) { throw new Error('tidak ada respons dari server (koneksi terputus atau server timeout). Coba muat ulang halaman.'); }
+                const teks = await res.text();
+                let data;
+                try { data = JSON.parse(teks); } catch (e) { throw new Error(`server membalas status ${res.status}${res.status === 413 || res.status >= 500 ? ' (respons terlalu besar atau server error)' : ''}`); }
+                if (!data.success) throw new Error(data.error);
+                if (data.data.length === 0) {
+                    $('historyBody').innerHTML = '<p style="text-align: center; color: #666;"><b>📭 Belum Ada Riwayat Surat MDI</b></p>';
+                    return;
+                }
+                // Folder = jenis surat + periode, isi = batch -> partner -> file
+                dataRiwayat = {};
+                data.data.forEach(item => {
+                    const folder = `${String(item.jenis_surat || 'MDI').replace(/^MDI - /, '')}|${item.periode || 'Periode Tidak Diketahui'}`;
+                    dataRiwayat[folder] = dataRiwayat[folder] || {};
+                    const batch = dataRiwayat[folder][item.batch_id] = dataRiwayat[folder][item.batch_id] || [];
+                    batch.push(item);
+                });
+                tampilkanFolderRiwayat();
+            } catch (err) {
+                $('historyBody').innerHTML = `<p style="text-align: center; color: red;">❌ Gagal memuat riwayat: ${esc(err.message)}</p>`;
+            }
+        }
+
+        function tampilkanFolderRiwayat() {
+            $('historyTitle').innerHTML = '🗂️ Riwayat Surat MDI';
+            $('historyBody').innerHTML = `<div class="folder-grid">${Object.keys(dataRiwayat).map(folder => {
+                const [jenis, periode] = folder.split('|');
+                const batches = dataRiwayat[folder];
+                const jumlahPartner = Object.values(batches).reduce((s, b) => s + new Set(b.map(x => x.partner_name)).size, 0);
+                return `<div class="folder-card" data-folder="${esc(folder)}"><div class="icon">📁</div><div class="name">${esc(jenis)}<br><span style="color: var(--ioh-teal);">${esc(periode)}</span></div><div class="count">${Object.keys(batches).length} batch • ${jumlahPartner} partner</div></div>`;
+            }).join('')}</div>`;
+            document.querySelectorAll('.folder-card').forEach(el => el.addEventListener('click', () => tampilkanDetailRiwayat(el.dataset.folder)));
+        }
+
+        function tampilkanDetailRiwayat(folder) {
+            const [jenis, periode] = folder.split('|');
+            $('historyTitle').innerHTML = `<button type="button" id="btnRiwayatKembali" class="btn-small" style="margin-right: 12px;">🔙 Kembali</button>📄 ${esc(jenis)} • ${esc(periode)}`;
+            $('btnRiwayatKembali').addEventListener('click', tampilkanFolderRiwayat);
+
+            let html = '';
+            for (const [bId, items] of Object.entries(dataRiwayat[folder])) {
+                const manual = bId.startsWith('BLAST-MANUAL');
+                const pertama = items[0];
+                const disetujui = manual || pertama.status === 'approved' || Number(pertama.is_approved) === 1;
+                const statusTtd = manual ? '<span class="badge badge-info">Blast Only</span>'
+                    : disetujui ? '<span class="badge badge-ok">✅ Disetujui</span>'
+                    : pertama.status === 'rejected' ? `<span class="badge badge-fail" title="${esc(pertama.rejection_reason || '-')}">❌ Ditolak</span>`
+                    : '<span class="badge badge-wait">⏳ Menunggu</span>';
+
+                const perPartner = {};
+                items.forEach(it => { (perPartner[it.partner_name] = perPartner[it.partner_name] || []).push(it); });
+                const adaBelumTerkirim = items.some(it => Number(it.is_blasted) !== 1);
+
+                html += `<div class="section">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 10px;">
+                        <div><b>${formatWaktu(pertama.created_at)}</b> <small class="hint">${esc(bId)}</small><br>
+                        <small>Penyetuju: <b>${manual ? '-' : esc(pertama.approver_name || 'Belum diajukan')}</b> • ${statusTtd}</small></div>
+                        ${!manual && disetujui && adaBelumTerkirim ? `<button type="button" class="btn-small blast-batch" data-folder="${esc(folder)}" data-batch="${esc(bId)}" style="background: linear-gradient(135deg, var(--ioh-red), var(--ioh-pink)); color: #fff;">🚀 Blast Email Batch Ini</button>` : ''}
+                    </div>
+                    <div class="table-container"><table><thead><tr><th style="text-align: left;">Partner</th><th>Email</th><th>Dokumen</th></tr></thead><tbody>
+                    ${Object.entries(perPartner).map(([nama, files]) => `<tr>
+                        <td><b>${esc(nama)}</b><br><small class="hint">${esc(files[0].email_to || '')}</small></td>
+                        <td style="text-align: center;">${files.every(f => Number(f.is_blasted) === 1) ? '✅ Terkirim' : '<span style="color: #888;">⏳ Belum</span>'}</td>
+                        <td style="text-align: center;">${manual ? '<small class="hint">Sesuai lampiran</small>' : files.map(f => `<a href="${esc(f.url)}" target="_blank" class="btn-small" style="background: var(--ioh-pink); color: #fff; text-decoration: none; display: inline-block; margin: 2px;">${esc(String(f.type_sdp || 'PDF').replace('MDI ', ''))}</a>`).join('')}</td>
+                    </tr>`).join('')}
+                    </tbody></table></div></div>`;
+            }
+            $('historyBody').innerHTML = html;
+            document.querySelectorAll('.blast-batch').forEach(b => b.addEventListener('click', () => blastDariRiwayat(b.dataset.folder, b.dataset.batch)));
+        }
+
+        function blastDariRiwayat(folder, bId) {
+            const items = dataRiwayat[folder][bId];
+            const perPartner = {};
+            items.forEach(it => { (perPartner[it.partner_name] = perPartner[it.partner_name] || []).push(it); });
+            batchId = bId;
+            isApproved = true;
+            approvalPending = false;
+            jenisSuratAktif = String(items[0].jenis_surat || '').replace(/^MDI - /, '');
+            const t = templates.find(x => x.jenis_surat === jenisSuratAktif);
+            namaProgramAktif = t ? t.nama_program : $('namaProgram').value;
+            hasilGenerate = Object.entries(perPartner).map(([nama, files]) => {
+                const letter = files.find(f => f.type_sdp === 'MDI LETTER') || files[0];
+                const bast = files.find(f => f.type_sdp === 'MDI BAST') || files[0];
+                return {
+                    partner_name: nama, no_surat: letter.sdp_id, branches: [], email_to: letter.email_to || '', email_cc: letter.email_cc || '',
+                    total: { dpp: Number(letter.nominal) || 0, total: 0 },
+                    letter: { filename: letter.filename, url: letter.url }, bast: { filename: bast.filename, url: bast.url },
+                    is_blasted: files.every(f => Number(f.is_blasted) === 1),
+                };
+            });
+            const [y, m] = [String(items[0].periode || '').split(' ')[1], BULAN.indexOf(String(items[0].periode || '').split(' ')[0]) + 1];
+            if (y && m > 0) $('periodeMonth').value = `${y}-${String(m).padStart(2, '0')}`;
+            $('historyModal').style.display = 'none';
+            if (appMode === 'BLAST') setAppMode('GENERATE');
+            activeIndex = 0;
+            tampilkanPreview();
+            simpanSesi();
+        }
+
+        $('btnOpenHistory').addEventListener('click', bukaRiwayat);
+        $('btnClearHistory').addEventListener('click', async () => {
+            if (!confirm('⚠️ Semua riwayat surat MDI akan dihapus permanen. Lanjutkan?')) return;
+            try {
+                const res = await fetch('/api/history?flow=mdi', { method: 'DELETE' });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error);
+                bukaRiwayat();
+            } catch (err) { alert('Gagal menghapus riwayat: ' + err.message); }
+        });
+
+        // ---------------- INIT ----------------
+        setAppMode('GENERATE');
+        loadTemplates().then(pulihkanSesi);
+    </script>
+</body>
+</html>

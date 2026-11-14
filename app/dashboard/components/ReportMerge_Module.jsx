@@ -1,4 +1,5 @@
 "use client";
+import { useEffect, useRef, useState } from "react";
 /**
  * ReportMerge_Module.jsx
  * Menampilkan UI "Report Merge" (mail-merge email + surat PDF) lewat
@@ -11,6 +12,14 @@
  *      memverifikasi role & menolak Admin Partner (MDI).
  * Lihat public/report-merge/index.html untuk isi shim-nya.
  *
+ * Saat menu dibuka, yang tampil pertama adalah public/report-merge/home.html
+ * (kartu pilih menu). Alur "Partner SDP" dan "Partner MDI" (port dari Smart Mail Sumatera)
+ * ada di halaman terpisah public/report-merge/sdp.html dan mdi.html. Tombol alurnya
+ * tetap satu deret di topbar masing-masing halaman; perpindahan halaman
+ * dikirim lewat postMessage { rmOpen: 'home' | 'report' | 'sdp' | 'mdi', mode } dan
+ * ditangani di sini. Iframe yang pernah dibuka tetap terpasang (cuma
+ * disembunyikan) supaya pekerjaan yang belum selesai tidak hilang.
+ *
  * Akses ke menu ini sudah digating di dashboard/page.jsx
  * (canReportMerge = isSPM || isIOHAny) DAN di-enforce ulang di server
  * lewat lib/reportMerge/auth.js pada setiap endpoint /api/report-merge/*
@@ -18,7 +27,48 @@
  * langsung), semua data tetap ditolak di server untuk role yang tidak
  * diizinkan.
  */
+const PAGES = [
+  { id: "home", title: "Report Merge — pilih menu", src: "/report-merge/home.html" },
+  { id: "report", title: "Report Merge", src: "/report-merge/index.html" },
+  { id: "sdp", title: "Partner SDP", src: "/report-merge/sdp.html" },
+  { id: "mdi", title: "Partner MDI", src: "/report-merge/mdi.html" },
+];
+
+function syncTheme(frame) {
+  // Tema disimpan bersama di localStorage 'rm-theme'; halaman yang sedang
+  // disembunyikan belum tentu tahu kalau tema diganti di halaman lain.
+  try {
+    const theme = localStorage.getItem("rm-theme") || "dark";
+    const doc = frame && frame.contentDocument;
+    if (!doc || !doc.documentElement) return;
+    doc.documentElement.setAttribute("data-theme", theme);
+    const icon = doc.getElementById("themeToggle");
+    if (icon) icon.textContent = theme === "dark" ? "🌙" : "☀️";
+  } catch (e) { /* iframe belum siap, biarkan */ }
+}
+
 export default function ReportMerge_Module({ t }) {
+  // Selalu mulai dari halaman pilih menu (Blast Email Report / Partner SDP / Partner MDI).
+  const [page, setPage] = useState("home");
+  const [opened, setOpened] = useState(["home"]);
+  const frames = useRef({});
+
+  useEffect(() => {
+    const onMessage = (e) => {
+      if (e.origin !== window.location.origin || !e.data || !e.data.rmOpen) return;
+      const id = PAGES.some((p) => p.id === e.data.rmOpen) ? e.data.rmOpen : "report";
+      setOpened((prev) => (prev.includes(id) ? prev : [...prev, id]));
+      setPage(id);
+      const frame = frames.current[id];
+      syncTheme(frame);
+      if (id === "report" && e.data.mode) {
+        try { frame.contentWindow.switchAppMode(e.data.mode); } catch (err) { /* abaikan */ }
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
   return (
     <div
       style={{
@@ -31,11 +81,15 @@ export default function ReportMerge_Module({ t }) {
         minHeight: 560,
       }}
     >
-      <iframe
-        title="Report Merge"
-        src="/report-merge/index.html"
-        style={{ width: "100%", height: "100%", border: 0, display: "block", background: "#fff" }}
-      />
+      {PAGES.filter((p) => opened.includes(p.id)).map((p) => (
+        <iframe
+          key={p.id}
+          ref={(el) => { frames.current[p.id] = el; }}
+          title={p.title}
+          src={p.src}
+          style={{ width: "100%", height: "100%", border: 0, display: p.id === page ? "block" : "none", background: "#fff" }}
+        />
+      ))}
     </div>
   );
 }
