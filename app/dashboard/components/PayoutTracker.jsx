@@ -744,6 +744,7 @@ export default function PayoutTracker({
   const isIOHUmbrella = isIOHAny && !isIOHRegional;
   // Role yang melihat seluruh Sumatera & boleh memfilter per-region: SPM + IOH Sumatera.
   const canPickRegion = isSPM || isIOHUmbrella;
+  const rv = roleView(profile?.role);
 
   const filterMpxType = filterType || null;
 
@@ -1010,15 +1011,14 @@ export default function PayoutTracker({
 
   useEffect(()=>{
     // IOH regional kini boleh lihat Agency juga — datanya sudah ter-scope region.
-    if (!isSPM && !isIOHAny && src==="agency") setSrc("partner");
-  },[isSPM,isIOHAny,src]);
+    if (!rv.agency && src==="agency") setSrc("partner");
+  },[rv.agency,src]);
 
   useEffect(()=>{
-    const canAgency = isSPM || isIOHAny;
-    if (partnerRaw.length===0 && agencyRaw.length>0 && canAgency) setSrc("agency");
+    if (partnerRaw.length===0 && agencyRaw.length>0 && rv.agency) setSrc("agency");
     else if (agencyRaw.length===0 && partnerRaw.length>0) setSrc("partner");
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[partnerRaw.length, agencyRaw.length, isSPM, isIOHAny, isIOHRegional]);
+  },[partnerRaw.length, agencyRaw.length, rv.agency]);
 
   const searchSuggestions = useMemo(()=>{
     const q=(searchInput||"").toLowerCase().trim();
@@ -1118,7 +1118,7 @@ export default function PayoutTracker({
   };
 
   const sharedProps = {
-    isSPM,isIOHAny,isIOHRegional,isIOHUmbrella,canPickRegion,profile,
+    isSPM,isIOHAny,isIOHRegional,isIOHUmbrella,canPickRegion,profile,rv,
     regionView,setRegionView,regionOptions,
     partnerName,filterMpxType,regionFilter:effectiveRegion,
     screen,setScreen,loading,loadText,toast,
@@ -1426,6 +1426,109 @@ function StatusDistribution({ rows, t }) {
   );
 }
 
+/* ── Menu per role: satu tempat untuk mengatur tab yang terlihat ──
+   Tab: dash=Dashboard (KPI, SLA, Funnel, Outstanding & Partners), out=Outstanding (halaman sendiri),
+   dc=Distribution Fee & Champions, hist=Riwayat, raw=Raw Data, ytd=YTD Summary, acc=Accrual (Agency), fc=Forecast (Partner).
+   agency = boleh melihat Agency Prepaid; upload = boleh Upload/Publish (layar Admin). Tab pertama = halaman pembuka. */
+const ROLE_VIEWS = {
+  admin:   { tabs:["dash","dc","raw","ytd","acc","fc"], agency:true,  upload:true  }, // spm_sumatera
+  ioh:     { tabs:["dash","dc","raw","ytd","acc","fc"], agency:true,  upload:false }, // internal_ioh (seluruh Sumatera)
+  region:  { tabs:["dash","acc"],                       agency:true,  upload:false }, // IOH / SFM regional (region terkunci)
+  partner: { tabs:["out","dc","hist"],                  agency:false, upload:false }, // finance_mpx (hanya invoice sendiri)
+  other:   { tabs:["dash","dc","raw","ytd","fc"],       agency:false, upload:false }, // role lain yang bisa membuka menu ini
+};
+const ROLE_KIND = {
+  spm_sumatera:"admin", internal_ioh:"ioh", finance_mpx:"partner",
+  ioh_north_sumatera:"region", ioh_central_sumatera:"region", ioh_south_sumatera:"region",
+  region_sfm_north:"region", region_sfm_central:"region", region_sfm_south:"region",
+};
+const roleView = (role) => ROLE_VIEWS[ROLE_KIND[role] || "other"];
+
+/* ── Riwayat: invoice yang sudah dibayar (untuk partner) ── */
+function HistoryTab({ rows, w, t, showToast }) {
+  const all = useMemo(()=>rows.filter(r=>isPaidStatus(rowStatus(r)) || gcell(r,H_CLR)).map(r=>{
+    const invD = toDate(gcell(r,H_INV_COUPA,null) || gcell(r,H_INV)), clvD = toDate(gcell(r,H_CLV)), clrD = toDate(gcell(r,H_CLR));
+    const mk = rowMonthKey(r);
+    return { mk, inv:r._inv, invId:r._invId, title:gstr(r,["project title"])||"—", name:ownerName(r)||"—", amt:gnum(r,["amount"]), invD, clvD, clrD, cyc:workDaysBetween(invD, clrD) };
+  }).sort((a,b)=>(b.clrD?.getTime()||0)-(a.clrD?.getTime()||0)),[rows]);
+  const months = useMemo(()=>[...new Set(all.map(x=>x.mk).filter(Boolean))].sort((a,b)=>b-a),[all]);
+  const [mk, setMk] = useState("all");
+  const list = mk==="all" ? all : all.filter(x=>x.mk===+mk);
+  const amt = list.reduce((a,x)=>a+x.amt,0);
+  const cycs = list.map(x=>x.cyc).filter(x=>x!=null);
+  const avg = cycs.length ? cycs.reduce((a,b)=>a+b,0)/cycs.length : null;
+  const phone = w<640;
+  const th = (left) => ({ ...thS(t,left), padding:"8px 8px" });
+  const td = (left) => ({ ...tdS(t,left), padding:"7px 8px" });
+  const monthName = (k) => `${["","Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"][k%100]} ${Math.floor(k/100)}`;
+  const exportXlsx = async () => {
+    const XLSX = await getXLSX();
+    const data = list.map(x=>({ "No Invoice":x.inv||"", "ID Invoice":x.invId||"", Project:x.title, Partner:x.name, "Bulan program":x.mk?monthName(x.mk):"",
+      Amount:Math.round(x.amt), "Tgl Invoice":fmtIdDate(x.invD), "Tgl CLV":fmtIdDate(x.clvD), "Tgl Clearing Bank":fmtIdDate(x.clrD), "Invoice→Clearing (hari kerja)":x.cyc??"" }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws["!cols"] = [18,12,48,32,16,16,14,14,16,16].map(wch=>({wch}));
+    for (let r=1; r<=data.length; r++) { const c = ws[XLSX.utils.encode_cell({r,c:5})]; if (c && c.t==="n") c.z = '"Rp "#,##0'; }
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Riwayat");
+    XLSX.writeFile(wb, `riwayat_pembayaran_${mk==="all"?"semua":mk}_${new Date().toISOString().slice(0,10)}.xlsx`);
+    showToast?.("Riwayat pembayaran diunduh — Excel","success");
+  };
+  return (
+    <Card t={t} pad={false} style={{marginBottom:14}}>
+      <CardHead t={t} title="Riwayat pembayaran" sub="Invoice yang sudah dibayar (clearing bank)"
+        right={<div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+          <select aria-label="Bulan program" value={mk} onChange={e=>setMk(e.target.value)} style={{fontFamily:"inherit",fontSize:13,fontWeight:600,color:t.ink,background:t.surf,border:`1px solid ${t.line2}`,borderRadius:9,padding:"6px 10px",cursor:"pointer"}}>
+            <option value="all">Semua bulan</option>{months.map(m=><option key={m} value={m}>{monthName(m)}</option>)}
+          </select>
+          <Btn t={t} variant="primary" sm onClick={exportXlsx} disabled={!list.length}>Export Excel</Btn>
+        </div>}/>
+      <div style={{padding:18}}>
+        <div style={{fontSize:13,color:t.ink2,marginBottom:10}}>{list.length} invoice · <strong style={{color:t.ink}} title={fmtRpFull(amt)}>{fmtRpWord(amt)}</strong>{avg!=null&&<> · rata-rata Invoice→Clearing <strong style={{color:t.ink}}>{avg.toFixed(1).replace(".",",")} hari kerja</strong></>}</div>
+        {!list.length ? <EmptyNote t={t}>Belum ada invoice yang dibayar</EmptyNote> : (
+          <div style={{maxHeight:520,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10}}>
+            <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr>
+                {!phone&&<th style={th(true)}>Invoice</th>}
+                <th style={th(true)}>Project</th>
+                <th style={th(false)}>Amount</th>
+                {!phone&&<th style={th(false)}>Tgl Invoice</th>}
+                {!phone&&<th style={th(false)}>Tgl CLV</th>}
+                <th style={th(false)}>Tgl Clearing</th>
+                {!phone&&<th style={th(false)}>Invoice→Clearing</th>}
+              </tr></thead>
+              <tbody>{list.slice(0,500).map((x,i)=>(
+                <tr key={i} style={{background:i%2===1?t.rowStripe:"transparent"}}>
+                  {!phone&&<td style={{...td(true),maxWidth:150}} title={invLabel(x.inv,x.invId)}><div style={{color:t.ink,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis"}}>{x.inv||"—"}</div>{x.invId&&<div style={{fontSize:12,color:t.muted}}>ID {x.invId}</div>}</td>}
+                  <td style={{...td(true),maxWidth:phone?150:300,color:t.ink2}} title={x.title}>{x.title}{phone&&x.inv&&<div style={{fontSize:12,color:t.muted}}>{x.inv}</div>}</td>
+                  <td style={{...td(false),color:t.ink}} title={fmtRpFull(x.amt)}>{fmtRpWord(x.amt)}</td>
+                  {!phone&&<td style={td(false)}>{fmtIdDate(x.invD)||"—"}</td>}
+                  {!phone&&<td style={td(false)}>{fmtIdDate(x.clvD)||"—"}</td>}
+                  <td style={{...td(false),color:t.ink,fontWeight:600}}>{fmtIdDate(x.clrD)||"—"}</td>
+                  {!phone&&<td style={td(false)}>{x.cyc==null?"—":`${x.cyc} hari kerja`}</td>}
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+        {list.length>500&&<div style={{fontSize:12,color:t.muted,marginTop:6}}>Menampilkan 500 dari {list.length} — gunakan Export Excel untuk semuanya.</div>}
+      </div>
+    </Card>
+  );
+}
+
+/* Outstanding sebagai halaman sendiri (halaman pembuka partner) */
+function OutstandingPage({ rows, w, t, showToast }) {
+  const ins = useMemo(()=>computeInsights(rows),[rows]);
+  const [view, setView] = useState("all");
+  const [sort, setSort] = useState({ col:"status", dir:"desc" });
+  return (
+    <Card t={t} pad={false} style={{marginBottom:14}}>
+      <CardHead t={t} title="Tagihan belum dibayar" sub="Invoice yang belum clearing bank"
+        right={<Btn t={t} variant="primary" sm onClick={()=>exportOutstanding(outRows(ins,view,sort), false, view, showToast)} disabled={!ins.open.length}>Export Excel</Btn>}/>
+      <OutstandingTab ins={ins} isAg={false} w={w} t={t} view={view} setView={setView} sort={sort} setSort={setSort}/>
+    </Card>
+  );
+}
+
 function DashScreen(props) {
   const w = useWidth();
   const { t, src, setSrc, setScreen, activeTab, setActiveTab, isSPM, isIOHAny, isIOHRegional,
@@ -1434,20 +1537,31 @@ function DashScreen(props) {
     filters, setFilters, opts, curAgg, curRaw, filtAgg, filtRaw,
     searchFocus, setSearchFocus, searchIdx, setSearchIdx,
     searchRef, searchSuggestions, allSuggestions, searchInput, setSearchInput,
-    setRawPage, showToast, exportSummary, profile } = props;
+    setRawPage, showToast, exportSummary, profile, rv } = props;
   const isAg = src === "agency";
+  const allow = (id) => rv.tabs.includes(id);
   // Tab level atas mengikuti pilihan Partner/Agency: Accrual hanya Agency (role yang boleh melihat Agency),
   // Forecast hanya Partner. YTD Summary gabungan keduanya.
-  const canAgency = isSPM || isIOHAny;
-  const showAccrual = isAg && canAgency && (viewAgencyRaw||[]).length>0;
-  const showForecast = !isAg && (viewPartnerRaw||[]).length>0;
-  const showDc = !isAg && (viewPartnerRaw||[]).some(isDcRow);
-  // Tab yang sedang dibuka tapi tidak tersedia untuk pilihan ini → kembali ke Dashboard
-  const tabKey = (activeTab==="acc" && !showAccrual) || (activeTab==="fc" && !showForecast) || (activeTab==="dc" && !showDc) ? "dash" : activeTab;
-  const isAcc = tabKey==="acc", isFc = tabKey==="fc", isDc = tabKey==="dc";
-  // YTD/Accrual/Forecast punya pilihan sendiri → filter dashboard disembunyikan; toggle Partner/Agency
+  const canAgency = rv.agency;
+  const showAccrual = allow("acc") && isAg && canAgency && (viewAgencyRaw||[]).length>0;
+  const showForecast = allow("fc") && !isAg && (viewPartnerRaw||[]).length>0;
+  const showDc = allow("dc") && !isAg && (viewPartnerRaw||[]).some(isDcRow);
+  const tabList = [
+    allow("out")&&{id:"out",label:"Outstanding"},
+    allow("dash")&&{id:"dash",label:"Dashboard"},
+    showDc&&{id:"dc",label:"Distribution Fee & Champions"},
+    allow("hist")&&{id:"hist",label:"Riwayat"},
+    allow("raw")&&{id:"raw",label:"Raw Data",count:filtRaw.length},
+    allow("ytd")&&{id:"ytd",label:"YTD Summary"},
+    showAccrual&&{id:"acc",label:"Accrual"},
+    showForecast&&{id:"fc",label:"Forecast"},
+  ].filter(Boolean);
+  // Tab yang tidak tersedia untuk role / pilihan Partner-Agency ini → halaman pembuka role
+  const tabKey = tabList.some(x=>x.id===activeTab) ? activeTab : (tabList[0]?.id || "dash");
+  const isAcc = tabKey==="acc", isFc = tabKey==="fc", isDc = tabKey==="dc", isOut = tabKey==="out", isHist = tabKey==="hist";
+  // Tab dengan pilihan sendiri → filter dashboard disembunyikan; toggle Partner/Agency
   // tetap tampil kecuali di YTD (gabungan Partner + Agency)
-  const isYtd = tabKey==="ytd" || isAcc || isFc || isDc;
+  const isYtd = tabKey==="ytd" || isAcc || isFc || isDc || isOut || isHist;
 
   // Dokumen per PO (Partner & Agency): dipakai kolom Dokumen di Raw Data & tab Upload & Merge Dokumen
   // profile null → hook tidak aktif (docs.enabled=false), tidak ada fetch dokumen/approval
@@ -1480,7 +1594,7 @@ function DashScreen(props) {
 
   const segPartnerCount = (viewPartnerRaw||[]).length;
   const segAgencyCount  = (viewAgencyRaw||[]).length;
-  const segVisible = ((isSPM||isIOHAny)?["partner","agency"]:["partner"])
+  const segVisible = (rv.agency?["partner","agency"]:["partner"])
     .filter(s=>(s==="partner"?segPartnerCount:segAgencyCount)>0);
 
   const resetFilters = () => { setFilters({month:[],entity:[],ptype:[],prog:[],status:[],q:""}); setSearchInput(""); };
@@ -1522,7 +1636,7 @@ function DashScreen(props) {
             </div>
           )}
         </div>
-        {isSPM&&(
+        {isSPM&&rv.upload&&(
           <div style={{flexShrink:0}}>
             <Btn t={t} variant="outline" onClick={()=>setScreen("admin")}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="m15 18-6-6 6-6"/></svg>
@@ -1558,7 +1672,7 @@ function DashScreen(props) {
         </div>
       )}
 
-      {tabKey!=="ytd"&&<div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:18}}>
+      {tabKey!=="ytd"&&rv.agency&&<div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:18}}>
       {segVisible.length>0&&(
         <div style={{display:"inline-flex",gap:4,background:t.surf,border:`1px solid ${t.line}`,borderRadius:14,padding:4,boxShadow:t.shadow1,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"none",maxWidth:"100%"}}>
           {segVisible.map(s=>(
@@ -1582,7 +1696,7 @@ function DashScreen(props) {
       </div>}
 
       <div style={{display:"flex",gap:24,borderBottom:`1px solid ${t.line}`,marginBottom:18,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"none"}}>
-        {[{id:"dash",label:"Dashboard"},...(showDc?[{id:"dc",label:"Distribution Fee & Champions"}]:[]),{id:"raw",label:"Raw Data",count:filtRaw.length},{id:"ytd",label:"YTD Summary"},...(showAccrual?[{id:"acc",label:"Accrual"}]:[]),...(showForecast?[{id:"fc",label:"Forecast"}]:[]),...(SHOW_DOCUMENT_TABS&&docs.enabled?[{id:"docs",label:"Document Upload & Merge",count:docPOsDone}]:[]),...(SHOW_DOCUMENT_TABS&&docs.enabled&&docs.canManageApprovals?[{id:"letters",label:"Partner Letters"}]:[])].map(tab=>(
+        {[...tabList,...(SHOW_DOCUMENT_TABS&&docs.enabled?[{id:"docs",label:"Document Upload & Merge",count:docPOsDone}]:[]),...(SHOW_DOCUMENT_TABS&&docs.enabled&&docs.canManageApprovals?[{id:"letters",label:"Partner Letters"}]:[])].map(tab=>(
           <TabBtn key={tab.id} label={tab.label} count={tab.count} active={tabKey===tab.id} onClick={()=>setActiveTab(tab.id)} t={t}/>
         ))}
       </div>
@@ -1651,7 +1765,11 @@ function DashScreen(props) {
         </div>
       )}
 
-      {isDc ? (
+      {isOut ? (
+        <OutstandingPage rows={viewPartnerRaw||[]} w={w} t={t} showToast={showToast}/>
+      ) : isHist ? (
+        <HistoryTab rows={viewPartnerRaw||[]} w={w} t={t} showToast={showToast}/>
+      ) : isDc ? (
         <DcTab rows={viewPartnerRaw||[]} w={w} t={t} showToast={showToast}/>
       ) : isFc ? (
         <ForecastTab rows={viewPartnerRaw||[]} w={w} t={t} showToast={showToast}/>
