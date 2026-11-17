@@ -307,7 +307,7 @@ function isRawRow(r, src) {
 
 // Kunci bulan program "2026-01" (tanggal lokal + koreksi menit), label dropdown "01-26", label ekspor "Jan 2026"
 const monthKeyOf = (r) => { const mk = rowMonthKey(r); return mk ? `${Math.floor(mk/100)}-${String(mk%100).padStart(2,"0")}` : gstr(r,["program date","month","bulan","periode"]); };
-const fmtMMYY = (k) => { const m = /^(\d{4})-(\d{2})$/.exec(String(k||"")); return m ? `${m[2]}-${m[1].slice(2)}` : String(k||""); };
+const fmtMMYY = (k) => { const m = /^(\d{4})-(\d{2})$/.exec(String(k||"")); return m ? `${["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][+m[2]]}-${m[1].slice(2)}` : String(k||""); }; // "May-26"
 const fmtMonKey = (k) => { const m = /^(\d{4})-(\d{2})$/.exec(String(k||"")); return m ? `${["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][+m[2]]} ${m[1]}` : fmtMonthYear(k); };
 
 function buildAgg(rows, src) {
@@ -605,6 +605,8 @@ function useKeyframes() {
       "@keyframes _pt_fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}",
       "@keyframes _pt_sweep{0%{left:-45%;width:42%}50%{left:28%;width:58%}100%{left:110%;width:42%}}",
       "[role='button']:focus-visible,button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid #32BCAD;outline-offset:2px;border-radius:8px}",
+      "[data-pt-trunc]{cursor:pointer}[data-pt-trunc]:hover{text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px}",
+      "input[type=search]::-webkit-search-cancel-button{-webkit-appearance:none;appearance:none}",
     ].join("");
     document.head.appendChild(el);
     _kfInjected = true;
@@ -628,7 +630,7 @@ function LoadingBar() {
 
 function Btn({ children, variant="outline", sm=false, style={}, t, ...rest }) {
   const [hov,hE] = useHover();
-  const base = {display:"inline-flex",alignItems:"center",gap:7,cursor:"pointer",fontFamily:"inherit",fontWeight:600,borderRadius:12,border:"1px solid transparent",transition:"all 0.15s",whiteSpace:"nowrap",letterSpacing:"-0.01em",fontSize:sm?12:13,padding:sm?"6px 14px":"9px 18px"};
+  const base = {display:"inline-flex",alignItems:"center",gap:7,cursor:"pointer",fontFamily:"inherit",fontWeight:600,borderRadius:12,border:"1px solid transparent",transition:"all 0.15s",whiteSpace:"nowrap",letterSpacing:"-0.01em",fontSize:sm?12.5:13,padding:sm?"0 14px":"9px 18px",height:sm?CTRL_H:undefined,boxSizing:"border-box",justifyContent:"center"};
   const vs = {
     primary:{ background:hov?C.tealD:C.teal, color:"#fff", borderColor:C.teal },
     outline:{ background:hov?t.surf3:t.surf, color:t.ink, borderColor:t.line2 },
@@ -636,6 +638,36 @@ function Btn({ children, variant="outline", sm=false, style={}, t, ...rest }) {
     ghost:  { background:hov?t.surf3:"transparent", color:hov?t.ink:t.muted, borderColor:"transparent" },
   };
   return <button style={{...base,...(vs[variant]||vs.outline),...style}} {...hE} {...rest}>{children}</button>;
+}
+
+// Pencarian: satu sumber kebenaran untuk pencocokan baris + penyorotan teks
+const SearchCtx = React.createContext("");
+const rowMatches = (r, ql) => [gstr(r,["partner name","agency name"]),gstr(r,["project title"]),r._inv,r._invId,gstr(r,["program type"])].join(" ").toLowerCase().includes(ql);
+function Hl({ text }) {
+  const q = React.useContext(SearchCtx);
+  const s = String(text ?? "");
+  if (!q || !s) return s;
+  const low = s.toLowerCase(), out = []; let i = 0, k = 0, j;
+  while ((j = low.indexOf(q, i)) !== -1) { if (j>i) out.push(s.slice(i,j)); out.push(<mark key={k++} style={{background:`${C.yellow}66`,color:"inherit",borderRadius:3,padding:"0 1px"}}>{s.slice(j,j+q.length)}</mark>); i = j+q.length; }
+  if (!out.length) return s;
+  out.push(s.slice(i));
+  return <>{out}</>;
+}
+
+// Satu ukuran kontrol untuk select, multi-select & tombol kecil
+const CTRL_H = 34;
+function Chevron({ open=false, style }) {
+  return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+    style={{flexShrink:0,display:"block",transition:"transform .15s",transform:open?"rotate(180deg)":"none",...style}}><path d="m6 9 6 6 6-6"/></svg>;
+}
+function Select({ value, onChange, children, t, label, style, minWidth }) {
+  return (
+    <span style={{position:"relative",display:"inline-flex",alignItems:"center",color:t.muted,minWidth}}>
+      <select aria-label={label} value={value} onChange={onChange} className="pt-ctrl"
+        style={{appearance:"none",WebkitAppearance:"none",MozAppearance:"none",height:CTRL_H,boxSizing:"border-box",width:"100%",padding:"0 32px 0 12px",borderRadius:10,border:`1px solid ${t.line2}`,background:t.surf2,color:t.ink,fontFamily:"inherit",fontSize:13,fontWeight:600,lineHeight:1.2,cursor:"pointer",...style}}>{children}</select>
+      <Chevron style={{position:"absolute",right:11,top:"50%",marginTop:-6,pointerEvents:"none"}}/>
+    </span>
+  );
 }
 
 function Card({ children, style={}, t, pad=true }) {
@@ -691,10 +723,10 @@ function MultiSel({ values, options, onChange, placeholder, t, labelOf=(v)=>v })
   return (
     <div ref={boxRef} style={{position:"relative",minWidth:110,flex:"1 1 110px"}}>
       <button type="button" onClick={()=>setOpen(o=>!o)} {...hE}
-        style={{width:"100%",display:"flex",alignItems:"center",gap:7,padding:"7px 11px",fontSize:12.5,borderRadius:10,border:`1px solid ${active?C.teal:(hov||open)?C.tealD:t.line2}`,background:t.surf2,color:active?t.ink:t.muted,fontFamily:"inherit",cursor:"pointer",outline:"none",boxShadow:active||open?`0 0 0 3px ${C.teal}26`:"none",transition:"border-color .15s, box-shadow .15s",textAlign:"left",boxSizing:"border-box"}}>
+        className="pt-ctrl" style={{width:"100%",display:"flex",alignItems:"center",gap:7,height:CTRL_H,boxSizing:"border-box",padding:"0 11px 0 12px",fontSize:12.5,borderRadius:10,border:`1px solid ${active?C.teal:(hov||open)?C.tealD:t.line2}`,background:t.surf2,color:active?t.ink:t.muted,fontFamily:"inherit",cursor:"pointer",outline:"none",boxShadow:active||open?`0 0 0 3px ${C.teal}26`:"none",transition:"border-color .15s, box-shadow .15s",textAlign:"left",boxSizing:"border-box"}}>
         <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label}</span>
         {active&&<span style={{fontVariantNumeric:"tabular-nums",fontSize:12,fontWeight:700,padding:"1px 7px",borderRadius:99,background:C.teal,color:"#fff",flexShrink:0}}>{values.length}</span>}
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{flexShrink:0,transform:open?"rotate(180deg)":"none",transition:"transform .15s",opacity:.7}}><path d="m6 9 6 6 6-6"/></svg>
+        <Chevron open={open} style={{color:t.muted}}/>
       </button>
       {open&&(
         <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,minWidth:"100%",width:"max-content",maxWidth:"min(280px, calc(100vw - 32px))",zIndex:400,background:t.surf,border:`1px solid ${t.line2}`,borderRadius:12,boxShadow:t.shadow3,overflow:"hidden"}}>
@@ -951,7 +983,7 @@ export default function PayoutTracker({
       if (ptypeSel.length>0 && !ptypeSel.includes(gstr(r,["partner type","agency name"]))) return false;
       if (progSel.length>0  && !progSel.includes(gstr(r,["program type"]))) return false;
       if (statusSel.length>0 && !statusSel.includes(rowStatus(r))) return false;
-      if (ql) { const blob=[gstr(r,["partner name","agency name"]),gstr(r,["project title"]),r._inv,r._invId].join(" ").toLowerCase(); if (!blob.includes(ql)) return false; }
+      if (ql && !rowMatches(r,ql)) return false;
       return true;
     });
     if (statusSel.length>0||ql) agg = buildAgg(raw, src);
@@ -1119,7 +1151,7 @@ export default function PayoutTracker({
     if (kl==="entity") return String(entLabel(val));
     if (kl==="status"||kl==="paymentstatus") return <StatusBadge val={String(val)} t={t}/>;
     if (kl==="amount"||kl.includes("amount")) { const n=typeof val==="number"?val:parseFloat(String(val).replace(/[^\d.-]/g,"")); if(!isNaN(n)&&n!==0)return <span style={{fontVariantNumeric:"tabular-nums",textAlign:"right",display:"block",color:t.ink}}>{fmtMoney(n,false)}</span>; }
-    return String(val);
+    return <Hl text={String(val)}/>;
   };
 
   const sharedProps = {
@@ -1159,12 +1191,31 @@ function ThemeWrapper(props) {
     return ()=>ro.disconnect();
   },[]);
   const { loading, loadText, toast, screen } = props;
+  // Teks yang terpotong (…) bisa diklik/ditap → popup teks penuh + Copy
+  const [full, setFull] = useState(null);
+  const isTrunc = (el) => el.scrollWidth > el.clientWidth + 1 || [...el.children].some(c=>c.scrollWidth > c.clientWidth + 1);
+  const truncTarget = (e) => {
+    const el = e.target.closest?.("[title]");
+    if (!el || !rootRef.current?.contains(el) || !el.getAttribute("title")) return null;
+    if (e.target.closest("button,a,input,select,label,[aria-expanded],[role='button'],svg")) return null;
+    return isTrunc(el) ? el : null;
+  };
+  const onRootOver = (e) => { const el = truncTarget(e); if (el && !el.dataset.ptTrunc) el.dataset.ptTrunc = "1"; };
+  const onRootClick = (e) => { const el = truncTarget(e); if (el) setFull(el.getAttribute("title")); };
+  useEffect(()=>{
+    if (full==null) return;
+    const onKey = (e) => { if (e.key==="Escape") setFull(null); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  },[full]);
+  const [copied, setCopied] = useState(false);
+  const copyFull = async () => { try { await navigator.clipboard.writeText(full); setCopied(true); setTimeout(()=>setCopied(false),1500); } catch { setCopied(false); } };
   const toastBg    = toast.type==="success"?t.goodBg :toast.type==="error"?t.badBg :t.surf;
   const toastColor = toast.type==="success"?t.goodDark:toast.type==="error"?t.badDark:t.ink;
   const toastBd    = toast.type==="success"?t.goodBd :toast.type==="error"?t.badBd :t.line;
   return (
     <WidthCtx.Provider value={boxW}>
-    <div ref={rootRef} style={{fontFamily:"-apple-system,'DM Sans','Plus Jakarta Sans',BlinkMacSystemFont,'SF Pro Text',sans-serif",fontSize:14,lineHeight:1.45,color:t.ink,WebkitFontSmoothing:"antialiased",minHeight:"100%",background:"transparent"}}>
+    <div ref={rootRef} onMouseOver={onRootOver} onClick={onRootClick} style={{fontFamily:"-apple-system,'DM Sans','Plus Jakarta Sans',BlinkMacSystemFont,'SF Pro Text',sans-serif",fontSize:14,lineHeight:1.45,color:t.ink,WebkitFontSmoothing:"antialiased",minHeight:"100%",background:"transparent"}}>
       {loading && <LoadingBar/>}
       {loading && (
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:9998,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(8px)",padding:16}}>
@@ -1182,6 +1233,21 @@ function ThemeWrapper(props) {
       {screen==="empty"     && <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:320,gap:16,textAlign:"center",padding:"0 24px"}}><div style={{fontSize:52}}>📭</div><div style={{fontWeight:800,fontSize:22,letterSpacing:"-0.03em",color:t.ink}}>No data available</div><div style={{color:t.muted,maxWidth:360,lineHeight:1.65,fontSize:14}}>No data has been published by Admin yet. This page updates automatically when data becomes available.</div></div>}
       {screen==="admin"     && <AdminScreen {...props} t={t}/>}
       {screen==="dashboard" && <DashScreen  {...props} t={t}/>}
+      {full!=null&&(
+        <div onClick={e=>{ e.stopPropagation(); if (e.target===e.currentTarget) setFull(null); }} style={{position:"fixed",inset:0,zIndex:9996,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div role="dialog" aria-modal="true" aria-label="Teks lengkap" style={{background:t.surf,border:`1px solid ${t.line2}`,borderRadius:16,boxShadow:t.shadow3,width:"min(520px, 100%)",maxHeight:"70vh",display:"flex",flexDirection:"column",animation:"_pt_fade .15s ease"}}>
+            <div style={{padding:"12px 16px",borderBottom:`1px solid ${t.line}`,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+              <span style={{fontSize:12.5,fontWeight:700,color:t.muted}}>Teks lengkap</span>
+              <button type="button" onClick={()=>setFull(null)} aria-label="Tutup" style={{width:28,height:28,borderRadius:8,border:`1px solid ${t.line}`,background:t.surf2,color:t.ink2,cursor:"pointer",fontSize:14,lineHeight:1,padding:0}}>✕</button>
+            </div>
+            <div style={{padding:16,overflowY:"auto",fontSize:14,lineHeight:1.55,color:t.ink,whiteSpace:"pre-wrap",wordBreak:"break-word",userSelect:"text"}}>{full}</div>
+            <div style={{padding:"10px 16px",borderTop:`1px solid ${t.line}`,display:"flex",justifyContent:"flex-end",gap:8}}>
+              <Btn t={t} sm onClick={()=>setFull(null)}>Tutup</Btn>
+              <Btn t={t} variant="primary" sm onClick={copyFull}>{copied?"Tersalin ✓":"Copy"}</Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
     </WidthCtx.Provider>
   );
@@ -1323,9 +1389,11 @@ function RawThCell({k,rawSort,setRawSort,setRawPage,isLeftCol,label,t}) {
   return <th {...hE} onClick={()=>{setRawSort(s=>({col:k,dir:s.col===k&&s.dir==="asc"?"desc":"asc"}));setRawPage(1);}} style={{position:"sticky",top:0,zIndex:2,fontSize:12,letterSpacing:"0.01em",color:active?C.teal:hov?t.ink:t.muted,fontWeight:active?700:500,background:hov?t.surf3:t.surf2,padding:"9px",textAlign:isLeftCol(k)?"left":"center",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap",cursor:"pointer",transition:"all .15s"}}>{label||k}{active?(rawSort.dir==="asc"?" ▲":" ▼"):""}</th>;
 }
 
+// Tooltip / teks penuh sel Raw Data: tanggal & bulan diformat (tidak pernah ISO mentah)
+const rawTitle = (v, k) => { if (v==null) return ""; if (isMonthKey(k)) return fmtMonthYear(v); if (isDateKey(k)) { const d = toDate(v); if (d) return fmtIdDate(d); } return String(v); };
 function RawDataRow({r,i,rawKeys,isLeftCol,fmtCellT,t,docs,segment}) {
   const [hov,hE]=useHover();
-  return <tr {...hE} style={{borderBottom:`1px solid ${t.line}`,background:hov?t.rowHover:i%2===1?t.rowStripe:"transparent",transition:"background .1s"}}>{rawKeys.map(k=><td key={k} title={String(r[k]||"")} style={{padding:"8px 9px",textAlign:isLeftCol(k)?"left":"center",maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{fmtCellT(r[k],k,t)}</td>)}{SHOW_DOCUMENT_TABS&&<td style={{padding:"6px 9px",textAlign:"center",whiteSpace:"nowrap"}}><DocsCell refId={refKey(gstr(r,DOC_REF_COLUMN))} partnerName={gstr(r,["partner name","agency name"])} segment={segment} title={gstr(r,["project title"])} amountText={fmtMoney(gnum(r,["amount"]),false)} docs={docs} t={t}/></td>}</tr>;
+  return <tr {...hE} style={{borderBottom:`1px solid ${t.line}`,background:hov?t.rowHover:i%2===1?t.rowStripe:"transparent",transition:"background .1s"}}>{rawKeys.map(k=><td key={k} title={rawTitle(r[k],k)} style={{padding:"8px 9px",textAlign:isLeftCol(k)?"left":"center",maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{fmtCellT(r[k],k,t)}</td>)}{SHOW_DOCUMENT_TABS&&<td style={{padding:"6px 9px",textAlign:"center",whiteSpace:"nowrap"}}><DocsCell refId={refKey(gstr(r,DOC_REF_COLUMN))} partnerName={gstr(r,["partner name","agency name"])} segment={segment} title={gstr(r,["project title"])} amountText={fmtMoney(gnum(r,["amount"]),false)} docs={docs} t={t}/></td>}</tr>;
 }
 
 // Milestone tercapai? (tanggal tahap terisi)
@@ -1420,7 +1488,7 @@ function StatusDistribution({ rows, t }) {
             <button type="button" onClick={()=>g.rows.length&&setExp(e=>e===g.k?null:g.k)} aria-expanded={open} disabled={!g.rows.length}
               style={{width:"100%",display:"grid",gridTemplateColumns:"auto minmax(0,1fr) auto",gap:8,alignItems:"center",padding:"7px 10px",borderRadius:10,border:`1px solid ${open?g.color:t.line}`,background:t.surf2,cursor:g.rows.length?"pointer":"default",fontFamily:"inherit",textAlign:"left"}}>
               <span style={{width:10,height:10,borderRadius:3,background:g.color}}/>
-              <span style={{fontSize:12.5,fontWeight:600,color:t.ink,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{g.label}</span>
+              <span style={{fontSize:12.5,fontWeight:600,color:t.ink,lineHeight:1.3}}>{g.label}</span>
               <span style={{fontSize:12.5,color:t.ink2,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}><strong style={{color:t.ink}}>{g.rows.length.toLocaleString()}</strong> · {pct(g.rows.length,n)}% · <span title={fmtRpFull(g.amt)}>{fmtRpWord(g.amt)}</span></span>
             </button>
             {open&&<RecList items={g.rows.map(recItem).sort((a,b)=>b.amt-a.amt)} tone={g.color} empty="No records" t={t}/>}
@@ -1481,9 +1549,9 @@ function HistoryTab({ rows, w, t, showToast }) {
     <Card t={t} pad={false} style={{marginBottom:14}}>
       <CardHead t={t} title="Riwayat pembayaran" sub="Invoice yang sudah dibayar (clearing bank)"
         right={<div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-          <select aria-label="Bulan program" value={mk} onChange={e=>setMk(e.target.value)} style={{fontFamily:"inherit",fontSize:13,fontWeight:600,color:t.ink,background:t.surf,border:`1px solid ${t.line2}`,borderRadius:9,padding:"6px 10px",cursor:"pointer"}}>
+          <Select t={t} label="Bulan program" value={mk} onChange={e=>setMk(e.target.value)}>
             <option value="all">Semua bulan</option>{months.map(m=><option key={m} value={m}>{monthName(m)}</option>)}
-          </select>
+          </Select>
           <Btn t={t} variant="primary" sm onClick={exportXlsx} disabled={!list.length}>Export Excel</Btn>
         </div>}/>
       <div style={{padding:18}}>
@@ -1502,8 +1570,8 @@ function HistoryTab({ rows, w, t, showToast }) {
               </tr></thead>
               <tbody>{list.slice(0,500).map((x,i)=>(
                 <tr key={i} style={{background:i%2===1?t.rowStripe:"transparent"}}>
-                  {!phone&&<td style={{...td(true),maxWidth:150}} title={invLabel(x.inv,x.invId)}><div style={{color:t.ink,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis"}}>{x.inv||"—"}</div>{x.invId&&<div style={{fontSize:12,color:t.muted}}>ID {x.invId}</div>}</td>}
-                  <td style={{...td(true),maxWidth:phone?150:300,color:t.ink2}} title={x.title}>{x.title}{phone&&x.inv&&<div style={{fontSize:12,color:t.muted}}>{x.inv}</div>}</td>
+                  {!phone&&<td style={{...td(true),maxWidth:150}} title={invLabel(x.inv,x.invId)}><div style={{color:t.ink,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis"}}>{x.inv?<Hl text={x.inv}/>:"—"}</div>{x.invId&&<div style={{fontSize:12,color:t.muted}}>ID <Hl text={x.invId}/></div>}</td>}
+                  <td style={{...td(true),maxWidth:phone?150:300,color:t.ink2}} title={x.title}><Hl text={x.title}/>{phone&&x.inv&&<div style={{fontSize:12,color:t.muted}}>{x.inv}</div>}</td>
                   <td style={{...td(false),color:t.ink}} title={fmtRpFull(x.amt)}>{fmtRpWord(x.amt)}</td>
                   {!phone&&<td style={td(false)}>{fmtIdDate(x.invD)||"—"}</td>}
                   {!phone&&<td style={td(false)}>{fmtIdDate(x.clvD)||"—"}</td>}
@@ -1567,6 +1635,24 @@ function DashScreen(props) {
   // Tab dengan pilihan sendiri → filter dashboard disembunyikan; toggle Partner/Agency
   // tetap tampil kecuali di YTD (gabungan Partner + Agency)
   const isYtd = tabKey==="ytd" || isAcc || isFc || isDc || isOut || isHist;
+  // Pencarian global (bar besar di atas tabel) — berlaku untuk tab data yang aktif
+  const ql = String(filters.q||"").toLowerCase().trim();
+  const showSearch = ["dash","raw","dc","hist","out"].includes(tabKey);
+  const sPartnerRaw = useMemo(()=>ql ? (viewPartnerRaw||[]).filter(r=>rowMatches(r,ql)) : (viewPartnerRaw||[]),[viewPartnerRaw,ql]);
+  const searchCount = tabKey==="dc" ? sPartnerRaw.filter(isDcRow).length
+    : tabKey==="hist" ? sPartnerRaw.filter(r=>isPaidStatus(rowStatus(r))||gcell(r,H_CLR)).length
+    : tabKey==="out" ? sPartnerRaw.filter(r=>!isPaidStatus(rowStatus(r))&&!gcell(r,H_CLR)).length
+    : filtRaw.length;
+  useEffect(()=>{
+    const onKey = (e) => {
+      if (e.key!=="/" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const tg = e.target; if (tg && (tg.tagName==="INPUT" || tg.tagName==="TEXTAREA" || tg.tagName==="SELECT" || tg.isContentEditable)) return;
+      const inp = searchRef.current?.querySelector("input"); if (!inp) return;
+      e.preventDefault(); inp.focus(); inp.select();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  },[searchRef]);
 
   // Dokumen per PO (Partner & Agency): dipakai kolom Dokumen di Raw Data & tab Upload & Merge Dokumen
   // profile null → hook tidak aktif (docs.enabled=false), tidak ada fetch dokumen/approval
@@ -1621,6 +1707,7 @@ function DashScreen(props) {
     : "Live preview";
 
   return (
+    <SearchCtx.Provider value={ql}>
     <div style={{maxWidth:1400,margin:"0 auto",padding:w<480?"16px 12px 44px":w<768?"18px 16px 48px":"20px 20px 56px"}}>
       <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:20,marginBottom:20,flexWrap:"wrap"}}>
         <div>
@@ -1657,17 +1744,10 @@ function DashScreen(props) {
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
             Region View
           </span>
-          <select value={regionView||""} onChange={e=>setRegionView(e.target.value)}
-            style={{
-              fontFamily:"inherit",fontSize:13,fontWeight:600,color:t.ink,
-              background:`${t.surf} url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23${(t.muted||'#8894a8').replace('#','')}' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>") no-repeat right 12px center`,
-              border:`1px solid ${t.line}`,borderRadius:9,
-              padding:"8px 34px 8px 13px",cursor:"pointer",outline:"none",minWidth:190,
-              WebkitAppearance:"none",MozAppearance:"none",appearance:"none",lineHeight:1.2
-            }}>
+          <Select t={t} label="Region view" minWidth={190} value={regionView||""} onChange={e=>setRegionView(e.target.value)}>
             <option value="">All Sumatera</option>
             {(regionOptions||[]).map(r=><option key={r} value={r}>{r}</option>)}
-          </select>
+          </Select>
           {regionView&&(
             <button onClick={()=>setRegionView("")}
               style={{fontFamily:"inherit",fontSize:12,fontWeight:600,color:t.muted,background:"transparent",border:`1px solid ${t.line}`,borderRadius:8,padding:"6px 10px",cursor:"pointer"}}>
@@ -1706,6 +1786,39 @@ function DashScreen(props) {
         ))}
       </div>
 
+      {showSearch&&(
+        <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",marginBottom:14,position:"relative",zIndex:20}}>
+                <div ref={searchRef} style={{position:"relative",flex:"1 1 260px",minWidth:0}}>
+                  <svg style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",pointerEvents:"none",color:t.muted}} width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                  <input type="search" aria-label="Cari" placeholder="Cari invoice, project, partner, ID…" value={searchInput}
+                    onChange={e=>{const v=e.target.value;setSearchInput(v);setSearchIdx(-1);setFilters(f=>({...f,q:v}));}}
+                    onFocus={()=>setSearchFocus(true)} onBlur={()=>setTimeout(()=>setSearchFocus(false),160)}
+                    onKeyDown={e=>{
+                      const items=allSuggestions;
+                      if(e.key==="ArrowDown"){e.preventDefault();setSearchIdx(i=>Math.min(i+1,items.length-1));}
+                      else if(e.key==="ArrowUp"){e.preventDefault();setSearchIdx(i=>Math.max(i-1,-1));}
+                      else if(e.key==="Enter"){e.preventDefault();if(searchIdx>=0&&items[searchIdx]){const picked=items[searchIdx].label;setSearchInput(picked);setFilters(f=>({...f,q:picked}));setSearchFocus(false);setSearchIdx(-1);}else if(searchInput.trim()){setFilters(f=>({...f,q:searchInput.trim()}));setSearchFocus(false);setSearchIdx(-1);}}
+                      else if(e.key==="Escape"){setSearchFocus(false);setSearchIdx(-1);}
+                    }}
+                    style={{width:"100%",height:44,padding:"0 72px 0 42px",fontSize:14,borderRadius:12,border:`1px solid ${searchFocus?C.teal:t.line2}`,background:t.surf2,color:t.ink,fontFamily:"inherit",outline:"none",boxSizing:"border-box",boxShadow:searchFocus?`0 0 0 3px ${C.teal}22`:"none",transition:"all .15s"}}/>
+                  {!searchInput&&!searchFocus&&!isMobile&&<kbd aria-hidden="true" style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",fontFamily:"inherit",fontSize:12,color:t.muted,border:`1px solid ${t.line2}`,borderRadius:6,padding:"1px 7px",background:t.surf}}>/</kbd>}
+                  {searchInput&&<button onClick={()=>{setSearchInput("");setFilters(f=>({...f,q:""}));}} aria-label="Clear search" style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",width:22,height:22,borderRadius:"50%",border:"none",background:t.surf4,color:t.muted,cursor:"pointer",fontSize:12,padding:0}}>✕</button>}
+                  {searchFocus&&allSuggestions.length>0&&(
+                    <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,right:0,zIndex:300,background:t.surf,border:`1px solid ${t.line2}`,borderRadius:14,boxShadow:t.shadow3,overflow:"hidden"}}>
+                      {[{g:searchSuggestions.partners,l:isAg?"Agency":"Partner",ic:C.teal,lbl:"P",off:0},{g:searchSuggestions.pos,l:"Invoice No / ID",ic:C.magenta,lbl:"PO",off:searchSuggestions.partners.length},{g:searchSuggestions.projects,l:"Project",ic:C.pink,lbl:"Pr",off:searchSuggestions.partners.length+searchSuggestions.pos.length}].filter(x=>x.g.length>0).map(({g,l,ic,lbl,off})=>(
+                        <div key={l}>
+                          <div style={{padding:"5px 14px 4px",fontSize:12,letterSpacing:"0.01em",color:t.muted,background:t.surf2,display:"flex",justifyContent:"space-between"}}><span>{l}</span><span style={{color:C.teal}}>{g.length}</span></div>
+                          {g.map((s,i)=><SugItem key={i} s={s} active={searchIdx===off+i} iconLabel={lbl} accentColor={ic} t={t} onPick={()=>{setSearchInput(s.label);setFilters(f=>({...f,q:s.label}));setSearchFocus(false);setSearchIdx(-1);}}/>)}
+                        </div>
+                      ))}
+                      <div style={{display:"flex",justifyContent:"space-between",padding:"5px 14px",fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted,background:t.surf2,borderTop:`1px solid ${t.line}`}}><span>↑↓ navigate</span><span>↵ select</span><span>Esc close</span></div>
+                    </div>
+                  )}
+                </div>
+          {ql&&<span style={{fontSize:13,color:t.ink2,whiteSpace:"nowrap",fontVariantNumeric:"tabular-nums"}} aria-live="polite"><strong style={{color:t.ink}}>{searchCount.toLocaleString()}</strong> hasil</span>}
+        </div>
+      )}
+
       {curAgg.length>0&&!isYtd&&(
         <div style={{background:t.surf,border:`1px solid ${t.line}`,borderRadius:14,padding:"10px 16px",marginBottom:chips.length>0?8:18,boxShadow:t.shadow1,position:"relative",zIndex:10}}>
           <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
@@ -1724,32 +1837,6 @@ function DashScreen(props) {
               <MultiSel t={t} values={Array.isArray(filters.ptype)?filters.ptype:[]} options={opts.ptypes.filter(Boolean)} placeholder={isAg?"All Agencies":"All Partners"} onChange={vals=>setFilters(f=>({...f,ptype:vals}))}/>
               <MultiSel t={t} values={Array.isArray(filters.prog)?filters.prog:[]} options={opts.progs.filter(Boolean)} placeholder="All Programs" onChange={vals=>setFilters(f=>({...f,prog:vals}))}/>
               {curRaw.length>0&&<MultiSel t={t} values={Array.isArray(filters.status)?filters.status:[]} options={opts.statuses.filter(Boolean)} placeholder="All Statuses" onChange={vals=>setFilters(f=>({...f,status:vals}))}/>}
-              <div ref={searchRef} style={{position:"relative",flex:"1 1 200px",minWidth:160}}>
-                <svg style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",pointerEvents:"none",color:t.muted}} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-                <input type="text" placeholder="Search partner, invoice no. / ID, or project…" value={searchInput}
-                  onChange={e=>{setSearchInput(e.target.value);setSearchIdx(-1);}}
-                  onFocus={()=>setSearchFocus(true)} onBlur={()=>setTimeout(()=>setSearchFocus(false),160)}
-                  onKeyDown={e=>{
-                    const items=allSuggestions;
-                    if(e.key==="ArrowDown"){e.preventDefault();setSearchIdx(i=>Math.min(i+1,items.length-1));}
-                    else if(e.key==="ArrowUp"){e.preventDefault();setSearchIdx(i=>Math.max(i-1,-1));}
-                    else if(e.key==="Enter"){e.preventDefault();if(searchIdx>=0&&items[searchIdx]){const picked=items[searchIdx].label;setSearchInput(picked);setFilters(f=>({...f,q:picked}));setSearchFocus(false);setSearchIdx(-1);}else if(searchInput.trim()){setFilters(f=>({...f,q:searchInput.trim()}));setSearchFocus(false);setSearchIdx(-1);}}
-                    else if(e.key==="Escape"){setSearchFocus(false);setSearchIdx(-1);}
-                  }}
-                  style={{width:"100%",padding:"7px 28px 7px 32px",fontSize:12.5,borderRadius:10,border:`1px solid ${searchFocus?C.teal:t.line2}`,background:t.surf2,color:t.ink,fontFamily:"inherit",outline:"none",boxSizing:"border-box",boxShadow:searchFocus?`0 0 0 3px ${C.teal}22`:"none",transition:"all .15s"}}/>
-                {searchInput&&<button onClick={()=>{setSearchInput("");setFilters(f=>({...f,q:""}));}} aria-label="Clear search" style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",width:18,height:18,borderRadius:"50%",border:"none",background:t.surf4,color:t.muted,cursor:"pointer",fontSize:12,padding:0}}>✕</button>}
-                {searchFocus&&allSuggestions.length>0&&(
-                  <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,right:0,zIndex:300,background:t.surf,border:`1px solid ${t.line2}`,borderRadius:14,boxShadow:t.shadow3,overflow:"hidden"}}>
-                    {[{g:searchSuggestions.partners,l:isAg?"Agency":"Partner",ic:C.teal,lbl:"P",off:0},{g:searchSuggestions.pos,l:"Invoice No / ID",ic:C.magenta,lbl:"PO",off:searchSuggestions.partners.length},{g:searchSuggestions.projects,l:"Project",ic:C.pink,lbl:"Pr",off:searchSuggestions.partners.length+searchSuggestions.pos.length}].filter(x=>x.g.length>0).map(({g,l,ic,lbl,off})=>(
-                      <div key={l}>
-                        <div style={{padding:"5px 14px 4px",fontSize:12,letterSpacing:"0.01em",color:t.muted,background:t.surf2,display:"flex",justifyContent:"space-between"}}><span>{l}</span><span style={{color:C.teal}}>{g.length}</span></div>
-                        {g.map((s,i)=><SugItem key={i} s={s} active={searchIdx===off+i} iconLabel={lbl} accentColor={ic} t={t} onPick={()=>{setSearchInput(s.label);setFilters(f=>({...f,q:s.label}));setSearchFocus(false);setSearchIdx(-1);}}/>)}
-                      </div>
-                    ))}
-                    <div style={{display:"flex",justifyContent:"space-between",padding:"5px 14px",fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted,background:t.surf2,borderTop:`1px solid ${t.line}`}}><span>↑↓ navigate</span><span>↵ select</span><span>Esc close</span></div>
-                  </div>
-                )}
-              </div>
               <Btn t={t} variant="ghost" sm onClick={resetFilters} style={{flexShrink:0}}>Reset</Btn>
             </div>
           )}
@@ -1771,11 +1858,11 @@ function DashScreen(props) {
       )}
 
       {isOut ? (
-        <OutstandingPage rows={viewPartnerRaw||[]} w={w} t={t} showToast={showToast}/>
+        <OutstandingPage rows={sPartnerRaw} w={w} t={t} showToast={showToast}/>
       ) : isHist ? (
-        <HistoryTab rows={viewPartnerRaw||[]} w={w} t={t} showToast={showToast}/>
+        <HistoryTab rows={sPartnerRaw} w={w} t={t} showToast={showToast}/>
       ) : isDc ? (
-        <DcTab rows={viewPartnerRaw||[]} w={w} t={t} showToast={showToast}/>
+        <DcTab rows={sPartnerRaw} w={w} t={t} showToast={showToast}/>
       ) : isFc ? (
         <ForecastTab rows={viewPartnerRaw||[]} w={w} t={t} showToast={showToast}/>
       ) : isAcc ? (
@@ -1808,6 +1895,7 @@ function DashScreen(props) {
         {regionFilter&&<span style={{marginLeft:12,color:t.yellow}}>· {regionFilter}</span>}
       </div>
     </div>
+    </SearchCtx.Provider>
   );
 }
 
@@ -1943,7 +2031,7 @@ function KpiCards({ ins, partnerCount, monthsCount, isAg, w, t }) {
         {cards.map((c,i)=><YtdKpi key={i} t={t} label={c.l} value={<span title={fmtRpFull(c.v)}>{fmtRpWord(c.v)}</span>} sub={c.sub}/>)}
       </div>
       <div style={{fontSize:12.5,color:t.muted,marginTop:8,display:"flex",gap:14,flexWrap:"wrap"}}>
-        <span>Average time to clear: <strong style={{color:t.ink}}>{k.cycN?`${(k.cycSum/k.cycN).toFixed(1)} working days`:"—"}</strong> (Invoice → Bank Cleared)</span>
+        <span>Average time to clear: <strong style={{color:t.ink}}>{k.cycN?`${(k.cycSum/k.cycN).toFixed(1).replace(".",",")} working days`:"—"}</strong> (Invoice → Bank Cleared)</span>
         <span>{plural(partnerCount,isAg?"agency":"partner",isAg?"agencies":"partners")} · {plural(monthsCount,"program month")}{span?` (${span})`:""} · all years in the data; YTD Summary covers one year</span>
       </div>
     </div>
@@ -1959,14 +2047,12 @@ function SlaStrip({ steps, bnExp, setBnExp, t }) {
         return (
           <div key={r.key} style={{border:`1px solid ${open?C.magenta:t.line}`,borderRadius:10,background:t.surf2}}>
             <div {...(can?kbd(()=>setBnExp(e=>e===r.key?null:r.key)):{})} onClick={can?()=>setBnExp(e=>e===r.key?null:r.key):undefined} aria-expanded={open}
-              style={{display:"grid",gridTemplateColumns:"1fr auto auto",alignItems:"center",gap:10,padding:"8px 11px",cursor:can?"pointer":"default"}}>
-              <div style={{minWidth:0,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                <span style={{fontWeight:600,fontSize:12.5,color:t.ink}}>{r.label}</span>
-              </div>
-              <span style={{fontSize:12.5,color:t.ink2,whiteSpace:"nowrap",fontVariantNumeric:"tabular-nums"}} title="Average working days vs SLA target">
+              style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) auto",gridTemplateAreas:'"l b" "v b"',alignItems:"center",columnGap:10,rowGap:2,padding:"8px 11px",cursor:can?"pointer":"default"}}>
+              <span style={{gridArea:"l",minWidth:0,fontWeight:600,fontSize:12.5,color:t.ink,lineHeight:1.3}}>{r.label}</span>
+              <span style={{gridArea:"v",fontSize:12.5,color:t.ink2,whiteSpace:"nowrap",fontVariantNumeric:"tabular-nums"}} title="Average working days vs SLA target">
                 {r.n?<><strong style={{color:r.avg<=r.sla?t.goodDark:t.badDark}}>{r.avg.toFixed(1).replace(".",",")}</strong> / {r.sla} working days</>:"—"}
               </span>
-              <span style={{display:"inline-flex",alignItems:"center",gap:5,minWidth:78,justifyContent:"center",padding:"1px 9px",borderRadius:99,fontSize:12,lineHeight:"18px",fontVariantNumeric:"tabular-nums",fontWeight:700,background:r.n?pc.bg:t.surf3,color:r.n?pc.c:t.muted,border:`1px solid ${r.n?pc.bd:t.line}`,whiteSpace:"nowrap"}} title={`${r.ok} of ${r.n} on time`}>
+              <span style={{gridArea:"b",display:"inline-flex",alignItems:"center",gap:5,minWidth:78,justifyContent:"center",padding:"1px 9px",borderRadius:99,fontSize:12,lineHeight:"18px",fontVariantNumeric:"tabular-nums",fontWeight:700,background:r.n?pc.bg:t.surf3,color:r.n?pc.c:t.muted,border:`1px solid ${r.n?pc.bd:t.line}`,whiteSpace:"nowrap"}} title={`${r.ok} of ${r.n} on time`}>
                 {r.n?<><span style={{width:6,height:6,borderRadius:"50%",background:pc.dot}}/>{p}% on time</>:"no data"}
               </span>
             </div>
@@ -1992,8 +2078,13 @@ function DashTab(props) {
   return (
     <>
       <KpiCards ins={ins} partnerCount={grandPartnerCount} monthsCount={monthsCount} isAg={isAg} w={w} t={t}/>
-      <div style={{display:"grid",gridTemplateColumns:"1fr",gap:14,marginBottom:14}}>
-        <Card t={t} pad={false}>
+      {/* Funnel (kiri) · SLA by Step (tengah) · Status (kanan); bertumpuk di layar sempit */}
+      <div style={{display:"grid",gridTemplateColumns:w>=960?"repeat(3,minmax(0,1fr))":"1fr",gap:14,marginBottom:14,alignItems:"stretch"}}>
+        <Card t={t} pad={false} style={{height:"100%"}}>
+          <CardHead title="Completion Funnel" sub={isAg?`Total → ${props.bastCols?.rcv||props.bastCols?.app?"BAST → ":""}Invoice Submitted → CLV → Bank Cleared · click "pending" to list records`:"Total → Surat Pemberitahuan → Invoice Submitted → CLV → Bank Cleared · click \"pending\" to list records"} t={t}/>
+          {filtRaw.length===0?<EmptyNote t={t}>No data available</EmptyNote>:<CompletionFunnel rows={filtRaw} isAg={isAg} bastCols={props.bastCols} t={t}/>}
+        </Card>
+        <Card t={t} pad={false} style={{height:"100%"}}>
           <CardHead title="SLA by Step" accent={C.red} sub="Avg working days vs target · % on time · click a step for the longest cases" t={t}/>
           {bastMissing&&<div style={{margin:"12px 18px 0",padding:"8px 12px",borderRadius:10,background:t.infoBg,border:`1px solid ${t.infoBd}`,fontSize:12.5,color:t.ink2,lineHeight:1.5}}>BAST steps need <strong>BAST Received Date</strong> and <strong>BAST Approved Date</strong> columns in the Agency sheet. They are not in the uploaded data yet, so those steps show &ldquo;no data&rdquo; and are left out of the funnel.</div>}
           <div style={{padding:18}}>
@@ -2003,13 +2094,7 @@ function DashTab(props) {
             </div>
           </div>
         </Card>
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:w>=1000?"minmax(0,1fr) minmax(0,1fr)":"1fr",gap:14,marginBottom:14,alignItems:"start"}}>
-        <Card t={t} pad={false}>
-          <CardHead title="Completion Funnel" sub={isAg?`Total → ${props.bastCols?.rcv||props.bastCols?.app?"BAST → ":""}Invoice Submitted → CLV → Bank Cleared · click "pending" to list records`:"Total → Surat Pemberitahuan → Invoice Submitted → CLV → Bank Cleared · click \"pending\" to list records"} t={t}/>
-          {filtRaw.length===0?<EmptyNote t={t}>No data available</EmptyNote>:<CompletionFunnel rows={filtRaw} isAg={isAg} bastCols={props.bastCols} t={t}/>}
-        </Card>
-        <Card t={t} pad={false}>
+        <Card t={t} pad={false} style={{height:"100%"}}>
           <CardHead title="Status Distribution" sub="Records by payment status · click a status to list its records" t={t}/>
           {filtRaw.length===0?<EmptyNote t={t}>No data available</EmptyNote>:<StatusDistribution rows={filtRaw} t={t}/>}
         </Card>
@@ -2092,7 +2177,7 @@ function PartnersTab({ ins, isAg, w, t }) {
           </tr></thead>
           <tbody>{list.map((o,i)=>(
             <tr key={o.name} style={{background:i%2===1?t.rowStripe:"transparent"}}>
-              <td style={{...tdS(t,true),fontWeight:600,color:t.ink,maxWidth:phone?150:260}} title={o.name}>{o.name}</td>
+              <td style={{...tdS(t,true),fontWeight:600,color:t.ink,maxWidth:phone?150:260}} title={o.name}><Hl text={o.name}/></td>
               {!phone&&num(o.n)}
               <td style={{...tdS(t),fontWeight:700,color:t.ink}} title={fmtRpFull(o.total)}>{fmtMiliar(o.total)}</td>
               {!phone&&<td style={tdS(t)} title={`Paid ${fmtRpFull(o.paid)} of ${fmtRpFull(o.total)}`}><PctBadge val={Math.round(o.pPaid)} t={t}/></td>}
@@ -2194,12 +2279,12 @@ function OutstandingTab({ ins, isAg, w, t, view, setView, sort, setSort }) {
   const renderRow = (x, i) => (
     <tr key={i} style={{background:i%2===1?t.rowStripe:"transparent"}}>
       {!phone&&<td style={{...td(true),maxWidth:140}} title={invLabel(x.inv,x.invId)}>
-        <div style={{color:t.ink,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis"}}>{x.inv || (x.invId ? "—" : <span style={{color:t.muted,fontWeight:500}}>belum ada</span>)}</div>
-        {x.invId&&<div style={{fontSize:12,color:t.muted}}>ID {x.invId}</div>}
+        <div style={{color:t.ink,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis"}}>{x.inv ? <Hl text={x.inv}/> : (x.invId ? "—" : <span style={{color:t.muted,fontWeight:500}}>belum ada</span>)}</div>
+        {x.invId&&<div style={{fontSize:12,color:t.muted}}>ID <Hl text={x.invId}/></div>}
       </td>}
       <td style={{...td(true),maxWidth:phone?130:w<1250?200:270}} title={`${x.title}\n${x.name}`}>
-        <div style={{color:t.ink2,overflow:"hidden",textOverflow:"ellipsis"}}>{x.title}</div>
-        {!grouped&&<div style={{fontSize:12,color:t.muted,overflow:"hidden",textOverflow:"ellipsis"}}>{x.name}</div>}
+        <div style={{color:t.ink2,overflow:"hidden",textOverflow:"ellipsis"}}><Hl text={x.title}/></div>
+        {!grouped&&<div style={{fontSize:12,color:t.muted,overflow:"hidden",textOverflow:"ellipsis"}}><Hl text={x.name}/></div>}
         {phone&&(x.inv||x.invId)&&<div style={{fontSize:12,color:t.muted,overflow:"hidden",textOverflow:"ellipsis"}}>{invLabel(x.inv,x.invId)}</div>}
       </td>
       <td style={{...td(false),color:t.ink}} title={fmtRpFull(x.amt)}>{fmtRpWord(x.amt)}</td>
@@ -2282,10 +2367,9 @@ function useYear(years) {
 }
 function YearSelect({ years, value, onChange, t }) {
   return (
-    <select value={value} onChange={e=>onChange(+e.target.value)} aria-label="Year"
-      style={{fontFamily:"inherit",fontSize:13,fontWeight:700,color:t.ink,background:t.surf2,border:`1px solid ${t.line2}`,borderRadius:9,padding:"6px 10px",cursor:"pointer"}}>
+    <Select t={t} label="Year" value={value} onChange={e=>onChange(+e.target.value)}>
       {(years.length?years:[value]).map(y=><option key={y} value={y}>{y}</option>)}
-    </select>
+    </Select>
   );
 }
 
@@ -2692,7 +2776,6 @@ function DcTab({ rows, w, t, showToast }) {
   const td = (left) => ({ ...tdS(t,left), padding:"8px 8px" });
   const pend = <span style={{display:"inline-block",padding:"1px 6px",borderRadius:99,background:t.warnBg,border:`1px solid ${t.warnBd}`,color:t.warnDark,fontSize:12,fontWeight:600}}>pending</span>;
   const dt = (d) => d ? fmtDayMon(d) : pend;
-  const sel = {fontFamily:"inherit",fontSize:13,fontWeight:700,color:t.ink,background:t.surf2,border:`1px solid ${t.line2}`,borderRadius:9,padding:"6px 10px",cursor:"pointer"};
   return (
     <div style={{marginBottom:14}}>
       <div style={{display:"flex",alignItems:"flex-start",gap:12,flexWrap:"wrap",marginBottom:14}}>
@@ -2701,8 +2784,8 @@ function DcTab({ rows, w, t, showToast }) {
           <div style={{fontSize:13,color:t.ink2,marginTop:6,lineHeight:1.5}}>{plural(list.length,"invoice")} · total <strong style={{color:t.ink}} title={fmtRpFull(total)}>{fmtRpWord(total)}</strong> · by program month</div>
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-          <select aria-label="Period" value={mk||""} onChange={e=>setMk(+e.target.value)} style={sel}>{months.map(m=><option key={m} value={m}>{ymLong(m)}</option>)}</select>
-          <select aria-label="Entity" value={ent} onChange={e=>{ setEnt(e.target.value); setMk(null); }} style={sel}>{ents.map(e=><option key={e} value={e}>{e}</option>)}<option value="ALL">All entities</option></select>
+          <Select t={t} label="Period" value={mk||""} onChange={e=>setMk(+e.target.value)}>{months.map(m=><option key={m} value={m}>{ymLong(m)}</option>)}</Select>
+          <Select t={t} label="Entity" value={ent} onChange={e=>{ setEnt(e.target.value); setMk(null); }}>{ents.map(e=><option key={e} value={e}>{e}</option>)}<option value="ALL">All entities</option></Select>
           <Btn t={t} sm onClick={copyTable}>Copy table</Btn>
           <Btn t={t} variant="primary" sm onClick={exportXlsx}>Export Excel</Btn>
         </div>
@@ -2741,10 +2824,10 @@ function DcTab({ rows, w, t, showToast }) {
                 <tr key={i} style={{background:i%2===1?t.rowStripe:"transparent"}}>
                   <td style={{...td(false),color:t.muted}}>{i+1}</td>
                   <td style={td(false)}>{dt(x.created)}</td>
-                  <td style={{...td(true),maxWidth:120}} title={x.inv}>{x.inv || pend}</td>
-                  <td style={{...td(true),maxWidth:phone?160:155,color:t.ink2}} title={x.title}>{x.title}</td>
+                  <td style={{...td(true),maxWidth:120}} title={x.inv}>{x.inv ? <Hl text={x.inv}/> : pend}</td>
+                  <td style={{...td(true),maxWidth:phone?160:155,color:t.ink2}} title={x.title}><Hl text={x.title}/></td>
                   <td style={{...td(false),color:t.ink,fontWeight:600}} title={fmtRpFull(x.total)}>{Math.round(x.total).toLocaleString("id-ID")}</td>
-                  <td style={{...td(true),maxWidth:135,color:t.ink}} title={x.supplier}>{x.supplier}</td>
+                  <td style={{...td(true),maxWidth:135,color:t.ink}} title={x.supplier}><Hl text={x.supplier}/></td>
                   <td style={td(false)}>{dt(x.coupa)}</td>
                   <td style={td(false)}>{dt(x.clv)}</td>
                   <td style={td(false)}>{dt(x.clr)}</td>
