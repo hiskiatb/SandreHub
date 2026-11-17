@@ -1750,7 +1750,7 @@ function computeInsights(rows) {
   const wk0 = new Date(today.getTime() - ((today.getDay()+6)%7)*DAY); // Senin minggu ini
   const wk1 = new Date(wk0.getTime()+7*DAY), wk2 = new Date(wk0.getTime()+14*DAY);
   const k = { total:0, n:rows.length, paid:0, paidN:0, out:0, outN:0, notSub:0, notSubAmt:0, cycSum:0, cycN:0 };
-  const open = [], owners = {};
+  const open = [], owners = {}, allCyc = [];
   rows.forEach(r=>{
     const amt = gnum(r,["amount"]), st = rowStatus(r), name = ownerName(r) || "—";
     const invV = gcell(r,H_INV_COUPA,null) || gcell(r,H_INV), clrV = gcell(r,H_CLR);
@@ -1763,22 +1763,37 @@ function computeInsights(rows) {
     const est = estRaw ? dayStart(estRaw) : null;
     const cyc = workDaysBetween(invV, clrV);
     if (cyc!=null) { k.cycSum += cyc; k.cycN++; }
-    if (!owners[name]) owners[name] = { name, total:0, paid:0, n:0, open:0, openAmt:0, cycSum:0, cycN:0, onT:0, onN:0, late:0, oldest:null };
+    if (!owners[name]) owners[name] = { name, total:0, paid:0, n:0, open:0, openAmt:0, cycSum:0, cycN:0, onT:0, onN:0, late:0, oldest:null, cycs:[] };
     const o = owners[name]; o.total += amt; o.n++;
     if (paid) o.paid += amt;
-    if (cyc!=null) { o.cycSum += cyc; o.cycN++; }
+    if (cyc!=null) { o.cycSum += cyc; o.cycN++; if (paid) { o.cycs.push(cyc); allCyc.push(cyc); } }
     if (clrD && est) { o.onN++; if (dayStart(clrD) <= est) o.onT++; }
     if (paid || clrV) return;
     // Masih terbuka (belum dibayar & belum clearing)
     const sofar = invD ? workDaysBetween(invD, today) : null;              // Invoice → hari ini (hari kerja)
-    const late = est && est < today ? (workDaysBetween(est, today) || 0) : 0; // hari kerja lewat Est. Date
     const mk = rowMonthKey(r);
+    const bastD = toDate(gcell(r,H_BAST_APP)) || toDate(gcell(r,H_BAST_RCV));
     const item = { name, title:gstr(r,["project title"])||"—", inv:r._inv, invId:r._invId, amt, status:st, ns, proc,
-      invD, clvD, est, cyc:sofar, late, period:mk?ymLabel(mk):"—" };
+      invD, clvD, est, bastD, hasBast:!!(findCol(r,H_BAST_APP)||findCol(r,H_BAST_RCV)), cyc:sofar, period:mk?ymLabel(mk):"—" };
     open.push(item);
     o.open++; o.openAmt += amt;
-    if (late>0) o.late++;
     if (sofar!=null && (o.oldest==null || sofar>o.oldest)) o.oldest = sofar;
+  });
+  // Estimasi bayar: Estimation Date; bila kosong (dan invoice sudah ada) → perkiraan = tgl invoice + median
+  // hari kerja Invoice→Clearing dari invoice yang sudah dibayar (per pemilik bila ≥3 data, selain itu keseluruhan)
+  const medAll = median(allCyc);
+  open.forEach(x=>{
+    const o = owners[x.name];
+    const med = o.cycs.length>=3 ? median(o.cycs) : medAll;
+    x.estGuess = !x.est && !x.ns && !!x.invD && med!=null;
+    x.estUse = x.ns ? null : x.est || (x.estGuess ? addWorkDays(x.invD, med) : null);
+    x.late = x.estUse && x.estUse < today ? (workDaysBetween(x.estUse, today) || 0) : 0;
+    const left = x.estUse && x.estUse >= today ? workDaysBetween(today, x.estUse) : null;
+    if (x.ns) { x.tone = "grey"; x.say = "Menunggu invoice disubmit"; }
+    else if (x.late>0) { x.tone = "bad"; x.say = `Terlambat ${x.late} hari kerja`; }
+    else if (x.estUse) { x.tone = "warn"; x.say = left===0 ? "Dibayar ± hari ini" : `Dibayar ± ${fmtIdDate(x.estUse,false)} (${left} hari kerja lagi)`; }
+    else { x.tone = "grey"; x.say = "Menunggu tanggal invoice"; }
+    if (x.late>0) o.late++;
   });
   // rentang bulan program di data (untuk menjelaskan cakupan KPI)
   const mks = rows.map(rowMonthKey).filter(Boolean);
@@ -1885,6 +1900,8 @@ function DashTab(props) {
 function DetailsTabs(props) {
   const { t, w, ins, isAg, exportSummary } = props;
   const [tab, setTab] = useState("out");
+  const [view, setView] = useState("all"); // all | late | soon | ns
+  const [sort, setSort] = useState({ col:"status", dir:"desc" });
   const tabs = [
     { id:"out",  label:"Outstanding", count:ins.open.length },
     { id:"own",  label:isAg?"Agencies":"Partners", count:ins.owners.length },
@@ -1894,14 +1911,16 @@ function DetailsTabs(props) {
     <Card t={t} pad={false} style={{marginBottom:14}}>
       <div style={{display:"flex",gap:22,padding:"0 20px",borderBottom:`1px solid ${t.line}`,background:t.surf2,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"none"}} role="tablist">
         {tabs.map(x=><TabBtn key={x.id} label={x.label} count={x.count} active={cur===x.id} onClick={()=>setTab(x.id)} t={t}/>)}
-        {/* Ekspor ringkasan (per bulan × entity × tipe × program × flow, ikut filter) — tersedia di semua tab detail */}
-        <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8,flexShrink:0,padding:"8px 0"}}>
+        {/* Satu tombol ekspor: Outstanding → daftar tagihan (semua tanggal); tab lain → ringkasan bulanan */}
+        {cur==="out" ? <div style={{marginLeft:"auto",display:"flex",alignItems:"center",flexShrink:0,padding:"8px 0"}}>
+          <Btn t={t} variant="primary" sm onClick={()=>exportOutstanding(outRows(ins,view,sort), isAg, view, props.showToast)}>Export Excel</Btn>
+        </div> : <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8,flexShrink:0,padding:"8px 0"}}>
           <span style={{fontSize:12.5,color:t.muted,whiteSpace:"nowrap"}}>Export summary</span>
           <Btn t={t} variant="outline" sm onClick={()=>exportSummary("csv")} title="Filtered monthly summary as CSV">CSV</Btn>
           <Btn t={t} variant="primary" sm onClick={()=>exportSummary("xlsx")} title="Filtered monthly summary as Excel">Excel</Btn>
-        </div>
+        </div>}
       </div>
-      {cur==="out"  && <OutstandingTab ins={ins} isAg={isAg} w={w} t={t} showToast={props.showToast}/>}
+      {cur==="out"  && <OutstandingTab ins={ins} isAg={isAg} w={w} t={t} view={view} setView={setView} sort={sort} setSort={setSort}/>}
       {cur==="own"  && <PartnersTab ins={ins} isAg={isAg} w={w} t={t}/>}
     </Card>
   );
@@ -1971,113 +1990,147 @@ function PartnersTab({ ins, isAg, w, t }) {
   );
 }
 
-const inWeek = (x, a, b) => !!x.est && x.est>=a && x.est<b;
-const OUT_VIEWS = [
-  { id:"all",    label:"All",            f:()=>true },
-  { id:"late",   label:"Late",           f:(x)=>x.late>0, tone:C.red },
-  { id:"this",   label:"Due this week",  f:(x,ins)=>inWeek(x,ins.wk0,ins.wk1) },
-  { id:"next",   label:"Due next week",  f:(x,ins)=>inWeek(x,ins.wk1,ins.wk2) },
-  { id:"notsub", label:"Not submitted",  f:(x)=>x.ns, tone:C.red },
-];
-/* ── Outstanding: tagihan yang belum clearing, dengan tanggal tiap tahap + keterlambatan ── */
-function OutstandingTab({ ins, isAg, w, t, showToast }) {
-  const [view, setView] = useState("all"); // all | late | this | next | notsub
-  const [sort, setSort] = useState({ col:"late", dir:"desc" });
+/* ── Outstanding (bahasa Indonesia sederhana; pembaca utama partner) ── */
+const ID_MON = ["","Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
+const fmtIdDate = (d, year=true) => d ? `${d.getDate()} ${ID_MON[d.getMonth()+1]}${year?" "+d.getFullYear():""}` : "";
+function addWorkDays(d, n) { const x = dayStart(d); let k = 0; while (k < n) { x.setDate(x.getDate()+1); const w = x.getDay(); if (w!==0 && w!==6) k++; } return x; }
+const OUT_BOX = {
+  late: (x)=>x.late>0,
+  soon: (x,ins)=>!x.ns && x.late===0 && !!x.estUse && x.estUse < ins.wk2,
+  ns:   (x)=>x.ns,
+};
+// Urutan default: Terlambat dulu (paling lama), lalu Estimasi terdekat, lalu yang belum disubmit
+function outRows(ins, view, sort) {
+  const f = OUT_BOX[view] || (()=>true);
+  const { col, dir } = sort, m = dir==="asc" ? 1 : -1;
+  const rank = (x) => x.late>0 ? 0 : x.ns ? 2 : 1;
+  const est = (x) => x.estUse ? x.estUse.getTime() : Infinity;
+  return ins.open.filter(x=>f(x,ins)).sort((a,b)=>{
+    if (col==="amt") return m*(a.amt-b.amt);
+    if (col==="name") return m*a.name.localeCompare(b.name) || est(a)-est(b);
+    if (col==="est") return m*(est(a)-est(b)) || b.amt-a.amt;
+    return rank(a)-rank(b) || (rank(a)===0 ? b.late-a.late : est(a)-est(b)) || b.amt-a.amt;
+  });
+}
+async function exportOutstanding(rows, isAg, view, showToast) {
+  const XLSX = await getXLSX();
+  const own = isAg ? "Agency" : "Partner";
+  const data = rows.map(x=>({ "No Invoice":x.inv||"", "ID Invoice":x.invId||"", "Project":x.title, [own]:x.name, "Periode":x.period, "Status data":x.status||"",
+    "Amount":Math.round(x.amt), "Tgl Invoice":fmtIdDate(x.invD)||"", "Tgl CLV":fmtIdDate(x.clvD)||"", "Estimasi bayar":fmtIdDate(x.estUse)||"",
+    "Estimasi dari":x.estUse?(x.estGuess?"Perkiraan (median Invoice→Clearing)":"Estimation Date"):"", "Invoice→hari ini (hari kerja)":x.cyc??"",
+    "Terlambat (hari kerja)":x.late||0, "Status":x.say }));
+  const ws = XLSX.utils.json_to_sheet(data);
+  ws["!cols"] = [18,12,48,32,10,20,16,14,14,14,30,16,14,40].map(wch=>({wch}));
+  for (let r=1; r<=data.length; r++) { const c = ws[XLSX.utils.encode_cell({r,c:6})]; if (c && c.t==="n") c.z = '"Rp "#,##0'; }
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Outstanding");
+  XLSX.writeFile(wb, `${isAg?"agency":"partner"}_outstanding_${view}_${new Date().toISOString().slice(0,10)}.xlsx`);
+  showToast?.("Outstanding diunduh — Excel","success");
+}
+
+function OutStepper({ x, isAg, t }) {
+  const steps = [
+    ...(isAg && x.hasBast ? [{ l:"BAST", d:x.bastD }] : []),
+    { l:"Invoice", d:x.ns ? null : x.invD, done:!x.ns && !!(x.invD || x.inv) },
+    { l:"CLV", d:x.clvD },
+    { l:"Bank", d:null },
+  ].map(s=>({ ...s, done: s.done ?? !!s.d }));
+  const curI = steps.findIndex(s=>!s.done);
+  return (
+    <span style={{display:"inline-flex",alignItems:"center",gap:4,whiteSpace:"nowrap",fontSize:12}}>
+      {steps.map((s,i)=>{ const cur = i===curI; const c = s.done ? t.goodDark : cur ? t.warnDark : t.muted;
+        return <React.Fragment key={s.l}>
+          {i>0&&<span style={{color:t.muted2||t.muted}}>→</span>}
+          <span title={`${s.l}: ${s.d ? fmtIdDate(s.d) : s.done ? "selesai" : "belum"}`} style={{color:c,fontWeight:s.done||cur?600:500}}>{s.done?"✓":cur?"⏳":"○"} {s.l}</span>
+        </React.Fragment>; })}
+    </span>
+  );
+}
+
+function OutstandingTab({ ins, isAg, w, t, view, setView, sort, setSort }) {
   const [grouped, setGrouped] = useState(false);
   const [openG, setOpenG] = useState({});
-  const views = OUT_VIEWS;
-  const cur = views.find(v=>v.id===view) || views[0];
-  const rows = useMemo(()=>{
-    const { col, dir } = sort, m = dir==="asc" ? 1 : -1;
-    const f = (OUT_VIEWS.find(v=>v.id===view) || OUT_VIEWS[0]).f;
-    const val = (x) => col==="late" ? x.late : col==="cyc" ? (x.cyc ?? -1) : col==="amt" ? x.amt : col==="est" ? (x.est ? x.est.getTime() : Infinity) : 0;
-    return ins.open.filter(x=>f(x,ins)).sort((a,b)=> col==="name" ? m*a.name.localeCompare(b.name) : (m*(val(a)-val(b)) || b.amt-a.amt));
-  },[ins,view,sort]);
+  const rows = useMemo(()=>outRows(ins, view, sort),[ins,view,sort]);
   const groups = useMemo(()=>{
     if (!grouped) return [];
     const g = {};
     rows.forEach(x=>{ (g[x.name] ||= { name:x.name, items:[], amt:0, late:0 }); g[x.name].items.push(x); g[x.name].amt += x.amt; if (x.late>0) g[x.name].late++; });
     return Object.values(g).sort((a,b)=>b.late-a.late || b.amt-a.amt);
   },[rows,grouped]);
-  const amt = rows.reduce((a,r)=>a+r.amt,0);
+  const box = (k) => { const r = ins.open.filter(x=>OUT_BOX[k](x,ins)); return { n:r.length, amt:r.reduce((a,x)=>a+x.amt,0) }; };
+  const B = { late:box("late"), soon:box("soon"), ns:box("ns") };
+  const totAmt = ins.open.reduce((a,x)=>a+x.amt,0);
   const phone = w<640;
-  const own = isAg ? "Agency" : "Partner";
-  const pend = <span style={{display:"inline-block",padding:"1px 6px",borderRadius:99,background:t.warnBg,border:`1px solid ${t.warnBd}`,color:t.warnDark,fontSize:12,fontWeight:600}}>pending</span>;
-  const dt = (d) => d ? fmtDayMon(d) : pend;
-  const estBg = `linear-gradient(${C.yellow}40,${C.yellow}40),${t.surf2}`;
+  const own = isAg ? "agency" : "partner";
   const th = (left) => ({ ...thS(t,left), padding:"8px 8px" });
   const td = (left) => ({ ...tdS(t,left), padding:"7px 8px" });
-  const thW = { ...th(false), whiteSpace:"normal", lineHeight:1.25, minWidth:64, maxWidth:96 };
-  const cols = phone ? 4 : 9;
-  const exportXlsx = async () => {
-    const XLSX = await getXLSX();
-    const data = rows.map(x=>({ "Invoice Number":x.inv||"", "Invoice ID":x.invId||"", "Project Title":x.title, [own]:x.name, Period:x.period, Status:x.status||"",
-      Amount:Math.round(x.amt), "Invoice Date":fmtDayMon(x.invD)||"pending", "CLV Date":fmtDayMon(x.clvD)||"pending", "Est. Date":fmtDayMon(x.est)||"",
-      "Clearing Bank Date":"pending", "Invoice→Clearing (working days so far)":x.cyc??"", "Late (working days past Est. Date)":x.est?x.late:"" }));
-    const ws = XLSX.utils.json_to_sheet(data);
-    ws["!cols"] = [18,12,48,32,10,20,16,14,14,14,18,16,16].map(wch=>({wch}));
-    for (let r=1; r<=data.length; r++) { const c = ws[XLSX.utils.encode_cell({r,c:6})]; if (c && c.t==="n") c.z = '"Rp "#,##0'; }
-    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Outstanding");
-    XLSX.writeFile(wb, `${isAg?"agency":"partner"}_outstanding_${cur.id}_${new Date().toISOString().slice(0,10)}.xlsx`);
-    showToast?.("Outstanding list downloaded — Excel","success");
+  const estBg = `linear-gradient(${C.yellow}40,${C.yellow}40),${t.surf2}`;
+  const chip = (x) => {
+    const st = x.tone==="bad" ? {bg:t.badBg,bd:t.badBd,c:t.badDark} : x.tone==="warn" ? {bg:t.warnBg,bd:t.warnBd,c:t.warnDark} : {bg:t.surf3,bd:t.line2,c:t.ink2};
+    return <span style={{display:"inline-block",padding:"2px 9px",borderRadius:99,background:st.bg,border:`1px solid ${st.bd}`,color:st.c,fontSize:12,fontWeight:600,whiteSpace:phone?"normal":"nowrap",lineHeight:1.35}}>{x.say}</span>;
   };
   const renderRow = (x, i) => (
     <tr key={i} style={{background:i%2===1?t.rowStripe:"transparent"}}>
-      <td style={{...td(true),maxWidth:phone?110:140}} title={invLabel(x.inv,x.invId)}>
-        <div style={{color:t.ink,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis"}}>{x.inv || (x.invId ? "—" : pend)}</div>
+      {!phone&&<td style={{...td(true),maxWidth:140}} title={invLabel(x.inv,x.invId)}>
+        <div style={{color:t.ink,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis"}}>{x.inv || (x.invId ? "—" : <span style={{color:t.muted,fontWeight:500}}>belum ada</span>)}</div>
         {x.invId&&<div style={{fontSize:12,color:t.muted}}>ID {x.invId}</div>}
-      </td>
-      <td style={{...td(true),maxWidth:phone?150:w<1250?170:260}} title={`${x.title}\n${x.name}`}>
+      </td>}
+      <td style={{...td(true),maxWidth:phone?130:w<1250?200:270}} title={`${x.title}\n${x.name}`}>
         <div style={{color:t.ink2,overflow:"hidden",textOverflow:"ellipsis"}}>{x.title}</div>
         {!grouped&&<div style={{fontSize:12,color:t.muted,overflow:"hidden",textOverflow:"ellipsis"}}>{x.name}</div>}
+        {phone&&(x.inv||x.invId)&&<div style={{fontSize:12,color:t.muted,overflow:"hidden",textOverflow:"ellipsis"}}>{invLabel(x.inv,x.invId)}</div>}
       </td>
       <td style={{...td(false),color:t.ink}} title={fmtRpFull(x.amt)}>{fmtRpWord(x.amt)}</td>
-      {!phone&&<td style={td(false)}>{x.ns ? pend : dt(x.invD)}</td>}
-      {!phone&&<td style={td(false)}>{dt(x.clvD)}</td>}
-      {!phone&&<td style={{...td(false),fontWeight:700,color:x.late>0?t.bad:t.ink,background:x.late>0?t.badBg:`${C.yellow}14`}}>{x.est?fmtDayMon(x.est):"—"}</td>}
-      {!phone&&<td style={td(false)}>{pend}</td>}
-      {!phone&&<td style={{...td(false),color:t.ink2}} title={x.invD?`${fmtDayMon(x.invD)} → today`:"No invoice date yet"}>{x.cyc==null?"—":plural(x.cyc,"day")}</td>}
-      <td style={td(false)}>{!x.est ? <span style={{color:t.muted}}>—</span> : x.late>0
-        ? <span style={{display:"inline-block",padding:"1px 8px",borderRadius:99,background:t.badBg,border:`1px solid ${t.badBd}`,color:t.badDark,fontSize:12,fontWeight:700}}>{plural(x.late,"day")} late</span>
-        : <span style={{fontSize:12,color:t.goodDark,fontWeight:600}}>on track</span>}</td>
+      {!phone&&<td style={td(true)}><OutStepper x={x} isAg={isAg} t={t}/></td>}
+      <td style={{...td(false),fontWeight:700,color:x.late>0?t.badDark:t.ink,background:x.late>0?t.badBg:`${C.yellow}14`,fontStyle:x.estGuess?"italic":"normal"}}
+        title={x.estGuess?"Perkiraan: tanggal invoice + median lama Invoice→Clearing":x.estUse?"Estimation Date dari data":undefined}>{x.estUse ? `${x.estGuess?"± ":""}${fmtIdDate(x.estUse)}` : "—"}</td>
+      <td style={{...td(true),whiteSpace:phone?"normal":"nowrap",minWidth:phone?110:undefined}}>{chip(x)}</td>
     </tr>
   );
+  const renderBox = ({ k, label, tone, sub }) => { const on = view===k, c = tone==="bad"?t.bad:tone==="warn"?t.warn:t.muted; return (
+    <button type="button" onClick={()=>setView(on?"all":k)} aria-pressed={on}
+      style={{textAlign:"left",fontFamily:"inherit",cursor:"pointer",padding:"12px 14px",borderRadius:14,border:`1.5px solid ${on?c:t.line}`,background:on?(tone==="bad"?t.badBg:tone==="warn"?t.warnBg:t.surf3):t.surf2,boxShadow:on?`0 0 0 3px ${c}22`:"none",minWidth:0}}>
+      <div style={{display:"flex",alignItems:"center",gap:7,fontSize:12.5,fontWeight:600,color:t.ink2}}><span style={{width:9,height:9,borderRadius:3,background:c}}/>{label}</div>
+      <div style={{display:"flex",alignItems:"baseline",gap:8,marginTop:6,flexWrap:"wrap"}}>
+        <span style={{fontSize:24,fontWeight:800,color:t.ink,fontVariantNumeric:"tabular-nums"}}>{B[k].n}</span>
+        <span style={{fontSize:13,fontWeight:600,color:t.ink2}} title={fmtRpFull(B[k].amt)}>{fmtRpWord(B[k].amt)}</span>
+      </div>
+      <div style={{fontSize:12,color:t.muted,marginTop:2}}>{sub}</div>
+    </button>
+  ); };
   return (
     <div style={{padding:18}}>
-      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:12}}>
-        {views.map(v=><Chip key={v.id} t={t} tone={v.tone} active={view===v.id} onClick={()=>setView(v.id)}>{v.label} · {ins.open.filter(x=>v.f(x,ins)).length}</Chip>)}
+      <div style={{display:"grid",gridTemplateColumns:w>=760?"repeat(3,minmax(0,1fr))":"1fr",gap:10,marginBottom:10}}>
+        {renderBox({ k:"late", label:"Terlambat", tone:"bad", sub:"sudah lewat estimasi bayar" })}
+        {renderBox({ k:"soon", label:"Dibayar minggu ini / minggu depan", tone:"warn", sub:`estimasi s.d. ${fmtIdDate(new Date(ins.wk2.getTime()-DAY),false)}` })}
+        {renderBox({ k:"ns", label:"Invoice belum disubmit", tone:"grey", sub:"menunggu invoice dari "+own })}
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:10}}>
+        <Chip t={t} active={view==="all"} onClick={()=>setView("all")}>Semua · {ins.open.length}</Chip>
+        <span style={{fontSize:12.5,color:t.ink2}}>Total belum dibayar <strong style={{color:t.ink}} title={fmtRpFull(totAmt)}>{fmtRpWord(totAmt)}</strong>{view!=="all"&&<> · ditampilkan {rows.length}</>}</span>
         <span style={{flex:"1 1 0"}}/>
-        <label style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12.5,color:t.ink2,cursor:"pointer"}}><input type="checkbox" checked={grouped} onChange={e=>{ setGrouped(e.target.checked); setOpenG({}); }}/>Group by {own.toLowerCase()}</label>
-        <Btn t={t} sm onClick={exportXlsx} disabled={!rows.length}>Export Excel</Btn>
+        <label style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12.5,color:t.ink2,cursor:"pointer"}}><input type="checkbox" checked={grouped} onChange={e=>{ setGrouped(e.target.checked); setOpenG({}); }}/>Kelompokkan per {own}</label>
       </div>
-      <div style={{display:"flex",alignItems:"baseline",gap:12,flexWrap:"wrap",padding:"10px 14px",background:t.surf2,border:`1px solid ${t.line}`,borderRadius:12,marginBottom:10}}>
-        <span style={{fontSize:12.5,fontWeight:600,color:t.muted}}>{cur.id==="all"?"Total outstanding":cur.label}</span>
-        <span style={{fontWeight:800,fontSize:20,color:t.ink,letterSpacing:"-0.02em"}} title={fmtRpFull(amt)}>{fmtRpWord(amt)}</span>
-        <span style={{fontSize:12,color:t.muted}}>{plural(rows.length,"invoice")}{cur.id==="this"||cur.id==="next"?` · Est. Date ${fmtDate(cur.id==="this"?ins.wk0:ins.wk1)} – ${fmtDate(new Date((cur.id==="this"?ins.wk1:ins.wk2).getTime()-DAY))}`:" · not yet cleared by the bank"}</span>
-      </div>
-      {rows.length===0 ? <EmptyNote t={t}>{cur.id==="late"?"Nothing is late":cur.id==="notsub"?"No invoices waiting":cur.id==="all"?"No outstanding payments":"No payments due in this period"}</EmptyNote> : (
-        <div style={{maxHeight:460,overflow:"auto",border:`1px solid ${t.line}`,borderRadius:10}}>
+      {rows.length===0 ? <EmptyNote t={t}>{view==="late"?"Tidak ada yang terlambat":view==="ns"?"Semua invoice sudah disubmit":view==="soon"?"Tidak ada pembayaran minggu ini / minggu depan":"Tidak ada tagihan yang belum dibayar"}</EmptyNote> : (
+        <div style={{overflowX:"auto",overflowY:"hidden",border:`1px solid ${t.line}`,borderRadius:10}}>
           <table style={{width:"100%",borderCollapse:"collapse"}}>
             <thead><tr>
-              <th style={th(true)}>Invoice</th>
-              <SortTh col="name" left sort={sort} setSort={setSort} t={t}>Project · {own}</SortTh>
+              {!phone&&<th style={th(true)}>Invoice</th>}
+              <SortTh col="name" left sort={sort} setSort={setSort} t={t}>Project · {isAg?"Agency":"Partner"}</SortTh>
               <SortTh col="amt" sort={sort} setSort={setSort} t={t}>Amount</SortTh>
-              {!phone&&<th style={thW}>Invoice Date</th>}
-              {!phone&&<th style={thW}>CLV Date</th>}
-              {!phone&&<th style={{...thW,background:estBg,color:t.ink,fontWeight:700,cursor:"pointer"}} onClick={()=>setSort(s=>({col:"est",dir:s.col==="est"&&s.dir==="asc"?"desc":"asc"}))}>Est. Date{sort.col==="est"?(sort.dir==="asc"?" ▲":" ▼"):""}</th>}
-              {!phone&&<th style={thW}>Clearing Bank Date</th>}
-              {!phone&&<SortTh col="cyc" wrap sort={sort} setSort={setSort} t={t}>Invoice→ Clearing</SortTh>}
-              <SortTh col="late" sort={sort} setSort={setSort} t={t}>Late</SortTh>
+              {!phone&&<th style={th(true)}>Progress</th>}
+              <th onClick={()=>setSort(s=>({col:"est",dir:s.col==="est"&&s.dir==="asc"?"desc":"asc"}))} style={{...th(false),background:estBg,color:t.ink,fontWeight:700,cursor:"pointer"}}>Estimasi bayar{sort.col==="est"?(sort.dir==="asc"?" ▲":" ▼"):""}</th>
+              <th onClick={()=>setSort({col:"status",dir:"desc"})} style={{...th(true),cursor:"pointer",color:sort.col==="status"?C.teal:t.muted}}>Status{sort.col==="status"?" ▼":""}</th>
             </tr></thead>
             <tbody>
               {!grouped && rows.slice(0,300).map((x,i)=>renderRow(x,i))}
               {grouped && groups.map(g=>{ const op = !!openG[g.name]; return (
                 <React.Fragment key={g.name}>
                   <tr onClick={()=>setOpenG(s=>({...s,[g.name]:!op}))} {...kbd(()=>setOpenG(s=>({...s,[g.name]:!op})))} aria-expanded={op} style={{cursor:"pointer",background:t.surf2}}>
-                    <td colSpan={2} style={{...td(true),maxWidth:phone?220:420,color:t.ink,fontWeight:700}} title={g.name}>{op?"▾":"▸"} {g.name} <span style={{fontWeight:500,color:t.muted}}>· {plural(g.items.length,"invoice")}</span></td>
+                    <td colSpan={phone?1:2} style={{...td(true),maxWidth:phone?160:420,color:t.ink,fontWeight:700}} title={g.name}>{op?"▾":"▸"} {g.name} <span style={{fontWeight:500,color:t.muted}}>· {g.items.length} invoice</span></td>
                     <td style={{...td(false),fontWeight:700,color:t.ink}} title={fmtRpFull(g.amt)}>{fmtRpWord(g.amt)}</td>
-                    {!phone&&<td colSpan={cols-4} style={td(false)}/>}
-                    <td style={{...td(false),fontWeight:700,color:g.late?t.badDark:t.muted}}>{g.late?`${g.late} late`:"—"}</td>
+                    {!phone&&<td style={td(true)}/>}
+                    <td style={td(false)}/>
+                    <td style={{...td(true),fontWeight:700,color:g.late?t.badDark:t.muted}}>{g.late?`${g.late} terlambat`:"—"}</td>
                   </tr>
                   {op && g.items.map((x,i)=>renderRow(x,i))}
                 </React.Fragment>
@@ -2086,10 +2139,10 @@ function OutstandingTab({ ins, isAg, w, t, showToast }) {
           </table>
         </div>
       )}
-      {!grouped&&rows.length>300&&<div style={{fontVariantNumeric:"tabular-nums",fontSize:12,color:t.muted,marginTop:6}}>Showing 300 of {rows.length.toLocaleString()} — use Export Excel or Raw Data for the rest.</div>}
+      {!grouped&&rows.length>300&&<div style={{fontSize:12,color:t.muted,marginTop:6}}>Menampilkan 300 dari {rows.length.toLocaleString()} — gunakan Export Excel untuk semuanya.</div>}
       <div style={{fontSize:12,color:t.muted,marginTop:8,lineHeight:1.6}}>
-        <strong style={{color:t.ink2}}>Invoice→Clearing</strong> = working days from the invoice date (Coupa submission) until today, because the bank has not cleared it yet.{" "}
-        <strong style={{color:t.ink2}}>Late</strong> = working days past the Est. Date; &ldquo;on track&rdquo; means the Est. Date has not passed. &ldquo;Pending&rdquo; = that step has no date yet.
+        Semua hitungan memakai <strong style={{color:t.ink2}}>hari kerja</strong> (Senin–Jumat). <strong style={{color:t.ink2}}>Terlambat</strong> = sudah lewat Estimasi bayar.
+        Estimasi bertanda <em>± (miring)</em> adalah <strong style={{color:t.ink2}}>perkiraan</strong> karena belum ada Estimation Date: tanggal invoice + median lama Invoice→Clearing dari invoice yang sudah dibayar ({own} yang sama bila ada ≥3 data, selain itu semua {own}). Arahkan kursor ke Progress untuk melihat tanggal tiap tahap.
       </div>
     </div>
   );
