@@ -305,11 +305,16 @@ function isRawRow(r, src) {
   return !!(gstr(r,["partner name"])||gstr(r,["project title","#req id"]));
 }
 
+// Kunci bulan program "2026-01" (tanggal lokal + koreksi menit), label dropdown "01-26", label ekspor "Jan 2026"
+const monthKeyOf = (r) => { const mk = rowMonthKey(r); return mk ? `${Math.floor(mk/100)}-${String(mk%100).padStart(2,"0")}` : gstr(r,["program date","month","bulan","periode"]); };
+const fmtMMYY = (k) => { const m = /^(\d{4})-(\d{2})$/.exec(String(k||"")); return m ? `${m[2]}-${m[1].slice(2)}` : String(k||""); };
+const fmtMonKey = (k) => { const m = /^(\d{4})-(\d{2})$/.exec(String(k||"")); return m ? `${["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][+m[2]]} ${m[1]}` : fmtMonthYear(k); };
+
 function buildAgg(rows, src) {
   const groups = {};
   rows.forEach(r => {
     const ag    = src==="agency";
-    const month = gstr(r,["program date","month","bulan","periode"]);
+    const month = monthKeyOf(r);
     const entity= gstr(r,["entity"]);
     const ptype = ag ? gstr(r,["agency name"]) : gstr(r,["partner type","partnertype","partner_type"]);
     const prog  = gstr(r,["program type","programtype"]);
@@ -921,7 +926,7 @@ export default function PayoutTracker({
   const opts = useMemo(()=>{
     if (!curAgg.length) return { months:[],entities:[],ptypes:[],progs:[],statuses:[] };
     return {
-      months:   unique(curAgg.map(r=>r.month)).sort((a,b)=>monthKey(a)-monthKey(b)),
+      months:   unique(curAgg.map(r=>r.month)).sort((a,b)=>monthKey(a)-monthKey(b)||String(a).localeCompare(String(b))),
       entities: unique(curAgg.map(r=>r.entity)).sort(),
       ptypes:   unique(curAgg.map(r=>r.ptype)).sort(),
       progs:    unique(curAgg.map(r=>r.prog)).sort(),
@@ -941,7 +946,7 @@ export default function PayoutTracker({
       (progSel.length===0||progSel.includes(r.prog))
     );
     let raw = curRaw.filter(r=>{
-      if (monthSel.length>0 && !monthSel.includes(gstr(r,["program date","month"]))) return false;
+      if (monthSel.length>0 && !monthSel.includes(monthKeyOf(r))) return false;
       if (entSel.length>0   && !entSel.includes(gstr(r,["entity"]))) return false;
       if (ptypeSel.length>0 && !ptypeSel.includes(gstr(r,["partner type","agency name"]))) return false;
       if (progSel.length>0  && !progSel.includes(gstr(r,["program type"]))) return false;
@@ -982,13 +987,13 @@ export default function PayoutTracker({
     if (fmt==="xlsx") {
       const XLSX=await getXLSX();
       const wb=XLSX.utils.book_new();
-      const ws=XLSX.utils.json_to_sheet(filtAgg.map(r=>({"Program Date":fmtMonthYear(r.month),"Entity":r.entity,"Partner/Agency Type":r.ptype,"Program Type":r.prog,"#Records":r.n,"Reva":r.reva,"Surat Pemberitahuan":r.surat,"Invoice":r.inv,"CLV":r.clv,"Clearing":r.clr,"% Invoice":r.n?+(r.inv/r.n*100).toFixed(1):0,"% CLV":r.n?+(r.clv/r.n*100).toFixed(1):0,"% Clearing":r.n?+(r.clr/r.n*100).toFixed(1):0})));
+      const ws=XLSX.utils.json_to_sheet(filtAgg.map(r=>({"Program Date":fmtMonKey(r.month),"Entity":r.entity,"Partner/Agency Type":r.ptype,"Program Type":r.prog,"#Records":r.n,"Reva":r.reva,"Surat Pemberitahuan":r.surat,"Invoice":r.inv,"CLV":r.clv,"Clearing":r.clr,"% Invoice":r.n?+(r.inv/r.n*100).toFixed(1):0,"% CLV":r.n?+(r.clv/r.n*100).toFixed(1):0,"% Clearing":r.n?+(r.clr/r.n*100).toFixed(1):0})));
       XLSX.utils.book_append_sheet(wb,ws,"Summary"); XLSX.writeFile(wb,`${pref}_summary_${stamp}.xlsx`);
       showToast("Filtered summary downloaded — Excel","success");
     } else {
       const hdr="Program Date,Entity,Partner Type,Program Type,#Rec,Reva,Surat Pemberitahuan,Invoice,CLV,Clearing,% Invoice,% CLV,% Clearing";
       const csv=v=>{ const s=String(v??""); return /[",\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s; };
-      const body=filtAgg.map(r=>[fmtMonthYear(r.month),r.entity,r.ptype,r.prog,r.n,r.reva,r.surat,r.inv,r.clv,r.clr,r.n?+(r.inv/r.n*100).toFixed(1):0,r.n?+(r.clv/r.n*100).toFixed(1):0,r.n?+(r.clr/r.n*100).toFixed(1):0].map(csv).join(",")).join("\n");
+      const body=filtAgg.map(r=>[fmtMonKey(r.month),r.entity,r.ptype,r.prog,r.n,r.reva,r.surat,r.inv,r.clv,r.clr,r.n?+(r.inv/r.n*100).toFixed(1):0,r.n?+(r.clv/r.n*100).toFixed(1):0,r.n?+(r.clr/r.n*100).toFixed(1):0].map(csv).join(",")).join("\n");
       const a=document.createElement("a"); a.href="data:text/csv;charset=utf-8,\uFEFF"+encodeURIComponent(hdr+"\n"+body); a.download=`${pref}_${stamp}.csv`; a.click();
       showToast("Filtered summary downloaded — CSV","success");
     }
@@ -1714,7 +1719,7 @@ function DashScreen(props) {
           </div>
           {(!isMobile||showFilters)&&(
             <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginTop:10}}>
-              <MultiSel t={t} values={Array.isArray(filters.month)?filters.month:[]} options={opts.months.filter(Boolean)} placeholder="All Months" onChange={vals=>setFilters(f=>({...f,month:vals}))}/>
+              <MultiSel t={t} values={Array.isArray(filters.month)?filters.month:[]} options={opts.months.filter(Boolean)} labelOf={fmtMMYY} placeholder="All Months" onChange={vals=>setFilters(f=>({...f,month:vals}))}/>
               <MultiSel t={t} values={Array.isArray(filters.entity)?filters.entity:[]} options={opts.entities.filter(Boolean)} labelOf={v=>entLabel(v)} placeholder="All Entities" onChange={vals=>setFilters(f=>({...f,entity:vals}))}/>
               <MultiSel t={t} values={Array.isArray(filters.ptype)?filters.ptype:[]} options={opts.ptypes.filter(Boolean)} placeholder={isAg?"All Agencies":"All Partners"} onChange={vals=>setFilters(f=>({...f,ptype:vals}))}/>
               <MultiSel t={t} values={Array.isArray(filters.prog)?filters.prog:[]} options={opts.progs.filter(Boolean)} placeholder="All Programs" onChange={vals=>setFilters(f=>({...f,prog:vals}))}/>
@@ -1757,7 +1762,7 @@ function DashScreen(props) {
           {chips.map((c,i)=>(
             <span key={i} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"3px 6px 3px 10px",borderRadius:99,background:`${C.teal}14`,border:`1px solid ${C.teal}40`,fontSize:12,color:t.ink}}>
               <span style={{color:t.muted,fontSize:12}}>{c.lbl}:</span>
-              <span style={{fontWeight:600,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.k==="entity"?entLabel(c.v):c.v}</span>
+              <span style={{fontWeight:600,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.k==="entity"?entLabel(c.v):c.k==="month"?fmtMMYY(c.v):c.v}</span>
               <button onClick={()=>removeChip(c)} aria-label={`Remove filter ${c.lbl} ${c.v}`} style={{width:16,height:16,borderRadius:"50%",border:"none",background:`${C.teal}30`,color:t.ink,cursor:"pointer",fontSize:12,padding:0,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>✕</button>
             </span>
           ))}
