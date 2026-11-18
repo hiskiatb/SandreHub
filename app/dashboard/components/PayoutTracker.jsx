@@ -2715,6 +2715,11 @@ const MONTHS_LONG = ["","January","February","March","April","May","June","July"
 const ymLong = (mk) => mk ? `${MONTHS_LONG[mk%100]} ${Math.floor(mk/100)}` : "";
 const dcEnt = (r) => String(entLabel(gstr(r,["=entity"]))||"").toUpperCase();
 
+// Warna Success Rate: tepat 100% = hijau, ≤10% = merah, di antaranya = kuning (dihitung dari jumlah, bukan % yang dibulatkan)
+const dcRateClr = (n, total, t) => {
+  const exact = total ? n/total*100 : 0;
+  return total && n===total ? { c:t.goodDark, dot:t.good } : exact<=10 ? { c:t.badDark, dot:t.bad } : { c:t.warnDark, dot:t.warn };
+};
 function DcTab({ rows, w, t, showToast }) {
   const all = useMemo(()=>rows.filter(isDcRow).map(r=>({
     mk: rowMonthKey(r), ent: dcEnt(r),
@@ -2737,7 +2742,7 @@ function DcTab({ rows, w, t, showToast }) {
     const m = sort.dir==="asc" ? 1 : -1;
     return [...list].sort((a,b)=> sort.col==="total" ? m*(a.total-b.total) : m*a.supplier.localeCompare(b.supplier) || a.no-b.no);
   },[list,sort]);
-  const rates = DC_STEPS.map(s=>{ const n = list.filter(s.done).length; return { ...s, n, p: list.length ? Math.round(n/list.length*100) : 0 }; });
+  const rates = DC_STEPS.map(s=>{ const n = list.filter(s.done).length; return { ...s, n, p: !list.length ? 0 : n===list.length ? 100 : Math.floor(n/list.length*100) }; }); // tidak dibulatkan ke 100% bila belum lengkap
   const total = list.reduce((s,x)=>s+x.total,0);
   const entName = ent==="ALL" ? "MDI & SDP" : ent;
   const title = `Distribution Fee & Champions ${entName} · ${ymLong(mk)} · ICM`;
@@ -2793,7 +2798,7 @@ function DcTab({ rows, w, t, showToast }) {
       <Card t={t} pad={false} style={{marginBottom:14}}>
         <CardHead title="Success Rate" sub={`${ymLong(mk)} · ${entName} · share of ${plural(list.length,"invoice")} that reached each step`} t={t}/>
         <div style={{padding:"14px 20px",display:"grid",gridTemplateColumns:w>=900?"repeat(4,minmax(0,1fr))":phone?"1fr":"repeat(2,minmax(0,1fr))",gap:14}}>
-          {rates.map(r=>{ const c = pctClr(r.p,t); return (
+          {rates.map(r=>{ const c = dcRateClr(r.n, list.length, t); return (
             <div key={r.k} style={{minWidth:0}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8}}>
                 <span style={{fontSize:12.5,fontWeight:600,color:t.ink2}}>{r.label}</span>
