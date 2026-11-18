@@ -56,13 +56,13 @@
   // ---------- Gaya modal ----------
   var css = document.createElement('style');
   css.textContent = [
-    '.smr-overlay{position:fixed;inset:0;z-index:100000;background:rgba(10,10,12,.55);backdrop-filter:blur(4px);display:flex;align-items:stretch;justify-content:center;padding:18px;font-family:var(--sm-font,"DM Sans",system-ui,sans-serif);}',
-    '.smr-box{background:var(--sm-surface,#fff);color:var(--sm-ink,#1A1A1D);border:1px solid var(--sm-line,#E2E2E6);border-radius:16px;box-shadow:var(--sm-shadow-lg,0 20px 48px rgba(0,0,0,.2));width:100%;max-width:1500px;display:flex;flex-direction:column;overflow:hidden;}',
+    '.smr-overlay{position:fixed;inset:0;z-index:100000;background:rgba(10,10,12,.55);backdrop-filter:blur(4px);display:flex;align-items:stretch;justify-content:center;padding:10px;font-family:var(--sm-font,"DM Sans",system-ui,sans-serif);}',
+    '.smr-box{background:var(--sm-surface,#fff);color:var(--sm-ink,#1A1A1D);border:1px solid var(--sm-line,#E2E2E6);border-radius:16px;box-shadow:var(--sm-shadow-lg,0 20px 48px rgba(0,0,0,.2));width:100%;max-width:none;display:flex;flex-direction:column;overflow:hidden;}',
     '.smr-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid var(--sm-line,#E2E2E6);flex-wrap:wrap;}',
     '.smr-head h3{margin:0;font-size:17px;color:var(--sm-ink,#1A1A1D);} .smr-head p{margin:3px 0 0;font-size:12.5px;color:var(--sm-muted,#5A5A68);}',
     '.smr-stats{display:flex;gap:8px;flex-wrap:wrap;} .smr-stat{font-size:12px;font-weight:700;padding:5px 10px;border-radius:999px;border:1px solid var(--sm-line-2,#D4D4DA);color:var(--sm-ink-2,#3A3A42);background:var(--sm-surface-2,#F0F0F2);}',
     '.smr-stat.warn{background:rgba(255,203,5,.16);border-color:rgba(255,203,5,.45);color:#8A6A00;} html[data-theme="dark"] .smr-stat.warn{color:#FFE066;}',
-    '.smr-body{flex:1;display:grid;grid-template-columns:minmax(260px,32%) 1fr;min-height:0;}',
+    '.smr-body{flex:1;display:grid;grid-template-columns:minmax(240px,22%) 1fr;min-height:0;}',
     '.smr-list{border-right:1px solid var(--sm-line,#E2E2E6);display:flex;flex-direction:column;min-height:0;}',
     '.smr-search{margin:12px;padding:9px 12px;border-radius:8px;border:1px solid var(--sm-line-2,#D4D4DA);background:var(--sm-surface,#fff);color:var(--sm-ink,#1A1A1D);font:inherit;font-size:13px;}',
     '.smr-items{overflow:auto;flex:1;padding:0 8px 12px;}',
@@ -78,7 +78,18 @@
     '.smr-mail .subj{font-weight:700;font-size:15px;padding-bottom:10px;margin-bottom:10px;border-bottom:1px solid #eee;}',
     '.smr-att{display:flex;gap:6px;flex-wrap:wrap;} .smr-att button{font:inherit;font-size:12.5px;border-radius:8px;padding:6px 10px;cursor:pointer;border:1px solid var(--sm-line-2,#D4D4DA);background:var(--sm-surface-2,#F0F0F2);color:var(--sm-ink-2,#3A3A42);}',
     '.smr-att button.on{background:var(--sm-teal,#32BCAD);border-color:var(--sm-teal,#32BCAD);color:#fff;}',
-    '.smr-pdf{width:100%;flex:1;min-height:420px;border:1px solid var(--sm-line,#E2E2E6);border-radius:12px;background:var(--sm-surface-2,#F0F0F2);}',
+    '.smr-detail.split{display:grid;grid-template-columns:minmax(320px,40%) 1fr;gap:16px;overflow:hidden;padding:16px 20px;}',
+    '.smr-kiri{display:flex;flex-direction:column;gap:12px;overflow:auto;min-height:0;padding-right:4px;}',
+    '.smr-kanan{display:flex;flex-direction:column;gap:8px;min-height:0;}',
+    '.smr-pdfbar{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12.5px;color:var(--sm-muted,#5A5A68);}',
+    '.smr-pdfbar a{font-weight:700;color:#1A9E90 !important;text-decoration:none;border:1px solid var(--sm-line-2,#D4D4DA);border-radius:8px;padding:5px 10px;background:var(--sm-surface-2,#F0F0F2);}',
+    '.smr-pdf{width:100%;flex:1;min-height:0;height:100%;border:1px solid var(--sm-line,#E2E2E6);border-radius:12px;background:var(--sm-surface-2,#F0F0F2);}',
+    '.smr-kosong{flex:1;display:flex;align-items:center;justify-content:center;border:1px dashed var(--sm-line-2,#D4D4DA);border-radius:12px;color:var(--sm-muted,#5A5A68);font-size:13px;}',
+    '.smk-panel{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:100001;display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center;padding:10px 14px;border-radius:14px;background:var(--sm-surface,#fff);border:1px solid var(--sm-line,#E2E2E6);box-shadow:var(--sm-shadow-lg,0 20px 48px rgba(0,0,0,.2));font-family:var(--sm-font,"DM Sans",system-ui,sans-serif);}',
+    '.smk-panel span{font-size:13px;font-weight:600;color:var(--sm-ink,#1A1A1D) !important;min-width:190px;}',
+    '.smk-panel button{font:inherit;font-weight:700;font-size:13px;border-radius:10px;padding:8px 14px;cursor:pointer;border:1px solid var(--sm-line-2,#D4D4DA);background:var(--sm-surface-2,#F0F0F2);color:var(--sm-ink,#1A1A1D) !important;}',
+    '.smk-panel button.jeda{background:#FFCB05;border-color:#FFCB05;color:#1A1A1D !important;} .smk-panel button.lanjut{background:#32BCAD;border-color:#32BCAD;color:#fff !important;} .smk-panel button.henti{color:#C0392B !important;}',
+    '@media (max-width:1000px){.smr-detail.split{grid-template-columns:1fr;overflow:auto;}.smr-pdf{min-height:70vh;}}',
     '.smr-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 20px;border-top:1px solid var(--sm-line,#E2E2E6);flex-wrap:wrap;}',
     '.smr-foot span{font-size:12.5px;color:var(--sm-muted,#5A5A68);}',
     '.smr-btn{font:inherit;font-weight:700;font-size:14px;border-radius:10px;padding:11px 18px;cursor:pointer;border:1px solid var(--sm-line-2,#D4D4DA);background:var(--sm-surface-2,#F0F0F2);color:var(--sm-ink,#1A1A1D);}',
@@ -141,20 +152,25 @@
       function detail() {
         var d = data[aktif]; if (!d) { elDetail.innerHTML = ''; return; }
         var lamp = d.it.lampiran || [];
+        elDetail.className = 'smr-detail split';
         elDetail.innerHTML =
-          '<dl class="smr-meta"><dt>Kepada</dt><dd>' + (esc(d.to.valid.join(', ')) || '<span class="smr-salah">Kosong: email ini akan gagal</span>') + '</dd>'
+          '<div class="smr-kiri"><dl class="smr-meta"><dt>Kepada</dt><dd>' + (esc(d.to.valid.join(', ')) || '<span class="smr-salah">Kosong: email ini akan gagal</span>') + '</dd>'
           + '<dt>CC</dt><dd>' + (esc(d.cc.valid.join(', ')) || '-') + '</dd>'
           + (d.to.salah.length || d.cc.salah.length ? '<dt></dt><dd class="smr-salah">Alamat tidak valid (dilewati): ' + esc(d.to.salah.concat(d.cc.salah).join(', ')) + '</dd>' : '')
           + (d.it.info ? '<dt>Info</dt><dd>' + esc(d.it.info) + '</dd>' : '') + '</dl>'
           + '<div class="smr-mail"><div class="subj">' + esc(d.it.subject) + '</div><div>' + isiHtml(d.it.body, opsi.bodyHtml) + '</div></div>'
-          + '<div class="smr-att">' + (lamp.length ? lamp.map(function (l, j) { return '<button type="button" data-j="' + j + '">📎 ' + esc(l.filename) + '</button>'; }).join('') : '<span class="smr-salah">Tidak ada lampiran</span>') + '</div>'
-          + (lamp.length ? '<iframe class="smr-pdf" title="Pratinjau lampiran"></iframe>' : '');
+          + '<div class="smr-att">' + (lamp.length ? lamp.map(function (l, j) { return '<button type="button" data-j="' + j + '">📎 ' + esc(l.filename) + '</button>'; }).join('') : '<span class="smr-salah">Tidak ada lampiran</span>') + '</div></div>'
+          + '<div class="smr-kanan">' + (lamp.length
+            ? '<div class="smr-pdfbar"><span>Pratinjau lampiran (scroll di dalam PDF untuk halaman berikutnya)</span><a target="_blank" rel="noopener">⤢ Buka penuh</a></div><iframe class="smr-pdf" title="Pratinjau lampiran"></iframe>'
+            : '<div class="smr-kosong">Tidak ada lampiran untuk ditampilkan</div>') + '</div>';
         var frame = elDetail.querySelector('iframe');
         function lihat(j) {
           elDetail.querySelectorAll('[data-j]').forEach(function (b) { b.classList.toggle('on', +b.dataset.j === j); });
           var l = lamp[j]; if (!l) return;
           if (!l.__url) { l.__url = urlLampiran(l); if (/^blob:/.test(l.__url)) urlDibuat.push(l.__url); }
-          if (frame) frame.src = l.__url;
+          var u = l.__url + (/#/.test(l.__url) ? '' : '#view=FitH');
+          if (frame) frame.src = u;
+          var buka = elDetail.querySelector('.smr-pdfbar a'); if (buka) buka.href = l.__url;
         }
         elDetail.querySelectorAll('[data-j]').forEach(function (b) { b.onclick = function () { lihat(+b.dataset.j); }; });
         if (lamp.length) lihat(0);
@@ -165,6 +181,51 @@
       daftar(); detail();
     });
   };
+
+  // ---------- Pause / Lanjutkan / Hentikan saat mengirim ----------
+  // Halaman memanggil smKontrol.mulai(total) sebelum mengirim, await smKontrol.cek(n) sebelum
+  // tiap kelompok email (false = dihentikan), dan smKontrol.selesai() di akhir. Jeda berlaku
+  // setelah kelompok yang sedang dikirim selesai, jadi tidak ada email yang terkirim dua kali.
+  window.smKontrol = (function () {
+    var status = 'diam', lanjutkan = null, panel = null, total = 0, sudah = 0;
+    function tulis() {
+      if (!panel) return;
+      var teks = status === 'jeda' ? '⏸ Dijeda: ' + sudah + ' / ' + total + ' email diproses'
+        : status === 'menjeda' ? '⏳ Menyelesaikan kelompok email ini lalu jeda…'
+        : status === 'henti' ? '⏹ Menghentikan setelah kelompok ini…'
+        : '🚀 Mengirim… ' + sudah + ' / ' + total;
+      panel.querySelector('span').textContent = teks;
+      panel.querySelector('.jeda').style.display = status === 'jalan' ? '' : 'none';
+      panel.querySelector('.lanjut').style.display = status === 'jeda' || status === 'menjeda' ? '' : 'none';
+      panel.querySelector('.henti').style.display = status === 'henti' ? 'none' : '';
+    }
+    return {
+      mulai: function (n) {
+        total = n; sudah = 0; status = 'jalan';
+        if (!panel) {
+          panel = document.createElement('div');
+          panel.className = 'smk-panel';
+          panel.innerHTML = '<span></span><button type="button" class="jeda">⏸ Jeda</button><button type="button" class="lanjut">▶ Lanjutkan</button><button type="button" class="henti">⏹ Hentikan</button>';
+          panel.querySelector('.jeda').onclick = function () { status = 'menjeda'; tulis(); };
+          panel.querySelector('.lanjut').onclick = function () { status = 'jalan'; tulis(); if (lanjutkan) { lanjutkan(); lanjutkan = null; } };
+          panel.querySelector('.henti').onclick = function () {
+            if (!confirm('Hentikan pengiriman? Email yang belum terkirim tidak akan dikirim sekarang (bisa dikirim ulang nanti).')) return;
+            status = 'henti'; tulis(); if (lanjutkan) { lanjutkan(); lanjutkan = null; }
+          };
+        }
+        document.body.appendChild(panel);
+        tulis();
+      },
+      cek: function (diproses) {
+        if (typeof diproses === 'number') sudah = diproses;
+        if (status === 'menjeda') status = 'jeda';
+        tulis();
+        if (status === 'jeda') return new Promise(function (r) { lanjutkan = function () { tulis(); r(status !== 'henti'); }; });
+        return Promise.resolve(status !== 'henti');
+      },
+      selesai: function () { status = 'diam'; if (panel) panel.remove(); },
+    };
+  })();
 
   // ---------- Partner SDP: konfirmasi "Yakin ingin memulai pengiriman" digantikan layar preview ----------
   (function () {

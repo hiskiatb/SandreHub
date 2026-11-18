@@ -2700,12 +2700,17 @@
                 // [SandraHub] Dikirim bertahap 10 email per request (berurutan, jeda 1 detik antar request).
                 // Server juga memberi jeda 1 detik antar email + coba ulang otomatis kalau kena limit Resend,
                 // dan 1 request tetap di bawah batas waktu 60 detik Vercel. Hasilnya digabung seperti 1 request.
-                const UKURAN_TAHAP = 10;
+                const UKURAN_TAHAP = 5; // [SandraHub] 5 email per request supaya Jeda/Hentikan cepat terasa
                 const semuaPenerima = emailGroupPayload.recipients;
                 const btnKirimTahap = document.getElementById("btnConfirmSendEmail");
                 const teksAwalBtn = btnKirimTahap ? btnKirimTahap.innerHTML : "";
                 const resData = { success: true, results: [] };
+                if (window.smKontrol) window.smKontrol.mulai(semuaPenerima.length); // [SandraHub] tombol Jeda / Lanjutkan / Hentikan
                 for (let iTahap = 0; iTahap < semuaPenerima.length; iTahap += UKURAN_TAHAP) {
+                    if (window.smKontrol && !(await window.smKontrol.cek(iTahap))) {
+                        semuaPenerima.slice(iTahap).forEach(rec => resData.results.push({ sdp_id: rec.sdp_id, partner_name: rec.partner_name, status: "Belum dikirim (pengiriman dihentikan)", is_success: false }));
+                        break;
+                    }
                     const tahap = semuaPenerima.slice(iTahap, iTahap + UKURAN_TAHAP);
                     if (btnKirimTahap) btnKirimTahap.innerHTML = "⏳ Mengirim " + Math.min(iTahap + UKURAN_TAHAP, semuaPenerima.length) + " / " + semuaPenerima.length + "...";
                     try {
@@ -2726,6 +2731,7 @@
                     }
                     if (iTahap + UKURAN_TAHAP < semuaPenerima.length) await new Promise(r => setTimeout(r, 1000));
                 }
+                if (window.smKontrol) window.smKontrol.selesai();
                 if (btnKirimTahap) btnKirimTahap.innerHTML = teksAwalBtn;
                 
                 if (resData.success) {

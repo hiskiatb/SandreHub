@@ -1589,8 +1589,13 @@ Sales Performance Management Sumatera`;
             // File upload (Blast Email Only) dikirim 1 partner per request agar tidak melebihi batas ukuran request Vercel (4,5 MB)
             const chunkSize = target.some(h => h.files) ? 1 : 5;
             const BATAS_REQUEST = 4.2 * 1024 * 1024;
+            if (window.smKontrol) window.smKontrol.mulai(target.length); // [SandraHub] tombol Jeda / Lanjutkan / Hentikan
             try {
                 for (let i = 0; i < target.length; i += chunkSize) {
+                    if (window.smKontrol && !(await window.smKontrol.cek(i))) {
+                        target.slice(i).forEach(h => hasil.push({ key: h.key || h.partner_name, type: h.type || '', partner_name: h.partner_name, is_success: false, status: 'Belum dikirim (pengiriman dihentikan). Klik Kirim lagi untuk melanjutkan.' }));
+                        break;
+                    }
                     this.innerText = `⏳ Mengirim ${Math.min(i + chunkSize, target.length)} / ${target.length}...`;
                     const items = [];
                     for (const h of target.slice(i, i + chunkSize)) {
@@ -1628,6 +1633,7 @@ Sales Performance Management Sumatera`;
             } catch (err) {
                 alert(`Pengiriman terhenti: ${err.message}`);
             } finally {
+                if (window.smKontrol) window.smKontrol.selesai();
                 this.disabled = false;
                 this.innerText = '🚀 Kirim Email ke Semua Partner';
                 simpanSesi();
