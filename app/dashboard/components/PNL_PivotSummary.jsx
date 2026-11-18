@@ -11,6 +11,8 @@ import React, { useState, useMemo, useEffect, useRef, useCallback, useLayoutEffe
 import { createPortal } from "react-dom";
 import * as XLSX from "xlsx";
 import supabase from "../../../lib/supabase";
+import { MARGIN_ROWS, DATA_PROVIDED_ROWS, summarizePendapatan } from "./PNL_FormPendapatanV2";
+import { PENGELUARAN_CATALOG, summarizePengeluaran } from "./PNL_FormPengeluaranV2";
 import {
   Search, Check, ChevronDown, ChevronRight, X,
   RotateCcw, Download, Calendar, BarChart3, AlertCircle,
@@ -444,7 +446,26 @@ function KpiCard({ label, value, tone, icon: Icon, primary, t }) {
   );
 }
 
-function TypePill({ mpc, t }) {
+function TypePill({ mpc, t, isV2 }) {
+  // BARU (permintaan user - "untuk tipenya gunakan MDI semua untuk v2
+  // ini"): V2 (mapping live dari mf_dse_database) sudah ga ada lagi
+  // klasifikasi MPC/MP3 per baris (mpc selalu null/kosong) - utk V2
+  // tampilkan pill "MDI" (bukan dash) krn klasifikasinya sekarang
+  // berbasis MDI (Partner), bukan MPC/MP3. V1 tetap tampilkan dash
+  // kalau datanya kosong.
+  if (!mpc) {
+    if (isV2) {
+      return (
+        <span style={{
+          display: "inline-flex", alignItems: "center", height: 19, padding: "0 7px",
+          borderRadius: 999, fontSize: 10, fontWeight: 700, letterSpacing: "0.04em",
+          textTransform: "uppercase", background: t.magentaBg, color: t.magenta,
+          border: `1px solid ${t.magentaBd}`, whiteSpace: "nowrap",
+        }}>MDI</span>
+      );
+    }
+    return <span style={{ fontSize: 11, color: t.mute }}>—</span>;
+  }
   return (
     <span style={{
       display: "inline-flex", alignItems: "center", height: 19, padding: "0 7px",
@@ -550,21 +571,37 @@ function Seg({ children, active, onClick, t }) {
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
-export default function PNL_PivotSummary({ theme, activeYear, userRole, partnerName }) {
+// variant "v2" = MPX P&L Report V2: tampilan SAMA PERSIS, tapi datanya dari
+// tabel pnl_reports_v2 (REV = Margin Penjualan + Di Luar Template + Data
+// Provided, EXP = total Form Pengeluaran V2) dan "Export Detail Form"
+// memakai katalog item V2.
+export default function PNL_PivotSummary({ theme, activeYear, userRole, partnerName, variant = "v1" }) {
+  const isV2 = variant === "v2";
   const d = theme === "dark";
   const t = tk(d);
 
-  const isMPX = userRole === "finance_mpx";
+  const isMPX = userRole === "admin_partner_mdi" || userRole === "finance_mpx" || userRole === "admin_mc";
   const lockedPartner = isMPX ? (partnerName || null) : null;
 
   const now      = new Date();
   const curYear  = now.getFullYear().toString();
   const curMIdx  = now.getMonth();
 
-  const availMonths = useMemo(
-    () => activeYear === curYear ? MONTHS_FULL.slice(0, curMIdx + 1) : MONTHS_FULL,
-    [activeYear, curYear, curMIdx]
-  );
+  // CUTOVER V1/V2 (permintaan user - "untuk start periode di v2 ini hanya
+  // dari OKT 2026 dan untuk v1 hanya sampai SEP 2026"): V1 (pnl_reports)
+  // dihentikan per September 2026, V2 (pnl_reports_v2) mulai Oktober 2026.
+  const availMonths = useMemo(() => {
+    const base = activeYear === curYear ? MONTHS_FULL.slice(0, curMIdx + 1) : MONTHS_FULL;
+    const y = Number(activeYear);
+    if (isV2) {
+      if (y < 2026) return [];
+      if (y === 2026) return base.slice(9); // Oktober, November, Desember
+      return base;
+    }
+    if (y > 2026) return []; // V1 dihentikan per September 2026
+    if (y === 2026) return base.slice(0, 9); // Januari..September
+    return base;
+  }, [activeYear, curYear, curMIdx, isV2]);
 
   const [raw,       setRaw]       = useState([]);
   const [loading,   setLoading]   = useState(true);
@@ -583,18 +620,26 @@ export default function PNL_PivotSummary({ theme, activeYear, userRole, partnerN
     setLoading(true); setError(null);
     (async () => {
       try {
-        let query = supabase
+        let query = isV2
+          ? supabase.from("pnl_reports_v2").select("*").eq("year", Number(activeYear))
+          : supabase
           .from("pnl_reports")
           .select(`partner_name,branch,mpc_mp3,month,year,grand_total_revenue,grand_total_pengeluaran,is_finalized,expense_data,revenue_data,${EXPENSE_DETAIL_COLS.join(",")},${REVENUE_DETAIL_COLS.join(",")}`)
           .eq("year", activeYear);
         if (lockedPartner) query = query.eq("partner_name", lockedPartner);
         const { data, error: err } = await query;
         if (err) throw err;
-        setRaw(data || []);
+        // V2: bulan angka (11) -> nama bulan, total REV/EXP dihitung dari isian form V2.
+        setRaw(isV2 ? (data || []).filter(r => MONTHS_FULL[Number(r.month) - 1]).map(r => ({
+          ...r,
+          month: MONTHS_FULL[Number(r.month) - 1],
+          grand_total_revenue: summarizePendapatan(r).grandTotal,
+          grand_total_pengeluaran: summarizePengeluaran(r.pengeluaran_data).grandTotal,
+        })) : (data || []));
       } catch (e) { setError(e.message); }
       finally { setLoading(false); }
     })();
-  }, [activeYear, lockedPartner]);
+  }, [activeYear, lockedPartner, isV2]);
 
   const rows = useMemo(() => {
     const map = {};
@@ -687,7 +732,7 @@ export default function PNL_PivotSummary({ theme, activeYear, userRole, partnerN
 
   const activeFilterCount = filters.partner.length + filters.branch.length + filters.mpc.length + (search ? 1 : 0);
 
-  const fileBaseName = `PNL_${activeYear}${lockedPartner ? "_" + lockedPartner.replace(/\s+/g,"_") : ""}`;
+  const fileBaseName = `PNL${isV2 ? "_V2" : ""}_${activeYear}${lockedPartner ? "_" + lockedPartner.replace(/\s+/g,"_") : ""}`;
 
   // ── Export CSV (fixed) ────────────────────────────────────────────────────
   // All text cells are quoted. All numeric cells written as plain integers.
@@ -942,7 +987,74 @@ export default function PNL_PivotSummary({ theme, activeYear, userRole, partnerN
     "Mkt Lain (Total)", "SDM Custom (Total)",
   ];
 
+  // Export Detail Form versi V2 - struktur 2 sheet yang sama (Detail +
+  // Flat), tapi barisnya dari katalog V2: margin per produk (IM3/3ID), Di
+  // Luar Template, Data Provided, lalu tiap item Form Pengeluaran V2
+  // (Qty & Total diisi terpisah, jadi "Harga Satuan" dikosongkan).
+  const exportDetailFormV2 = () => {
+    const expItems = PENGELUARAN_CATALOG.filter(it => !it.qtyOnly);
+    const flatHeaders = [
+      "Tahun","Bln#","Bulan","Partner","Tipe MPC","Branch",
+      "Total Pendapatan",
+      ...MARGIN_ROWS.flatMap(r => [`${r.label.replace("Total Margin Penjualan ", "Margin ")} IM3`, `${r.label.replace("Total Margin Penjualan ", "Margin ")} 3ID`]),
+      "Di Luar Template",
+      ...DATA_PROVIDED_ROWS.map(r => r.label),
+      "Total Pengeluaran",
+      ...expItems.map(it => it.item),
+    ];
+    const detailAoa = [DETAIL_HEADERS];
+    const flatAoa = [flatHeaders];
+    filteredRows.forEach(b => {
+      activeMths.forEach(m => {
+        const md = b.months[m];
+        const raw = md?._raw;
+        const idx = MONTHS_FULL.indexOf(m);
+        const base = [activeYear, idx + 1, MONTHS_SHORT[idx], b.partner, b.mpc, b.branch];
+        detailAoa.push([...base, "Pendapatan", "Total Pendapatan", "", "", fRaw(md?.rev)]);
+        if (!raw) { flatAoa.push([...base, fRaw(md?.rev), ...flatHeaders.slice(7).map(() => 0)]); return; }
+        const flatRow = [...base, fRaw(md.rev)];
+        MARGIN_ROWS.forEach(r => {
+          const name = r.label.replace("Total Margin Penjualan ", "Margin ");
+          const im3 = Number(raw[`margin_${r.id}`]) || 0, id3 = Number(raw[`margin_${r.id}_3id`]) || 0;
+          detailAoa.push([...base, "Margin Penjualan", `${name} IM3`, "", "", fRaw(im3)]);
+          detailAoa.push([...base, "Margin Penjualan", `${name} 3ID`, "", "", fRaw(id3)]);
+          flatRow.push(fRaw(im3), fRaw(id3));
+        });
+        const luar = Number(raw.luar_template_amount) || 0;
+        detailAoa.push([...base, "Di Luar Template", (raw.luar_template_note || "").trim() || "Di Luar Template", "", "", fRaw(luar)]);
+        flatRow.push(fRaw(luar));
+        DATA_PROVIDED_ROWS.forEach(r => {
+          const v = Number(raw[r.id]) || 0;
+          detailAoa.push([...base, "Data Provided", r.label, "", "", fRaw(v)]);
+          flatRow.push(fRaw(v));
+        });
+        detailAoa.push([...base, "Pengeluaran", "Total Pengeluaran", "", "", fRaw(md.exp)]);
+        flatRow.push(fRaw(md.exp));
+        const peng = raw.pengeluaran_data || {};
+        PENGELUARAN_CATALOG.forEach(it => {
+          const qty = Number(peng[it.id]?.qty) || 0, total = it.qtyOnly ? 0 : (Number(peng[it.id]?.total) || 0);
+          const grup = it.step === "SDM" ? it.kategori : it.step;
+          detailAoa.push([...base, grup, it.item, qty, "", fRaw(total)]);
+          if (!it.qtyOnly) flatRow.push(fRaw(total));
+        });
+        flatAoa.push(flatRow);
+      });
+    });
+    const wb = XLSX.utils.book_new();
+    const wsDetail = XLSX.utils.aoa_to_sheet(detailAoa);
+    wsDetail["!cols"] = [{ wch: 6 }, { wch: 5 }, { wch: 6 }, { wch: 28 }, { wch: 10 }, { wch: 20 }, { wch: 18 }, { wch: 34 }, { wch: 9 }, { wch: 13 }, { wch: 14 }];
+    wsDetail["!freeze"] = { xSplit: 0, ySplit: 1 };
+    XLSX.utils.book_append_sheet(wb, wsDetail, "Detail");
+    const wsFlat = XLSX.utils.aoa_to_sheet(flatAoa);
+    wsFlat["!cols"] = [{ wch: 6 }, { wch: 5 }, { wch: 6 }, { wch: 28 }, { wch: 10 }, { wch: 20 }, ...flatHeaders.slice(6).map(() => ({ wch: 15 }))];
+    wsFlat["!freeze"] = { xSplit: 6, ySplit: 1 };
+    XLSX.utils.book_append_sheet(wb, wsFlat, "Flat (Semua Kategori)");
+    XLSX.writeFile(wb, `${fileBaseName}_DetailForm.xlsx`);
+    return detailAoa.length - 1;
+  };
+
   const exportDetailForm = () => {
+    if (isV2) return exportDetailFormV2();
     const detailAoa = [DETAIL_HEADERS];
     const flatAoa = [FLAT_HEADERS];
 
@@ -1113,7 +1225,7 @@ export default function PNL_PivotSummary({ theme, activeYear, userRole, partnerN
             )}
           </div>
           <h1 style={{ margin: 0, fontSize: "clamp(18px,3vw,22px)", fontWeight: 800, letterSpacing: "-0.03em", lineHeight: 1.15, color: t.ink }}>
-            P&amp;L Pivot Summary
+            P&amp;L Pivot Summary{isV2 ? " V2" : ""}
             <span style={{ color: t.mute, fontWeight: 400, fontSize: "0.72em", marginLeft: 9 }}>· {activeYear}</span>
           </h1>
           <div style={{ marginTop: 5, fontSize: 12.5, color: t.mute }}>
@@ -1364,7 +1476,7 @@ export default function PNL_PivotSummary({ theme, activeYear, userRole, partnerN
                               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.branch}</span>
                             </div>
                           </td>
-                          <td style={{ padding: "9px 12px" }}><TypePill mpc={b.mpc} t={t} /></td>
+                          <td style={{ padding: "9px 12px" }}><TypePill mpc={b.mpc} t={t} isV2={isV2} /></td>
                           {activeMths.map(m => <MonthCell key={m} md={b.months[m]} label={`${b.branch} · ${m}`} setTooltip={setTooltip} t={t} />)}
                           <YTDCell rev={yt.rev} exp={yt.exp} label={`${b.branch} · YTD`} setTooltip={setTooltip} t={t} />
                         </tr>

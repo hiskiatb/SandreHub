@@ -78,7 +78,7 @@ function Toast({ msg, type, onClose }) {
 // 2 ini sejauh ini (sejajar USER_MGMT_ROLES di page.jsx, tapi cuma yg
 // `ready` & punya tabel emails-nya sendiri).
 const EXPORT_ROLES = [
-  { k: "finance_mpx", label: "Admin MC", sheetPrefix: "Admin MC" },
+  { k: "admin_mc", label: "Admin MC", sheetPrefix: "Admin MC" },
   { k: "admin_area", label: "Admin Area", sheetPrefix: "Admin Area" },
 ];
 
@@ -96,7 +96,7 @@ export default function CombinedEmailExport({ theme }) {
   };
 
   const [open, setOpen] = useState(true);
-  const [checkedRoles, setCheckedRoles] = useState({ finance_mpx: true, admin_area: true });
+  const [checkedRoles, setCheckedRoles] = useState({ admin_mc: true, admin_area: true });
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [toast, setToast] = useState(null);
@@ -121,7 +121,7 @@ export default function CombinedEmailExport({ theme }) {
   // AdminMcMapping.jsx/AdminAreaMapping.jsx - tapi langsung fetch fresh di
   // sini (komponen ini tidak share state dgn 2 komponen itu).
   const loadRoleData = async (roleKey) => {
-    const isMc = roleKey === "finance_mpx";
+    const isMc = roleKey === "admin_mc";
     const codeField = isMc ? "mc" : "branch";
     const mappingTable = isMc ? "mf_dse_admin_mc_mapping" : "mf_dse_admin_area_mapping";
     const emailsTable = isMc ? "mf_dse_admin_mc_emails" : "mf_dse_admin_area_emails";
@@ -303,7 +303,7 @@ export default function CombinedEmailExport({ theme }) {
   // sedikit atau breakdown per Region-nya diubah manual). Sheet lain/tidak
   // dikenal dilewati & dilaporkan, tidak bikin proses gagal total.
   const processSheet = async (roleKey, sheetRowsRaw) => {
-    const isMc = roleKey === "finance_mpx";
+    const isMc = roleKey === "admin_mc";
     const mappingTable = isMc ? "mf_dse_admin_mc_mapping" : "mf_dse_admin_area_mapping";
     const emailsTable = isMc ? "mf_dse_admin_mc_emails" : "mf_dse_admin_area_emails";
     const { dseRefMap, displayRows } = await loadRoleData(roleKey);

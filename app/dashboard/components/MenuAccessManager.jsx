@@ -30,7 +30,7 @@ const mk = (d) => ({
 
 // Katalog role yang bisa diatur (SPM tak diatur — selalu penuh).
 const ROLE_CATALOG = [
-  { role: "finance_mpx",             label: "District Admin" },
+  { role: "admin_mc",                label: "District Admin" },
   { role: "internal_ioh",            label: "IOH Sumatera" },
   { role: "ioh_north_sumatera",      label: "IOH North Sumatera" },
   { role: "ioh_central_sumatera",    label: "IOH Central Sumatera" },
@@ -58,7 +58,7 @@ const IOH  = new Set(["internal_ioh", "ioh_north_sumatera", "ioh_central_sumater
 const SFM  = new Set(["salesforce_mgmt_sumatera", "region_sfm_north", "region_sfm_central", "region_sfm_south"]);
 const SDPM = new Set(["cse_rse", "bsm", "pic_region"]);
 function roleHasMenu(role, key) {
-  const isIOH = IOH.has(role), isSFM = SFM.has(role), isMPX = role === "finance_mpx", isSDPM = SDPM.has(role);
+  const isIOH = IOH.has(role), isSFM = SFM.has(role), isMPX = role === "admin_mc", isSDPM = SDPM.has(role);
   const canMonitor = isIOH || isMPX;
   const notSDP = !isSDPM;
   switch (key) {

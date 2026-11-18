@@ -29,6 +29,16 @@ import PNL_ImportWizard from "./PNL_ImportWizard";
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif`;
 const REGIONS = ["NORTH SUMATERA", "CENTRAL SUMATERA", "SOUTH SUMATERA"];
 const PAGE_SIZE = 50;
+// UPDATE (permintaan user - "disini juga harusnya ada pemilihan bulannya
+// kan"): label bulan utk dropdown Periode, dari value 'YYYY-MM' yg disimpan
+// di mf_dse_database_periods (diisi PNL_ImportWizard tiap kali upload).
+const ID_MONTHS_FULL = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
+function periodLabel(v) {
+  const m = /^(\d{4})-(\d{2})$/.exec(v || "");
+  if (!m) return v || "";
+  const idx = parseInt(m[2], 10) - 1;
+  return `${ID_MONTHS_FULL[idx] || m[2]} ${m[1]}`;
+}
 
 function buildRemarks(r) {
   const missing = [];
@@ -134,12 +144,50 @@ export default function SDP_DseDatabase({ theme, profile }) {
   const [toast, setToast] = useState(null);
   const showToast = (msg, type = "ok") => setToast({ msg, type });
   const [showRevoked, setShowRevoked] = useState(false);
+  // UPDATE (permintaan user - "disini juga harusnya ada pemilihan bulannya
+  // kan"): viewPeriod="" = tabel LIVE/current (mf_dse_database, perilaku lama
+  // persis tidak berubah); viewPeriod="YYYY-MM" = lihat snapshot HISTORIS
+  // dari mf_dse_database_periods utk bulan itu (read-only - Upload/Hapus
+  // Semua/checkbox Revoked disembunyikan saat mode ini aktif, krn snapshot
+  // histori tidak pernah diedit langsung, cuma dibuat ulang tiap upload).
+  const [viewPeriod, setViewPeriod] = useState("");
+  const [periodOptions, setPeriodOptions] = useState([]);
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from("mf_dse_database_periods").select("period");
+      const uniq = [...new Set((data || []).map((r) => r.period))].sort().reverse();
+      setPeriodOptions(uniq);
+    })();
+  }, []);
 
   // ── Fetch tabel gabungan ───────────────────────────────────────────────────
   const [incompleteTotal, setIncompleteTotal] = useState(0);
-  const fetchRows = useCallback(async (pg = 1, srch = search, reg = filterRegion) => {
+  const fetchRows = useCallback(async (pg = 1, srch = search, reg = filterRegion, per = viewPeriod) => {
     setFetching(true);
     try {
+      if (per) {
+        // ── Mode histori: baca dari snapshot mf_dse_database_periods (bukan
+        // live table) — read-only, tidak ada kolom is_revoked/flag_duplicate
+        // di tabel ini (snapshot cuma simpan field mapping apa adanya).
+        let q = supabase.from("mf_dse_database_periods")
+          .select("*", { count: "exact" })
+          .eq("period", per)
+          .order("branch", { ascending: true })
+          .order("dse_code", { ascending: true });
+        if (reg) q = q.eq("region", reg);
+        if (srch) {
+          const s = srch.replace(/[%_]/g, "");
+          q = q.or(`dse_code.ilike.%${s}%,branch.ilike.%${s}%,mc.ilike.%${s}%,pt_name.ilike.%${s}%,dse_category.ilike.%${s}%`);
+        }
+        const from = (pg - 1) * PAGE_SIZE;
+        const { data, count, error } = await q.range(from, from + PAGE_SIZE - 1);
+        if (error) throw error;
+        setRows(data || []);
+        setTotal(count || 0);
+        setPage(pg);
+        setIncompleteTotal(0);
+        return;
+      }
       let q = supabase.from("mf_dse_database")
         .select("*", { count: "exact" })
         .order("branch", { ascending: true })
@@ -173,12 +221,12 @@ export default function SDP_DseDatabase({ theme, profile }) {
     } finally {
       setFetching(false);
     }
-  }, [search, filterRegion, showRevoked]);
+  }, [search, filterRegion, showRevoked, viewPeriod]);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
-  useEffect(() => { fetchRows(1, search, filterRegion); }, [filterRegion, showRevoked]);
+  useEffect(() => { fetchRows(1, search, filterRegion, viewPeriod); }, [filterRegion, showRevoked, viewPeriod]);
   useEffect(() => {
-    const h = setTimeout(() => { setSearch(searchInput); fetchRows(1, searchInput, filterRegion); }, 350);
+    const h = setTimeout(() => { setSearch(searchInput); fetchRows(1, searchInput, filterRegion, viewPeriod); }, 350);
     return () => clearTimeout(h);
   }, [searchInput]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -187,12 +235,29 @@ export default function SDP_DseDatabase({ theme, profile }) {
   const handleDownload = async () => {
     setExportLoading(true);
     try {
-      let q = supabase.from("mf_dse_database").select("*")
-        .order("branch", { ascending: true }).order("dse_code", { ascending: true });
-      if (filterRegion) q = q.eq("region", filterRegion);
-      if (!showRevoked) q = q.eq("is_revoked", false);
-      const { data, error } = await q.limit(50000);
-      if (error) throw error;
+      // BUGFIX (laporan user - "harusnya kan lebih dari 1000 baris", toast
+      // sebelumnya selalu berhenti tepat di "1000 baris" walau data asli
+      // >1000): query lama cuma .limit(50000) SEKALI jalan - PostgREST di
+      // project ini membatasi max 1000 baris per response TERLEPAS dari
+      // .limit() yang diminta client, jadi baris ke-1001 dst selalu
+      // kepotong diam-diam (tidak error, cuma dipotong). Sekarang paginasi
+      // beneran pakai .range() berulang (pola sama persis dgn fetchRows di
+      // atas), ambil per 1000 baris sampai halaman yang kembali < 1000
+      // (berarti itu halaman terakhir) - jadi SEMUA baris ikut terbawa
+      // berapa pun jumlahnya, bukan dipotong di baris ke-1000.
+      const CHUNK = 1000;
+      let all = [];
+      for (let from = 0; ; from += CHUNK) {
+        let q = supabase.from("mf_dse_database").select("*")
+          .order("branch", { ascending: true }).order("dse_code", { ascending: true });
+        if (filterRegion) q = q.eq("region", filterRegion);
+        if (!showRevoked) q = q.eq("is_revoked", false);
+        const { data, error } = await q.range(from, from + CHUNK - 1);
+        if (error) throw error;
+        all = all.concat(data || []);
+        if (!data || data.length < CHUNK) break;
+      }
+      const data = all;
       const head = ["DSE Category", "DSE Code IM3", "DSE Code 3ID", "MDI", "PT", "Micro Cluster", "Branch", "Region", "Circle"];
       const body = (data || []).map((r) => [
         r.dse_category || "", r.dse_code || "", r.dse_code_3id || "", r.mdi || "",
@@ -272,9 +337,11 @@ export default function SDP_DseDatabase({ theme, profile }) {
               style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 16px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: exportLoading ? 0.6 : 1 }}>
               {exportLoading ? <Loader2 size={14} className="spin" /> : <FileDown size={14} />} Download Data
             </button>
-            <button onClick={() => setShowWizard(true)} style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 16px", borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-              <Upload size={14} /> Upload Data
-            </button>
+            {!viewPeriod && (
+              <button onClick={() => setShowWizard(true)} style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 16px", borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                <Upload size={14} /> Upload Data
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -301,6 +368,15 @@ export default function SDP_DseDatabase({ theme, profile }) {
               placeholder="Cari ID DSE / Branch / MC / Partner…"
               style={{ ...inputStyle, paddingLeft: 34 }} />
           </div>
+          <div style={{ position: "relative", minWidth: 170 }}>
+            <select value={viewPeriod} onChange={(e) => setViewPeriod(e.target.value)}
+              title="Pilih periode histori mapping DSE (kosong = data live/saat ini)"
+              style={{ ...inputStyle, appearance: "none", cursor: "pointer", fontWeight: viewPeriod ? 700 : 400 }}>
+              <option value="">Live (Saat Ini)</option>
+              {periodOptions.map((pOpt) => <option key={pOpt} value={pOpt}>{periodLabel(pOpt)}</option>)}
+            </select>
+            <ChevronDown size={14} style={{ position: "absolute", right: 12, top: 12, color: t.lo, pointerEvents: "none" }} />
+          </div>
           <div style={{ position: "relative", minWidth: 190 }}>
             <select value={filterRegion} onChange={(e) => setFilterRegion(e.target.value)}
               style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
@@ -309,29 +385,37 @@ export default function SDP_DseDatabase({ theme, profile }) {
             </select>
             <ChevronDown size={14} style={{ position: "absolute", right: 12, top: 12, color: t.lo, pointerEvents: "none" }} />
           </div>
-          <button onClick={() => fetchRows(page, search, filterRegion)} title="Refresh"
+          <button onClick={() => fetchRows(page, search, filterRegion, viewPeriod)} title="Refresh"
             style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <RefreshCw size={14} className={fetching ? "spin" : ""} />
           </button>
-          <button onClick={openDeleteAll} disabled={total === 0}
-            title={filterRegion ? `Hapus semua data di Region ${filterRegion}` : "Hapus semua data di semua Region"}
-            style={{ display: "flex", alignItems: "center", gap: 7, height: 38, padding: "0 14px", borderRadius: 9, border: `1px solid ${t.redBg}`, background: t.redBg, color: t.red, fontSize: 13, fontWeight: 700, cursor: total === 0 ? "default" : "pointer", opacity: total === 0 ? 0.5 : 1 }}>
-            <Trash2 size={14} />
-            Hapus Semua
-          </button>
+          {!viewPeriod && (
+            <button onClick={openDeleteAll} disabled={total === 0}
+              title={filterRegion ? `Hapus semua data di Region ${filterRegion}` : "Hapus semua data di semua Region"}
+              style={{ display: "flex", alignItems: "center", gap: 7, height: 38, padding: "0 14px", borderRadius: 9, border: `1px solid ${t.redBg}`, background: t.redBg, color: t.red, fontSize: 13, fontWeight: 700, cursor: total === 0 ? "default" : "pointer", opacity: total === 0 ? 0.5 : 1 }}>
+              <Trash2 size={14} />
+              Hapus Semua
+            </button>
+          )}
         </div>
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "6px 16px", fontSize: 12, color: t.mid, borderBottom: `1px solid ${t.line}`, flexWrap: "wrap" }}>
           <div>
             {total.toLocaleString("id-ID")} baris DSE{filterRegion ? ` · Region ${filterRegion}` : " · seluruh Region"}
-            {incompleteTotal > 0 && (
-              <span style={{ color: t.amber, fontWeight: 700 }}> · {incompleteTotal.toLocaleString("id-ID")} baris belum lengkap</span>
+            {viewPeriod ? (
+              <span style={{ color: t.teal, fontWeight: 700 }}> · Histori {periodLabel(viewPeriod)} (read-only)</span>
+            ) : (
+              incompleteTotal > 0 && (
+                <span style={{ color: t.amber, fontWeight: 700 }}> · {incompleteTotal.toLocaleString("id-ID")} baris belum lengkap</span>
+              )
             )}
           </div>
-          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none", fontSize: 12 }}>
-            <input type="checkbox" checked={showRevoked} onChange={(e) => setShowRevoked(e.target.checked)} />
-            Tampilkan yang sudah Revoked
-          </label>
+          {!viewPeriod && (
+            <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none", fontSize: 12 }}>
+              <input type="checkbox" checked={showRevoked} onChange={(e) => setShowRevoked(e.target.checked)} />
+              Tampilkan yang sudah Revoked
+            </label>
+          )}
         </div>
 
         <div style={{ overflowX: "auto" }}>
@@ -386,12 +470,12 @@ export default function SDP_DseDatabase({ theme, profile }) {
         </div>
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, padding: 14, borderTop: `1px solid ${t.line}` }}>
-          <button onClick={() => fetchRows(page - 1, search, filterRegion)} disabled={page <= 1}
+          <button onClick={() => fetchRows(page - 1, search, filterRegion, viewPeriod)} disabled={page <= 1}
             style={{ height: 32, padding: "0 12px", borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12.5, cursor: page <= 1 ? "default" : "pointer", opacity: page <= 1 ? 0.5 : 1 }}>
             Sebelumnya
           </button>
           <span style={{ fontSize: 12.5, color: t.mid }}>Halaman {page} / {totalPages}</span>
-          <button onClick={() => fetchRows(page + 1, search, filterRegion)} disabled={page >= totalPages}
+          <button onClick={() => fetchRows(page + 1, search, filterRegion, viewPeriod)} disabled={page >= totalPages}
             style={{ height: 32, padding: "0 12px", borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12.5, cursor: page >= totalPages ? "default" : "pointer", opacity: page >= totalPages ? 0.5 : 1 }}>
             Berikutnya
           </button>

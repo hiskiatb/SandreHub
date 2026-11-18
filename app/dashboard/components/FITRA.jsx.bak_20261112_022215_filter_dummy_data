@@ -1,0 +1,267 @@
+"use client";
+import { useState } from "react";
+import { ChevronLeft, MapPin, Info } from "lucide-react";
+
+// ─── Design notes ───────────────────────────────────────────────────────────
+// Every number on this page carries two lines under it: FORMULA (how it's
+// computed) and SOURCE (which system/table/policy it comes from). That's
+// the whole point of this rebuild — nothing here is a number without a
+// traceable origin. "(proposed)" marks a metric that doesn't exist as a
+// report today — it's something I'm proposing to start tracking, not
+// something already live in a dashboard.
+
+function Source({ formula, source, proposed }) {
+  return (
+    <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px dashed currentColor", opacity: 0.55 }}>
+      <div style={{ fontSize: 10.5, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>{formula}</div>
+      <div style={{ fontSize: 10.5, marginTop: 2 }}>
+        {proposed && <span style={{ fontWeight: 700 }}>(proposed) </span>}
+        {source}
+      </div>
+    </div>
+  );
+}
+
+function MetricCard({ label, value, formula, source, proposed, t }) {
+  return (
+    <div style={{ flex: 1, padding: 16, borderRadius: 12, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, color: t.mid }}>
+      <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>{label}</div>
+      <div style={{ fontSize: 26, fontWeight: 700, color: t.hi, marginTop: 5 }}>{value}</div>
+      <Source formula={formula} source={source} proposed={proposed} />
+    </div>
+  );
+}
+
+function BarRow({ label, pct, color, t }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 9 }}>
+      <div style={{ width: 118, fontSize: 12, color: t.mid, flexShrink: 0 }}>{label}</div>
+      <div style={{ flex: 1, height: 10, borderRadius: 6, background: t.lineSoft, overflow: "hidden" }}>
+        <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 6 }} />
+      </div>
+      <div style={{ width: 34, fontSize: 12, fontWeight: 700, color: t.hi, textAlign: "right" }}>{pct}%</div>
+    </div>
+  );
+}
+
+function Panel({ title, formula, source, proposed, t, children }) {
+  return (
+    <div style={{ padding: 18, borderRadius: 12, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, marginBottom: 18 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, marginBottom: 14 }}>{title}</div>
+      {children}
+      {(formula || source) && (
+        <div style={{ marginTop: 14, color: t.mid }}>
+          <Source formula={formula} source={source} proposed={proposed} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+const TENURE_BUCKETS = [
+  { label: "<10D", pct: 37, color: "#DC2626" },
+  { label: "10-30D", pct: 24, color: "#F0903F" },
+  { label: "31-90D", pct: 19, color: "#F2CE5A" },
+  { label: "90-180D", pct: 12, color: "#267A72" },
+  { label: ">180D", pct: 8, color: "#8A8A96" },
+];
+
+const REGIONS = [
+  {
+    id: "sumbagut", name: "Sumbagut", homes: 358, worstBucket: "<10D", worstPct: 41,
+    note: "Skews toward point-of-sale — closely tracks the Rotational PA flag rate.",
+  },
+  {
+    id: "sumbagsel", name: "Sumbagsel", homes: 254, worstBucket: "31-90D", worstPct: 28,
+    note: "Skews toward the retention desk's window — less about the sale, more about the save.",
+  },
+];
+
+const ROOT_CAUSES = [
+  {
+    label: "Rotation-flagged", pct: 18, color: "#8A8A96",
+    formula: "PA count on same FAT/ODP point in last 30d ≥ 2",
+    source: "i-Sales FAT/ODP point history, cross-checked against the Rotational PA policy (Nov'26)",
+  },
+  {
+    label: "Payment", pct: 46, color: "#DC2626",
+    formula: "First unpaid bill date − activation date ≤ 45d",
+    source: "Billing system (arrears/hardblock status log)",
+  },
+  {
+    label: "Network ticket", pct: 18, color: "#F0903F",
+    formula: "Open NOC ticket on the account in the 14d before churn",
+    source: "NOC ticketing system",
+  },
+  {
+    label: "Residual / unexplained", pct: 18, color: "#267A72",
+    formula: "Total early-life churn − (Rotation + Payment + Network)",
+    source: "Derived (proposed) — would shrink once i-Sales captures a SPIN exit-reason field",
+  },
+];
+
+const REASON_CODES_REACT = [
+  { label: "Payment issue", pct: 46, color: "#DC2626" },
+  { label: "Dissatisfaction", pct: 23, color: "#F0903F" },
+  { label: "Competitor offer", pct: 14, color: "#C2407E" },
+  { label: "Temporary need", pct: 9, color: "#267A72" },
+  { label: "Rotation-flagged", pct: 8, color: "#8A8A96" },
+];
+
+export const FITRA_TABS = [
+  { id: "overview", label: "Base Health" },
+  { id: "rootcause", label: "Root Cause" },
+  { id: "retention", label: "Retention" },
+  { id: "reactivation", label: "Reactivation" },
+];
+
+export default function FITRA({ t, onBack, activeTab: controlledTab, onTabChange, hideTabBar }) {
+  const [internalTab, setInternalTab] = useState("overview");
+  const activeTab = controlledTab ?? internalTab;
+  const setActiveTab = onTabChange ?? setInternalTab;
+  const tabs = FITRA_TABS;
+
+  return (
+    <div style={{ maxWidth: 1080 }}>
+      {onBack && (
+        <button className="back-btn" onClick={onBack} style={{ marginBottom: 22 }}>
+          <ChevronLeft size={15} /> Kembali
+        </button>
+      )}
+
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 4 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, color: t.hi }}>FITRA — Fiber Sumatera Base Health</h1>
+        <span style={{ fontSize: 11.5, fontWeight: 600, color: t.mid, padding: "3px 9px", borderRadius: 99, border: `1px solid ${t.line}` }}>
+          Illustrative figures
+        </span>
+      </div>
+      <p style={{ fontSize: 13, color: t.mid, marginBottom: 10 }}>
+        Early-life churn tracking for Sumatera FTTH, split by Sumbagut and Sumbagsel. Every number below shows
+        its formula and the system it's pulled from — a dashed line under the figure.
+      </p>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", borderRadius: 10, background: t.redBg, marginBottom: 20, fontSize: 12, color: t.hi }}>
+        <Info size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+        <div><strong>(proposed)</strong> on any card means this isn't a report that runs today — it's a metric I'm proposing to start tracking, not an existing dashboard number.</div>
+      </div>
+
+      {!hideTabBar && (
+        <div style={{ display: "inline-flex", gap: 2, padding: 4, borderRadius: 10, border: `1px solid ${t.line}`, background: t.card, marginBottom: 20 }}>
+          {tabs.map(tab => (
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`tab-pill ${activeTab === tab.id ? "on" : "off"}`}>
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {activeTab === "overview" && (
+        <div>
+          <div style={{ display: "flex", gap: 14, marginBottom: 20 }}>
+            <MetricCard t={t} label="Home Churn Rate" value="4.8%" proposed
+              formula="Homes with ≥2 PA events / 12mo ÷ all homes with a PA / 12mo"
+              source="i-Sales FAT/ODP point history — counts the home, not the customer name, so a re-registered home still shows up" />
+            <MetricCard t={t} label="True Organic Churn" value="3.9pp" proposed
+              formula="Total early-life churn rate − Rotational-flagged churn rate"
+              source="Early-life churn from billing + i-Sales; Rotational share from the Nov'26 Rotational PA weekly review" />
+            <MetricCard t={t} label="Rotational-flagged Share" value="18%"
+              formula="PAs flagged Rotational ÷ all new PAs, this period"
+              source="Incentive Program Nov'26 — Rotational PA review (already a live weekly process)" />
+          </div>
+
+          <Panel t={t} title="Tenure at churn (days from activation to churn/suspend)"
+            formula="For each churned/suspended account: churn date − activation date, bucketed"
+            source="Billing status-change log joined to i-Sales activation date — same bucket convention used in the FWA-style tenure report">
+            {TENURE_BUCKETS.map(b => <BarRow key={b.label} label={b.label} pct={b.pct} color={b.color} t={t} />)}
+            <div style={{ marginTop: 12, padding: 11, borderRadius: 8, background: t.redBg, fontSize: 12.5, color: t.hi }}>
+              <strong>Highlight:</strong> 37% of early churn happens before day 10 — before most retention touchpoints even fire.
+            </div>
+          </Panel>
+
+          <div style={{ display: "flex", gap: 14 }}>
+            {REGIONS.map(r => (
+              <div key={r.id} style={{ flex: 1, padding: 16, borderRadius: 12, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 700, color: t.hi }}>
+                  <MapPin size={13} /> {r.name}
+                </div>
+                <div style={{ fontSize: 12, color: t.mid, marginTop: 4 }}>{r.homes} homes · worst bucket {r.worstBucket} ({r.worstPct}%)</div>
+                <div style={{ fontSize: 12, color: t.mid, marginTop: 8 }}>{r.note}</div>
+                <Source t={t} formula="Count of distinct FAT/ODP points per region, bucketed by tenure at churn" source="i-Sales region field + billing status-change log" />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activeTab === "rootcause" && (
+        <div>
+          <Panel t={t} title="Early-life churn, sorted into root causes"
+            source="Classification runs as a sequential filter, strongest signal first — see formula under each row">
+            {ROOT_CAUSES.map(c => <BarRow key={c.label} label={c.label} pct={c.pct} color={c.color} t={t} />)}
+          </Panel>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {ROOT_CAUSES.map(c => (
+              <div key={c.label} style={{ padding: 14, borderRadius: 10, border: `1px solid ${t.line}`, background: t.card }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>{c.label} — {c.pct}%</div>
+                <Source t={t} formula={c.formula} source={c.source} proposed={c.label.includes("Residual")} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activeTab === "retention" && (
+        <div>
+          <Panel t={t} title="D1–45 hardblock funnel"
+            formula="Count of accounts at each stage ÷ accounts entering hardblock that period"
+            source="Billing status-change log (D8 hardblock → payment or churn events)">
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {[
+                { label: "D8-20 Hardblock", v: "100%" },
+                { label: "Saved, no discount", v: "22%" },
+                { label: "Saved, with offer", v: "9%" },
+                { label: "D45+ Terminated", v: "69%" },
+              ].map(s => (
+                <div key={s.label} style={{ flex: "1 1 120px", padding: 12, borderRadius: 8, background: t.lineSoft, textAlign: "center" }}>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: t.hi }}>{s.v}</div>
+                  <div style={{ fontSize: 11, color: t.mid, marginTop: 2 }}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+          </Panel>
+          <Panel t={t} title="D1–45 Save Rate" formula="(Saved, no discount + Saved, with offer) ÷ D8-20 Hardblock" source="Same billing status-change log as the funnel above">
+            <div style={{ fontSize: 26, fontWeight: 700, color: t.hi }}>31%</div>
+          </Panel>
+          <Panel t={t} title="Exit reason, when known"
+            formula="Count per reason code ÷ all early-life churn with a recorded reason"
+            source="H+3 satisfaction call notes + CX exit survey; 'Temporary need' and 'Dissatisfaction' depend on an agent actually logging the reason — weakest-coverage source on this page">
+            {REASON_CODES_REACT.map(r => <BarRow key={r.label} label={r.label} pct={r.pct} color={r.color} t={t} />)}
+          </Panel>
+        </div>
+      )}
+
+      {activeTab === "reactivation" && (
+        <div>
+          <div style={{ display: "flex", gap: 14, marginBottom: 18 }}>
+            <MetricCard t={t} label="Win Rate — Suspended" value="58%"
+              formula="Reactivated PAs ÷ suspended accounts contacted"
+              source="CX reactivation log (suspended = D8-45, still has an ONT on-site)" />
+            <MetricCard t={t} label="Win Rate — Terminated" value="27%"
+              formula="Reactivated PAs ÷ terminated accounts contacted"
+              source="CX reactivation log (terminated = D45+, ONT already retrieved, needs a fresh SO)" />
+            <MetricCard t={t} label="Re-lapse within 90d" value="11%" proposed
+              formula="Reactivated accounts that churn again within 90d ÷ all reactivated accounts"
+              source="Billing status-change log, replayed 90d forward from each reactivation date" />
+          </div>
+          <Panel t={t} title="Revenue Restored" formula="Σ monthly ARPU of all accounts reactivated this period" source="Billing system ARPU field, summed at the reactivation date">
+            <div style={{ fontSize: 26, fontWeight: 700, color: t.hi }}>Rp412jt</div>
+          </Panel>
+          <Panel t={t} title="Lift vs. control" proposed
+            formula="Win rate of contacted accounts − win rate of a held-out control group given no offer"
+            source="Requires running CX outreach against a sampled control group — not possible to compute from current logs alone">
+            <div style={{ fontSize: 26, fontWeight: 700, color: t.hi }}>+19pt</div>
+          </Panel>
+        </div>
+      )}
+    </div>
+  );
+}
