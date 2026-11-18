@@ -181,6 +181,7 @@
     <link rel="stylesheet" href="/report-merge/sm-modern.css">
     <!-- [SandraHub] Tema ikut dashboard + preview semua email sebelum kirim -->
     <script src="/report-merge/sm-review.js"></script>
+    <script src="/report-merge/sm-format.js"></script>
 </head>
 <body>
     <div class="bg-blur-container">
@@ -1574,7 +1575,8 @@ Sales Performance Management Sumatera`;
             $('liveTo').innerHTML = `${esc(h.email_to) || '<span class="status-fail">Email kosong</span>'}${h.email_cc ? `<br><small>CC: ${esc(h.email_cc)}</small>` : ''}`;
             $('liveSubject').innerText = isiPlaceholder($('emailSubject').value, h);
             $('liveAttach').innerText = namaLampiran(h).map(f => `📎 ${f}`).join('\n');
-            $('liveBody').innerHTML = esc(isiPlaceholder($('emailBody').value, h)).replace(/\n/g, '<br>');
+            // [SandraHub] penanda format (**tebal**, *miring*, ++garis bawah++, warna) ditampilkan seperti di email (sm-format.js)
+            $('liveBody').innerHTML = (window.smMarkerKeHtml || (x => x))(esc(isiPlaceholder($('emailBody').value, h))).replace(/\n/g, '<br>');
         }
 
         $('btnSendEmail').addEventListener('click', async function() {

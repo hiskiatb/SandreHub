@@ -37,7 +37,7 @@
   // MDI meng-escape teksnya dulu. Tag <script> & atribut on* dibuang dari pratinjau.
   function isiHtml(teks, sebagaiHtml) {
     var t = String(teks == null ? '' : teks);
-    if (!sebagaiHtml) return esc(t).replace(/\n/g, '<br>');
+    if (!sebagaiHtml) return (window.smMarkerKeHtml || function (x) { return x; })(esc(t)).replace(/\n/g, '<br>');
     return t.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '').replace(/\n/g, '<br>');
   }
   function urlLampiran(l) {
