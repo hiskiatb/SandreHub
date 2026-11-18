@@ -2683,7 +2683,7 @@
                     to: r.email_to, cc: r.email_cc,
                     subject: isiAkhir(r.subject, r), body: isiAkhir(r.pesan, r),
                     lampiran: [r.file_base64 ? { filename: r.filename, dataUrl: r.file_base64 } : { filename: r.filename, url: "/api/smart-mail/downloads/" + encodeURIComponent(r.filename) }]
-                })), { judul: "Preview email Partner SDP" });
+                })), { judul: "Preview email Partner SDP", bodyHtml: true });
                 if (!lanjut) {
                     btn.innerText = "🚀 Konfirmasi & Kirim Semua Email";
                     btn.style.pointerEvents = "auto";

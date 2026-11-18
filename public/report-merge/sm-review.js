@@ -33,6 +33,13 @@
       .forEach(function (x) { if (POLA.test(x)) { if (valid.indexOf(x) < 0) valid.push(x); } else if (x.indexOf('@') >= 0) salah.push(x); });
     return { valid: valid, salah: salah };
   }
+  // Isi email seperti yang dikirim server: SDP mengirim teks apa adanya sebagai HTML (\n -> <br>),
+  // MDI meng-escape teksnya dulu. Tag <script> & atribut on* dibuang dari pratinjau.
+  function isiHtml(teks, sebagaiHtml) {
+    var t = String(teks == null ? '' : teks);
+    if (!sebagaiHtml) return esc(t).replace(/\n/g, '<br>');
+    return t.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '').replace(/\n/g, '<br>');
+  }
   function urlLampiran(l) {
     if (l.file) return URL.createObjectURL(l.file);
     if (l.dataUrl) {
@@ -67,6 +74,7 @@
     '.smr-meta{display:grid;grid-template-columns:90px 1fr;gap:6px 12px;font-size:13px;} .smr-meta dt{color:var(--sm-muted,#5A5A68);font-weight:600;} .smr-meta dd{margin:0;color:var(--sm-ink,#1A1A1D);word-break:break-word;}',
     '.smr-salah{color:#C0392B;font-size:12px;}',
     '.smr-mail{background:#fff;color:#1A1A1D;border:1px solid var(--sm-line,#E2E2E6);border-radius:12px;padding:16px 18px;font-size:14px;line-height:1.6;font-family:"Segoe UI",Arial,sans-serif;}',
+    '.smr-mail,.smr-mail *{color:#1A1A1D !important;} .smr-mail a{color:#1A9E90 !important;}',
     '.smr-mail .subj{font-weight:700;font-size:15px;padding-bottom:10px;margin-bottom:10px;border-bottom:1px solid #eee;}',
     '.smr-att{display:flex;gap:6px;flex-wrap:wrap;} .smr-att button{font:inherit;font-size:12.5px;border-radius:8px;padding:6px 10px;cursor:pointer;border:1px solid var(--sm-line-2,#D4D4DA);background:var(--sm-surface-2,#F0F0F2);color:var(--sm-ink-2,#3A3A42);}',
     '.smr-att button.on{background:var(--sm-teal,#32BCAD);border-color:var(--sm-teal,#32BCAD);color:#fff;}',
@@ -138,7 +146,7 @@
           + '<dt>CC</dt><dd>' + (esc(d.cc.valid.join(', ')) || '-') + '</dd>'
           + (d.to.salah.length || d.cc.salah.length ? '<dt></dt><dd class="smr-salah">Alamat tidak valid (dilewati): ' + esc(d.to.salah.concat(d.cc.salah).join(', ')) + '</dd>' : '')
           + (d.it.info ? '<dt>Info</dt><dd>' + esc(d.it.info) + '</dd>' : '') + '</dl>'
-          + '<div class="smr-mail"><div class="subj">' + esc(d.it.subject) + '</div><div>' + esc(d.it.body).replace(/\n/g, '<br>') + '</div></div>'
+          + '<div class="smr-mail"><div class="subj">' + esc(d.it.subject) + '</div><div>' + isiHtml(d.it.body, opsi.bodyHtml) + '</div></div>'
           + '<div class="smr-att">' + (lamp.length ? lamp.map(function (l, j) { return '<button type="button" data-j="' + j + '">📎 ' + esc(l.filename) + '</button>'; }).join('') : '<span class="smr-salah">Tidak ada lampiran</span>') + '</div>'
           + (lamp.length ? '<iframe class="smr-pdf" title="Pratinjau lampiran"></iframe>' : '');
         var frame = elDetail.querySelector('iframe');
