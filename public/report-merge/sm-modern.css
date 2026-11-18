@@ -226,7 +226,19 @@ html[data-theme="dark"] [style*="background: #fdfdfd"], html[data-theme="dark"] 
 html[data-theme="dark"] [style*="background: #f8f9fa"], html[data-theme="dark"] [style*="background:#f4f7f6"],
 html[data-theme="dark"] [style*="background-color: #f0f2f5"], html[data-theme="dark"] [style*="background:#f2f2f2"],
 html[data-theme="dark"] [style*="background: #fafafa"], html[data-theme="dark"] [style*="background: #f4fdfc"],
-html[data-theme="dark"] [style*="background: #fff9fb"], html[data-theme="dark"] [style*="background: #fffcf0"] {
+html[data-theme="dark"] [style*="background: #fff9fb"], html[data-theme="dark"] [style*="background: #fffcf0"],
+/* gaya yang ditulis ulang oleh JavaScript berubah ke format rgb() */
+html[data-theme="dark"] [style*="background: rgb(255, 255, 255)"], html[data-theme="dark"] [style*="background-color: rgb(255, 255, 255)"],
+html[data-theme="dark"] [style*="background: rgb(253, 253, 253)"], html[data-theme="dark"] [style*="background-color: rgb(253, 253, 253)"],
+html[data-theme="dark"] [style*="background: rgb(249, 250, 251)"], html[data-theme="dark"] [style*="background-color: rgb(249, 250, 251)"],
+html[data-theme="dark"] [style*="background: rgb(248, 249, 250)"], html[data-theme="dark"] [style*="background-color: rgb(248, 249, 250)"],
+html[data-theme="dark"] [style*="background: rgb(244, 247, 246)"], html[data-theme="dark"] [style*="background-color: rgb(244, 247, 246)"],
+html[data-theme="dark"] [style*="background: rgb(240, 242, 245)"], html[data-theme="dark"] [style*="background-color: rgb(240, 242, 245)"],
+html[data-theme="dark"] [style*="background: rgb(242, 242, 242)"], html[data-theme="dark"] [style*="background-color: rgb(242, 242, 242)"],
+html[data-theme="dark"] [style*="background: rgb(250, 250, 250)"], html[data-theme="dark"] [style*="background-color: rgb(250, 250, 250)"],
+html[data-theme="dark"] [style*="background: rgb(244, 253, 252)"], html[data-theme="dark"] [style*="background-color: rgb(244, 253, 252)"],
+html[data-theme="dark"] [style*="background: rgb(255, 249, 251)"], html[data-theme="dark"] [style*="background-color: rgb(255, 249, 251)"],
+html[data-theme="dark"] [style*="background: rgb(255, 252, 240)"], html[data-theme="dark"] [style*="background-color: rgb(255, 252, 240)"] {
   background: var(--sm-surface-2) !important;
 }
 html[data-theme="dark"] [style*="color: #000"], html[data-theme="dark"] [style*="color:#000"],
