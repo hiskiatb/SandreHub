@@ -39,6 +39,8 @@ function syncTheme(frame) {
   // disembunyikan belum tentu tahu kalau tema diganti di halaman lain.
   try {
     const theme = localStorage.getItem("rm-theme") || "dark";
+    // Halaman Partner SDP/MDI (sdp.html, mdi.html) membaca tema dari shim-nya sendiri.
+    if (frame && frame.contentWindow && frame.contentWindow.__smTerapkanTema) frame.contentWindow.__smTerapkanTema(theme);
     const doc = frame && frame.contentDocument;
     if (!doc || !doc.documentElement) return;
     doc.documentElement.setAttribute("data-theme", theme);
@@ -47,11 +49,35 @@ function syncTheme(frame) {
   } catch (e) { /* iframe belum siap, biarkan */ }
 }
 
+// Tema dashboard SandraHub (gelap/terang) disalin ke halaman Report Merge.
+// `t` dari dashboard: appBg #0D0D0E = gelap.
+const temaDari = (t) => (t && t.appBg === "#0D0D0E" ? "dark" : "light");
+
 export default function ReportMerge_Module({ t }) {
   // Selalu mulai dari halaman pilih menu (Blast Email Report / Partner SDP / Partner MDI).
   const [page, setPage] = useState("home");
   const [opened, setOpened] = useState(["home"]);
+  const [penuh, setPenuh] = useState(false);
   const frames = useRef({});
+  const wadah = useRef(null);
+  const tema = temaDari(t);
+
+  // Ikuti tema dashboard: simpan ke 'rm-theme' (dibaca semua halaman Report Merge) lalu terapkan ke iframe yang terbuka.
+  useEffect(() => {
+    try { localStorage.setItem("rm-theme", tema); } catch (e) { /* abaikan */ }
+    Object.values(frames.current).forEach((f) => syncTheme(f));
+  }, [tema]);
+
+  // Tombol "Layar penuh": area Report Merge memenuhi seluruh layar (Esc untuk keluar).
+  useEffect(() => {
+    const onFs = () => setPenuh(document.fullscreenElement === wadah.current);
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+  const toggleLayarPenuh = () => {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else if (wadah.current && wadah.current.requestFullscreen) wadah.current.requestFullscreen().catch(() => {});
+  };
 
   useEffect(() => {
     const onMessage = (e) => {
@@ -71,23 +97,40 @@ export default function ReportMerge_Module({ t }) {
 
   return (
     <div
+      ref={wadah}
       style={{
-        borderRadius: 12,
-        border: `1px solid ${t.line}`,
-        background: t.surface,
-        boxShadow: t.shadowSm,
+        position: "relative",
+        borderRadius: penuh ? 0 : 12,
+        border: penuh ? 0 : `1px solid ${t.line}`,
+        background: t.appBg,
+        boxShadow: penuh ? "none" : t.shadowSm,
         overflow: "hidden",
-        height: "calc(100vh - 220px)",
+        height: penuh ? "100vh" : "calc(100vh - 220px)",
         minHeight: 560,
       }}
     >
+      <button
+        type="button"
+        onClick={toggleLayarPenuh}
+        title={penuh ? "Keluar dari layar penuh (Esc)" : "Tampilkan Report Merge layar penuh"}
+        style={{
+          position: "absolute", right: 12, bottom: 12, zIndex: 5,
+          display: "inline-flex", alignItems: "center", gap: 6,
+          padding: "7px 12px", borderRadius: 8, cursor: "pointer",
+          fontSize: 12.5, fontWeight: 600, fontFamily: "inherit",
+          color: t.hi, background: t.card, border: `1px solid ${t.line}`, boxShadow: t.shadowMd,
+        }}
+      >
+        {penuh ? "⤡ Keluar layar penuh" : "⛶ Layar penuh"}
+      </button>
       {PAGES.filter((p) => opened.includes(p.id)).map((p) => (
         <iframe
           key={p.id}
           ref={(el) => { frames.current[p.id] = el; }}
           title={p.title}
           src={p.src}
-          style={{ width: "100%", height: "100%", border: 0, display: p.id === page ? "block" : "none", background: "#fff" }}
+          onLoad={(e) => syncTheme(e.currentTarget)}
+          style={{ width: "100%", height: "100%", border: 0, display: p.id === page ? "block" : "none", background: t.appBg }}
         />
       ))}
     </div>

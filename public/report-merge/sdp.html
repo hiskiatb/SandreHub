@@ -203,6 +203,8 @@
     </style>
     <!-- [SandraHub] Tampilan baru (hanya CSS, logic tidak berubah). Hapus baris ini untuk kembali ke tampilan asli. -->
     <link rel="stylesheet" href="/report-merge/sm-modern.css">
+    <!-- [SandraHub] Tema ikut dashboard + preview semua email sebelum kirim -->
+    <script src="/report-merge/sm-review.js"></script>
 </head>
 <body>
     <div class="bg-blur-container">
@@ -2668,6 +2670,24 @@
                 if (rec.filePromise) {
                     rec.file_base64 = await rec.filePromise;
                     delete rec.filePromise; 
+                }
+            }
+
+            // [SandraHub] Preview semua email sebelum benar-benar dikirim (sm-review.js).
+            // Subject & isi di-preview persis seperti yang akan diganti server ({{nama_rekan}}, {{periode}}, {{type}}).
+            if (window.smReview) {
+                const isiAkhir = (teks, r) => String(teks || "").replace(/{{nama_rekan}}/g, r.partner_name).replace(/{{periode}}/g, periodeSurat).replace(/{{type}}/g, r.type || "SDP");
+                const lanjut = await window.smReview(emailGroupPayload.recipients.map(r => ({
+                    nama: r.partner_name,
+                    info: "ID " + r.sdp_id,
+                    to: r.email_to, cc: r.email_cc,
+                    subject: isiAkhir(r.subject, r), body: isiAkhir(r.pesan, r),
+                    lampiran: [r.file_base64 ? { filename: r.filename, dataUrl: r.file_base64 } : { filename: r.filename, url: "/api/smart-mail/downloads/" + encodeURIComponent(r.filename) }]
+                })), { judul: "Preview email Partner SDP" });
+                if (!lanjut) {
+                    btn.innerText = "🚀 Konfirmasi & Kirim Semua Email";
+                    btn.style.pointerEvents = "auto";
+                    return;
                 }
             }
 
