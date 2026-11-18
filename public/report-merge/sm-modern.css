@@ -238,6 +238,9 @@ html[data-theme="dark"] .btn-send-email, html[data-theme="dark"] .btn-send-email
 html[data-theme="dark"] .btn-partner.active * { color: #fff !important; }
 /* Isi email & surat tetap tampil seperti aslinya (latar putih) */
 html[data-theme="dark"] .preview-box, html[data-theme="dark"] .preview-box * { background-color: #fff; color: #1A1A1D !important; }
+/* Logo teks "SMS / Smart Mail Sumatra" (SVG) & garis abu di bawahnya */
+html[data-theme="dark"] svg [fill="#4D4D4F"] { fill: var(--sm-ink); }
+html[data-theme="dark"] svg [fill="#eee"] { fill: var(--sm-line-2); }
 html[data-theme="dark"] select option { background: var(--sm-surface); color: var(--sm-ink); }
 html[data-theme="dark"] th { color: var(--sm-muted) !important; }
 html[data-theme="dark"] tbody tr:hover td { background: var(--sm-hover) !important; }
