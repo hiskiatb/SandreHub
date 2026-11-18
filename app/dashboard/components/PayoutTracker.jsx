@@ -2701,7 +2701,11 @@ function RollingChart({ months, refText, t }) {
 // "Kompensasi Distribusi Voucher" sengaja tidak termasuk.
 const dcText = (s) => String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toUpperCase();
 const DC_RE = /DISTRIBUTION\s*FEE|[CG]HAMPION/;
-const isDcRow = (r) => DC_RE.test(dcText(gstr(r,["program type","programtype"]) || gstr(r,["project title","=project"])));
+const isDcProgram = (r) => DC_RE.test(dcText(gstr(r,["program type","programtype"]) || gstr(r,["project title","=project"])));
+// Baris "kosong" (belum ada invoice sama sekali & nilai 0) bukan tagihan DF&C yang nyata → tidak ikut dihitung
+const isEmptyPlaceholder = (r) => !r._inv && !(gnum(r,["=invoice amount"]) || gnum(r,["=amount","total amount","=total"]))
+  && !gcell(r,H_INV_CREATED,null) && !gcell(r,H_INV) && !gcell(r,H_CLV) && !gcell(r,H_CLR);
+const isDcRow = (r) => isDcProgram(r) && !isEmptyPlaceholder(r);
 const H_INV_CREATED = ["=invoice date","=created invoice","created invoice date","=invoice created","=tanggal invoice"];
 const H_INV_COUPA   = ["=invoice submission","invoice submission date","=invoicing","invoicing date","=inv submission"];
 const DC_STEPS = [
