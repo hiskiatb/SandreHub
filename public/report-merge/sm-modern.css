@@ -81,6 +81,11 @@ body { background: var(--sm-bg) !important; padding: 16px 16px 64px; color: var(
 }
 .btn-link-sm:hover, .btn-small:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(16, 24, 40, .12); filter: brightness(1.03); }
 
+/* ---------- Header logo "SMS Automation Transform / Smart Mail Sumatra" disembunyikan di halaman SDP;
+   branding itu kini ada di halaman pilih menu Smart Mail Sumatera (home.html). ---------- */
+#mainCard > div:has(> svg[viewBox="0 0 530 110"]) { display: none !important; }
+#mainCard { padding-top: 76px !important; }
+
 /* ---------- Pilihan mode (Blast Only / Generate / New Template) ---------- */
 .mode-container {
   background: var(--sm-surface-2); border: 1px solid var(--sm-line); border-radius: 16px; padding: 6px; gap: 6px;

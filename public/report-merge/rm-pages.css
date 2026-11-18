@@ -371,3 +371,8 @@
     .kpi .n{ font-size:19px; }
     .guide-tools{ flex-direction:column; align-items:stretch; }
   }
+
+  /* Branding Smart Mail Sumatera di halaman pilih menu */
+  .sms-brand { display: block; width: min(460px, 90%); height: auto; margin: 0 auto 18px; font-family: var(--font-brand); }
+  .sms-brand .sms-ink { fill: var(--ink); }
+  .sms-brand .sms-line { fill: var(--line2); }

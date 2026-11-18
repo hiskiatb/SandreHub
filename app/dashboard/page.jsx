@@ -1075,7 +1075,7 @@ export default function DashboardPage() {
                           {isSPM        && <SNavItem icon={<Database size={14} />}         label="Database DSE"      active={view === "dse-database"}     onClick={() => navigate("dse-database")} />}
                           {isSPM        && <SNavItem icon={<Key size={14} />}              label="Kode Otoritas"      active={view === "kode-otoritas"}    onClick={() => navigate("kode-otoritas")} />}
                           {isSPM        && <SNavItem icon={<Shield size={14} />}            label="Kode Otoritas MPX"  active={view === "admin-panel"}      onClick={() => navigate("admin-panel")} />}
-                          {canReportMerge && <SNavItem icon={<Mail size={14} />}         label="Report Merge"       active={view === "report-merge"}     onClick={() => navigate("report-merge")} />}
+                          {canReportMerge && <SNavItem icon={<Mail size={14} />}         label="Smart Mail Sumatera" active={view === "report-merge"}     onClick={() => navigate("report-merge")} />}
                         </>
                       )}
                     </>
@@ -1413,8 +1413,8 @@ export default function DashboardPage() {
                         )}
 
                         {canReportMerge && (
-                          <DashCard icon={<Mail size={20} />} title="Report Merge"
-                            desc="Mail-merge email & pembuatan surat PDF dengan alur approval."
+                          <DashCard icon={<Mail size={20} />} title="Smart Mail Sumatera"
+                            desc="Blast Email Report serta surat Partner SDP & MDI: generate PDF, approval, dan kirim email."
                             tag={isSPM ? "SPM" : "IOH"} active={true} onClick={() => navigate("report-merge")} t={t} d={d}
                             accent={{ color: d ? "#818CF8" : "#4F46E5", bg: d ? "rgba(129,140,248,0.11)" : "rgba(79,70,229,0.07)", bd: d ? "rgba(129,140,248,0.28)" : "rgba(79,70,229,0.16)", shadow: "rgba(79,70,229,0.16)" }} />
                         )}
