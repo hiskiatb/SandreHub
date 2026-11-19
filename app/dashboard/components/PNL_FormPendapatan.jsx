@@ -652,7 +652,7 @@ const FormPendapatan = ({
   const effectiveReadOnly = readOnly || monthDisabled;
   const isSPMUser = userRole === 'spm_sumatera';
   const spmFieldReadOnly = effectiveReadOnly || !isSPMUser;
-  const canReportDispute = !effectiveReadOnly && !isSPMUser && (userRole === 'finance_mpx' || userRole === 'admin_mc');
+  const canReportDispute = !effectiveReadOnly && !isSPMUser && (userRole === 'admin_partner_mdi' || userRole === 'finance_mpx' || userRole === 'admin_mc');
   const activeHppOverrideCount = Object.keys(hppOverrides).length;
 
   const defaults = useCallback(() => ({

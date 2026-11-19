@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from "react";
  *   1) mengarahkan semua fetch('/api/...') ke '/api/report-merge/...'
  *   2) menambahkan header Authorization: Bearer <token sesi SandraHub>
  *      supaya endpoint di server (lib/reportMerge/auth.js) bisa
- *      memverifikasi role & menolak Finance MPX.
+ *      memverifikasi role & menolak Admin Partner (MDI).
  * Lihat public/report-merge/index.html untuk isi shim-nya.
  *
  * Saat menu dibuka, yang tampil pertama adalah public/report-merge/home.html

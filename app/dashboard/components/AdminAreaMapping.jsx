@@ -3,7 +3,7 @@
  * AdminAreaMapping.jsx — tab "Mapping & User Management" untuk role
  * "Admin Area" (admin_area).
  *
- * Sama persis pola AdminMcMapping.jsx (Admin MC / finance_mpx), TAPI
+ * Sama persis pola AdminMcMapping.jsx (Admin MC / admin_partner_mdi), TAPI
  * granularitas di level BRANCH (Area) - bukan MC (District). 1 admin
  * Area login & otomatis dapat akses ke SEMUA MC/District yang ada di
  * bawah Branch itu (lewat RLS mf_dse_admin_area_has_access(branch), by

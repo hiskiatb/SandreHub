@@ -2,7 +2,7 @@
 /**
  * PNL_AdminPanel.jsx — v3
  * Fixes:
- *  - Tambah branch → auto-generate access code finance_mpx untuk partner tsb
+ *  - Tambah branch → auto-generate access code admin_partner_mdi untuk partner tsb
  *  - Permission save diperbaiki: upsert dengan onConflict benar
  *  - Duplicate branch check SEBELUM insert (prevent unique constraint error)
  *  - Full responsive (mobile-first grid)
@@ -25,7 +25,7 @@ import {
 // ─── Constants ────────────────────────────────────────────────────────────────
 const ALL_ROLES = [
   { value: "spm_sumatera",         label: "SPM Sumatera",               color: "#C6168D" },
-  { value: "finance_mpx",          label: "District Admin",             color: "#ED1C24" },
+  { value: "admin_partner_mdi",          label: "Admin Partner (MDI)",        color: "#ED1C24" },
   { value: "internal_ioh",         label: "Internal IOH (Seluruh Sum.)", color: "#32BCAD" },
   { value: "ioh_north_sumatera",   label: "IOH North Sumatera",         color: "#3B82F6" },
   { value: "ioh_central_sumatera", label: "IOH Central Sumatera",       color: "#F59E0B" },
@@ -240,7 +240,7 @@ function AccessCodesSection({ t, d, refreshTrigger }) {
   const [filterRole,   setFilterRole]   = useState("ALL");
   const [filterStatus, setFilterStatus] = useState("ALL");
   const [showAdd,      setShowAdd]      = useState(false);
-  const [form,         setForm]         = useState({ code: generateCode(), type: "finance_mpx", partner_name: "", is_active: true });
+  const [form,         setForm]         = useState({ code: generateCode(), type: "admin_partner_mdi", partner_name: "", is_active: true });
   const [saving,       setSaving]       = useState(false);
   const [confirm,      setConfirm]      = useState(null);
   const [copied,       setCopied]       = useState(null);
@@ -272,7 +272,7 @@ function AccessCodesSection({ t, d, refreshTrigger }) {
   const handleAdd = async () => {
     if (!form.code.trim()) { showToast("error", "Kode tidak boleh kosong"); return; }
     if (!form.type)        { showToast("error", "Role wajib dipilih"); return; }
-    if (form.type === "finance_mpx" && !form.partner_name) {
+    if (form.type === "admin_partner_mdi" && !form.partner_name) {
       showToast("error", "Partner wajib dipilih untuk District Admin"); return;
     }
 
@@ -294,7 +294,7 @@ function AccessCodesSection({ t, d, refreshTrigger }) {
     setSaving(false);
     if (error) { showToast("error", error.message); return; }
     showToast("success", `Kode ${form.code} berhasil ditambahkan`);
-    setForm({ code: generateCode(), type: "finance_mpx", partner_name: "", is_active: true });
+    setForm({ code: generateCode(), type: "admin_partner_mdi", partner_name: "", is_active: true });
     setShowAdd(false);
     load();
   };
@@ -370,7 +370,7 @@ function AccessCodesSection({ t, d, refreshTrigger }) {
         </SelectWrap>
 
         <button
-          onClick={() => { setShowAdd(s => !s); setForm({ code: generateCode(), type: "finance_mpx", partner_name: "", is_active: true }); }}
+          onClick={() => { setShowAdd(s => !s); setForm({ code: generateCode(), type: "admin_partner_mdi", partner_name: "", is_active: true }); }}
           style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 14px", height: 36, borderRadius: 9, border: `1px solid ${t.violetBd}`, background: t.violetBg, color: t.violet, cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: FONT, whiteSpace: "nowrap" }}
         >
           <Plus size={14} /> Tambah
@@ -407,7 +407,7 @@ function AccessCodesSection({ t, d, refreshTrigger }) {
                 </select>
               </SelectWrap>
             </div>
-            {form.type === "finance_mpx" && (
+            {form.type === "admin_partner_mdi" && (
               <div>
                 <FieldLabel t={t}>Partner</FieldLabel>
                 <SelectWrap t={t}>
@@ -545,7 +545,7 @@ function PartnerBranchesSection({ t, d, onBranchAdded, onChanged }) {
     const { data: existing } = await supabase
       .from("access_codes")
       .select("code")
-      .eq("type", "finance_mpx")
+      .eq("type", "admin_partner_mdi")
       .eq("partner_name", partnerName)
       .limit(1);
 
@@ -564,7 +564,7 @@ function PartnerBranchesSection({ t, d, onBranchAdded, onChanged }) {
 
     const { error } = await supabase.from("access_codes").insert({
       code,
-      type: "finance_mpx",
+      type: "admin_partner_mdi",
       partner_name: partnerName,
       is_active: true,
     });

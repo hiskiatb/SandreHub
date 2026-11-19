@@ -10,7 +10,7 @@
  *  3. User masukkan kode → supabase.auth.verifyOtp() membentuk sesi asli
  *     (auth.uid() valid, dipakai semua RLS yang sudah ada).
  *  4. Panggil RPC mf_dse_admin_mc_login_apply() — menyamakan profiles.role
- *     ('finance_mpx') & partner_name (= MC) dgn mapping, lalu redirect ke
+ *     ('admin_partner_mdi') & partner_name (= MC) dgn mapping, lalu redirect ke
  *     /dashboard (otomatis cuma lihat menu yg relevan utk Admin MC, termasuk
  *     "DSE Prod. & AR").
  */

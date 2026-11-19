@@ -8,7 +8,7 @@
 //
 // Mengumpulkan semua sumber yg sebelumnya cuma bisa dicek lewat SQL
 // manual saat debugging kasus nyata di percakapan ini (akun dual-role
-// adminpadang, kasus 19 akun finance_mpx tanpa mapping, dst):
+// adminpadang, kasus 19 akun admin_partner_mdi tanpa mapping, dst):
 //   - profiles            -> role utama, partner_name, region, dll
 //   - profile_extra_roles -> role tambahan (multi-role)
 //   - mf_dse_admin_mc_emails    + mf_dse_admin_mc_mapping   -> mapping MC asli
@@ -119,13 +119,13 @@ export default function RoleDebugLookup({ theme }) {
       // (akun berstatus admin_mc/admin_area tapi tanpa mapping asli).
       const flags = [];
       if ((profile.role === "admin_mc" || extraRoles.includes("admin_mc")) && !hasActiveMcMapping) {
-        flags.push("Role admin_mc terdaftar, tetapi TIDAK ditemukan mapping MC aktif (mf_dse_admin_mc_emails/mapping) untuk email ini — kemungkinan salah migrasi atau akun partner-scope (mirip 19 akun finance_mpx yang pernah ditemukan).");
+        flags.push("Role admin_mc terdaftar, tetapi TIDAK ditemukan mapping MC aktif (mf_dse_admin_mc_emails/mapping) untuk email ini — kemungkinan salah migrasi atau akun partner-scope (mirip 19 akun admin_partner_mdi yang pernah ditemukan).");
       }
       if ((profile.role === "admin_area" || extraRoles.includes("admin_area")) && !hasActiveAreaMapping) {
         flags.push("Role admin_area terdaftar, tetapi TIDAK ditemukan mapping Area aktif (mf_dse_admin_area_emails/mapping) untuk email ini.");
       }
-      if (profile.role === "finance_mpx" && (hasActiveMcMapping || hasActiveAreaMapping)) {
-        flags.push("Role masih finance_mpx tetapi ternyata PUNYA mapping MC/Area aktif — kandidat untuk dimigrasikan ke admin_mc/admin_area (perlu dicek manual).");
+      if (profile.role === "admin_partner_mdi" && (hasActiveMcMapping || hasActiveAreaMapping)) {
+        flags.push("Role masih admin_partner_mdi tetapi ternyata PUNYA mapping MC/Area aktif — kandidat untuk dimigrasikan ke admin_mc/admin_area (perlu dicek manual).");
       }
       if (extraRoles.length === 0 && profile.role && !["spm_sumatera", "internal_ioh"].includes(profile.role) && (mcMappings.length > 1 || areaMappings.length > 1)) {
         flags.push("Email ini terdaftar di lebih dari satu baris mapping — periksa apakah seharusnya punya role tambahan di profile_extra_roles.");

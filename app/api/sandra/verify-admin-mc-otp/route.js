@@ -15,7 +15,7 @@ function getSupabaseAdmin() {
 // POST /api/sandra/verify-admin-mc-otp
 //
 // Endpoint OTP-only, dipakai khusus utk LOGIN "Admin MC" (District Admin,
-// role finance_mpx) di /sandra/login-admin-mc - pola yang sama persis dgn
+// role admin_partner_mdi) di /sandra/login-admin-mc - pola yang sama persis dgn
 // /api/marta/verify-login-otp (lihat komentar di sana utk latar
 // belakangnya). BUKAN pengganti /api/verify-otp (itu tetap dipakai utk alur
 // REGISTRASI - membuat auth user + profile baru).

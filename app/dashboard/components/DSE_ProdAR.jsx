@@ -2,7 +2,7 @@
 /**
  * DSE_ProdAR.jsx — "DSE Prod. & AR"
  *
- * Tab utama "Input Harian": Admin District (role finance_mpx) langsung mengisi
+ * Tab utama "Input Harian": Admin District (role admin_partner_mdi) langsung mengisi
  * produksi harian (SP, Saldo, Voucher) + AR/piutang per Kode DSE miliknya —
  * SATU entry amount per DSE per hari. Nama DSE dan District juga bisa diedit
  * langsung dari sini (ditulis ke mf_dse_database).
@@ -1864,6 +1864,12 @@ function ArPiutangInput({ t, dseCode, dseCode3id, dseName, mc, branch, entryDate
   // inline per-item, bukan form terpisah).
   const [editItemOpen, setEditItemOpen] = useState(false);
   const [editItemTotal, setEditItemTotal] = useState(0);
+  // BARU (permintaan user - "tambahkan fitur untuk pengeditan tanggal
+  // transaksi yang sudah diinputnya"): dulu form edit item cuma bisa ubah
+  // Jumlah/Jatuh Tempo/Catatan, tanggal_transaksi (tanggal "Piutang Baru"
+  // diinput) cuma tampil read-only. Sekarang ikut bisa diedit, sama pola
+  // dgn editTanggal di form edit pembayaran (startEditPayment) di atas.
+  const [editItemTanggal, setEditItemTanggal] = useState("");
   const [editItemJatuhTempo, setEditItemJatuhTempo] = useState("");
   const [editItemCatatan, setEditItemCatatan] = useState("");
 
@@ -2147,18 +2153,19 @@ function ArPiutangInput({ t, dseCode, dseCode3id, dseName, mc, branch, entryDate
   // cuma bisa dibuat. Warn (bukan block keras) kalau total baru < yg sudah
   // dibayar - itu kondisi aneh (piutang jadi "lebih dari lunas") tapi bukan
   // error teknis, jadi tetap diizinkan dgn pesan jelas supaya user sadar.
-  const startEditItem = (item) => { setEditItemTotal(item.total); setEditItemJatuhTempo(item.jatuh_tempo || ""); setEditItemCatatan(item.catatan || ""); setEditItemOpen(true); setActionErr(""); };
+  const startEditItem = (item) => { setEditItemTotal(item.total); setEditItemTanggal(item.tanggal_transaksi || ""); setEditItemJatuhTempo(item.jatuh_tempo || ""); setEditItemCatatan(item.catatan || ""); setEditItemOpen(true); setActionErr(""); };
   const cancelEditItem = () => setEditItemOpen(false);
 
   const confirmEditItem = async (item) => {
     if (fRaw(editItemTotal) <= 0) { setActionErr("Jumlah piutang harus lebih dari 0."); return; }
+    if (!editItemTanggal) { setActionErr("Tanggal transaksi wajib diisi."); return; }
     if (!editItemJatuhTempo) { setActionErr("Jatuh tempo wajib diisi."); return; }
     if (!editItemCatatan.trim()) { setActionErr("Catatan wajib diisi."); return; }
     setActionErr("");
     setBusy(true);
     try {
       const patch = {
-        total: fRaw(editItemTotal), jatuh_tempo: editItemJatuhTempo, catatan: editItemCatatan.trim(),
+        total: fRaw(editItemTotal), tanggal_transaksi: editItemTanggal, jatuh_tempo: editItemJatuhTempo, catatan: editItemCatatan.trim(),
         updated_at: new Date().toISOString(),
       };
       const { data: updated, error } = await supabase.from(itemsTable).update(patch).eq("id", item.id).select(`*, ${paymentsTable}(*)`).single();
@@ -2888,8 +2895,13 @@ function ArPiutangInput({ t, dseCode, dseCode3id, dseName, mc, branch, entryDate
 
       {editItemOpen ? (
         <div style={{ padding: 12, borderRadius: 10, border: `1px solid ${t.teal}`, marginBottom: 12 }}>
-          <div style={labelStyle}>Jumlah Piutang</div>
-          <MoneyInput t={t} value={editItemTotal} onChange={setEditItemTotal} accent={t.red} prefix="Rp" />
+          <div style={labelStyle}>Tanggal Transaksi</div>
+          <input type="date" onClick={(ev) => { if (!ev.currentTarget.disabled) ev.currentTarget.showPicker?.(); }} value={editItemTanggal} onChange={(ev) => setEditItemTanggal(ev.target.value)}
+            style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12.5, fontWeight: 600, fontFamily: FONT, outline: "none", boxSizing: "border-box" }} />
+          <div style={{ marginTop: 8 }}>
+            <div style={labelStyle}>Jumlah Piutang</div>
+            <MoneyInput t={t} value={editItemTotal} onChange={setEditItemTotal} accent={t.red} prefix="Rp" />
+          </div>
           {fRaw(editItemTotal) < selectedItem.paid && (
             <div style={{ marginTop: 6, fontSize: 10.5, color: t.amber, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
               <AlertTriangle size={10} /> Jumlah baru lebih kecil dari yg sudah dibayar (Rp {fmtID(selectedItem.paid)}).
@@ -5384,7 +5396,7 @@ export const CATEGORY_OPTIONS = [
 ];
 
 // FIX AKSES (audit user - "pastikan 100persen tidak ada bug" utk District
-// Admin & Admin Area): District Admin (finance_mpx) cuma berwenang atas DSE
+// Admin & Admin Area): District Admin (admin_partner_mdi) cuma berwenang atas DSE
 // Prod & AR + DSO/DSP AR ("district admin adalah orang yang mengisi AR DSE
 // dan juga AR DSO/DSP"), Admin Area (admin_area) cuma berwenang atas HoA AR
 // ("admin area adalah orang yang bertugas untuk mengisi AR HoA"). RLS tabel
@@ -5406,13 +5418,22 @@ export const CATEGORY_OPTIONS = [
 export function getCategoryOptionsForRole(role) {
   // UPDATE (permintaan user - "ini hanya bisa dilihat oleh role spm
   // sumatera"): tab "Control Center" cuma utk spm_sumatera - role lain
-  // (admin_area/finance_mpx) difilter keluar di sini.
+  // (admin_area/admin_partner_mdi) difilter keluar di sini.
   if (role === "admin_area") return CATEGORY_OPTIONS.filter((o) => o.k !== "control-center"); // hoa (full) + dso (full) + dse (view-only)
   // MIGRASI ROLE: "admin_mc" (nilai baru) diperlakukan SAMA PERSIS dgn
-  // "finance_mpx" (nilai lama, transisi) di sini - KALAU LUPA ditambahkan,
+  // "admin_partner_mdi" (nilai lama, transisi) di sini - KALAU LUPA ditambahkan,
   // admin_mc akan jatuh ke cabang default di bawah (dse+dso+HOA), padahal
-  // harusnya TIDAK dapat tab "hoa" (sama seperti finance_mpx).
-  if (role === "finance_mpx" || role === "admin_mc") return CATEGORY_OPTIONS.filter((o) => o.k !== "hoa" && o.k !== "control-center");
+  // harusnya TIDAK dapat tab "hoa" (sama seperti admin_partner_mdi).
+  if (role === "admin_partner_mdi" || role === "finance_mpx" || role === "admin_mc") return CATEGORY_OPTIONS.filter((o) => o.k !== "hoa" && o.k !== "control-center");
+  // ROLE BARU (permintaan user - "Partner Level, Circle, Region Level...
+  // view levelnya akan berbeda, sesuai dengan levelnya"): 3 role baru ini
+  // CUMA dapat tab "dse" (Prod & AR, read-only - lihat dseEditLocked di
+  // komponen utama) - TIDAK dapat tab "dso"/"hoa" krn kedua tab itu
+  // konsepnya per-District/per-Area (bukan per-Partner/Circle/Region) &
+  // ArDsoHoaPanel selalu <ArPiutangInput readOnly={false}/> (akan gagal
+  // kena RLS kalau role read-only ini coba edit) - drpd expose tombol
+  // edit yg bakal error, tab ini disembunyikan saja utk role ini.
+  if (role === "admin_partner" || role === "admin_circle" || role === "admin_region") return CATEGORY_OPTIONS.filter((o) => o.k === "dse");
   if (role === "spm_sumatera") return CATEGORY_OPTIONS; // SPM Sumatera: semua kategori termasuk Control Center
   return CATEGORY_OPTIONS.filter((o) => o.k !== "control-center"); // role lain yg lolos gate di page.jsx: semua KECUALI Control Center
 }
@@ -5829,16 +5850,22 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
 
   const isSPM = hasRole(profile, "spm_sumatera");
   // MIGRASI ROLE (permintaan user - "pindahkan user admin mc, rolenya
-  // tidak lagi menggunakan finance_mpx, namun admin_mc"): selama masa
-  // transisi, "finance_mpx" (nilai lama) & "admin_mc" (nilai baru) DUA
+  // tidak lagi menggunakan admin_partner_mdi, namun admin_mc"): selama masa
+  // transisi, "admin_partner_mdi" (nilai lama) & "admin_mc" (nilai baru) DUA
   // DUANYA dianggap Admin MC - supaya akun yg belum/sudah dimigrasi di
   // DB sama2 tetap jalan tanpa ada jendela waktu kehilangan akses.
-  const isMPX = hasAnyRole(profile, ["finance_mpx", "admin_mc"]);
+  const isMPX = hasAnyRole(profile, ["admin_partner_mdi", "finance_mpx", "admin_mc"]);
   const isAdminArea = hasRole(profile, "admin_area");
+  // ROLE BARU (permintaan user - Partner Level/Circle/Region Level):
+  // read-only murni (cuma SELECT di RLS 9 tabel inti, lihat migration) -
+  // dipakai di bawah utk forceLock tab "dse" ke view-only, SAMA seperti
+  // Admin Area tapi TANPA exception "kalau ada role lain yg bisa edit"
+  // (role2 ini belum pernah dikombinasikan dgn role edit manapun).
+  const isAdminLevel = hasAnyRole(profile, ["admin_partner", "admin_circle", "admin_region"]);
   // Admin Area dipaksa view-only utk tab "dse" HANYA kalau dia TIDAK juga
-  // punya role lain yg berhak edit (finance_mpx/spm_sumatera) - "kalau
+  // punya role lain yg berhak edit (admin_partner_mdi/spm_sumatera) - "kalau
   // terdaftar di dua role, salah satunya bisa edit, maka dia bisa edit".
-  const dseEditLocked = isAdminArea && !isMPX && !isSPM;
+  const dseEditLocked = (isAdminArea && !isMPX && !isSPM) || isAdminLevel;
 
   // UPDATE (permintaan user - satu email Admin District sekarang bisa dipasang ke
   // lebih dari 1 District lewat mf_dse_admin_mc_mapping): dulu lockedMc cuma 1
@@ -5974,6 +6001,13 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   const [tab, setTab] = useState("input"); // input | ar | riwayat
   const dseInputMode = tab === "ar" ? "ar" : "sales"; // dipakai DseInputRow - lihat UPDATE di tabs array
   const [toast, setToast] = useState(null);
+  // UPDATE (permintaan user - "buat dia di dalam menu control center
+  // saja"): sub-tab Database DSE dipindah ke DALAM kategori "Control
+  // Center" (bukan lagi menu tersendiri di sidebar/overview - itu sudah
+  // dihapus di page.jsx). State ini pilih sub-tab aktif di dalam kategori
+  // control-center: "monitor" (DSE_ControlCenter, default) atau "database"
+  // (SDP_DseDatabase).
+  const [ccSubTab, setCcSubTab] = useState("monitor");
   const showToast = (msg, type = "ok") => setToast({ msg, type });
 
   // ── Tab "Input Harian" ────────────────────────────────────────────────────
@@ -6386,7 +6420,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // District(s) miliknya sendiri (myMcNames dari RPC mf_dse_admin_mc_my_mcs,
   // sudah diambil di atas) - bukan semua District se-Sumatera kayak SPM.
   useEffect(() => {
-    if (!isSPM && !isMPX && !isAdminArea) return;
+    if (!isSPM && !isMPX && !isAdminArea && !isAdminLevel) return;
     (async () => {
       if (isMPX && myMcNames.length === 0) { setDseMeta([]); return; }
       // FIX AKSES (audit user - Admin Area sebelumnya ga ke-handle sama
@@ -6398,10 +6432,14 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       let q = supabase.from("mf_dse_database").select("region, branch, mdi, mc, hoa_name").eq("is_revoked", false).not("mc", "is", null);
       if (isMPX) q = q.in("mc", myMcNames);
       if (isAdminArea) q = q.in("branch", myBranchNames);
+      // isAdminLevel (Partner/Circle/Region): TIDAK ada .in() tambahan di
+      // sini - RLS select policy mf_dse_admin_<role>_* yg sudah membatasi
+      // baris mf_dse_database yg kebaca, SAMA pola spt isSPM (unrestricted
+      // query, scoping murni di level DB).
       const { data } = await q;
       setDseMeta(data || []);
     })();
-  }, [isSPM, isMPX, isAdminArea, myMcNames, myBranchNames]);
+  }, [isSPM, isMPX, isAdminArea, isAdminLevel, myMcNames, myBranchNames]);
 
   // Urutan hierarki cascading: Partner -> Region -> Area -> District. Partner
   // DI ATAS Region (bukan di bawah) karena 1 Partner (mdi) bisa beroperasi
@@ -7056,21 +7094,38 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           const priorLatest = priorRows.reduce((max, r) => (!max || r.period > max ? r.period : max), null);
           const isLatestOrOnly = !priorLatest || period >= priorLatest;
           if (isLatestOrOnly) {
-            const livePayload = {};
-            if (periodPayload.ds_name !== (dse?.ds_name || null)) livePayload.ds_name = periodPayload.ds_name;
-            if (periodPayload.dse_status !== (dse?.dse_status || null)) livePayload.dse_status = periodPayload.dse_status;
-            if (periodPayload.join_date !== (dse?.join_date || null)) livePayload.join_date = periodPayload.join_date;
-            if (Object.keys(livePayload).length) {
-              const { error: eLive } = await supabase.from("mf_dse_database").update(livePayload).eq("dse_code", code);
-              if (eLive) throw eLive;
-              // UPDATE (status per tanggal): kalau status DSE ini ikut
-              // diubah, refresh index riwayat status (statusEvents) biar
-              // counting Active/Vacant di Ringkasan langsung akurat tanpa
-              // perlu reload halaman - trigger DB sudah nyatet baris
-              // history-nya duluan (synchronous, dalam transaksi UPDATE
-              // yg sama).
-              if (livePayload.dse_status !== undefined) loadStatusEvents();
-            }
+            // FIX (temuan user - "ketracking dengan baik kan kapan dia
+            // vacant kapan dia active di database?" -> ternyata TIDAK:
+            // livePayload DULU cuma diisi kalau field itu beda dari NILAI
+            // `dse` yg di-closure di awal handleSaveDse - kalau closure itu
+            // sendiri sudah basi (mis. 2 save beruntun dalam waktu
+            // berdekatan, atau dseList blm sempat refetch), perbandingan
+            // bisa "ketipu" nganggep ga ada perubahan padahal kolom live
+            // sebenarnya BEDA dari snapshot period yg baru disimpan ->
+            // kolom live nyangkut status lama SELAMANYA tanpa ada tanda
+            // apa pun (persis kasus ACEHBESA2102: snapshot period sudah
+            // "Active", kolom live nyangkut "Vacant"). Sekarang SELALU
+            // tulis ulang ds_name/dse_status/join_date ke mf_dse_database
+            // persis sama dgn periodPayload tiap kali ini period
+            // terbaru/satu2nya - independen dari nilai `dse` yg di-closure,
+            // supaya kolom live dijamin 100% konsisten dgn snapshot period
+            // terbaru setiap kali simpan (trigger history pun jadi selalu
+            // ikut nyatet tiap transisi status, ga ada lagi yg "bolong").
+            const livePayload = {
+              ds_name: periodPayload.ds_name,
+              dse_status: periodPayload.dse_status,
+              join_date: periodPayload.join_date,
+            };
+            const { error: eLive } = await supabase.from("mf_dse_database").update(livePayload).eq("dse_code", code);
+            if (eLive) throw eLive;
+            // UPDATE (status per tanggal): refresh index riwayat status
+            // (statusEvents) biar counting Active/Vacant di Ringkasan
+            // langsung akurat tanpa perlu reload halaman - trigger DB
+            // sudah nyatet baris history-nya duluan (synchronous, dalam
+            // transaksi UPDATE yg sama). Dipanggil tiap kali (bukan cuma
+            // kalau status berubah) krn sekarang livePayload SELALU
+            // ditulis - murah & aman dipanggil berulang.
+            loadStatusEvents();
           }
           setInfoPeriodsByDse((prev) => {
             const rows = (prev[code] || []).filter((r) => r.period !== period);
@@ -7452,7 +7507,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // utk sekarang summary-nya cuma per District yg sedang dipilih di filter atas.
   const mcSummary = useMemo(() => {
     let totalActive = 0, totalVacant = 0, totalInterview = 0;
-    let qtySp = 0, nilaiSp = 0, nilaiFwa = 0, qtyVoucher = 0, nilaiVoucher = 0, nilaiSaldo = 0, tunggakan = 0, totalDibayar = 0;
+    let qtySp = 0, nilaiSp = 0, nilaiFwa = 0, qtyVoucher = 0, nilaiVoucher = 0, nilaiSaldo = 0, totalPiutangRaw = 0, totalDibayar = 0;
     for (const x of columnFilteredDse) {
       const dse = x.r;
       const liveStatus = identity[dse.dse_code]?.dse_status ?? dse.dse_status ?? "";
@@ -7469,23 +7524,38 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
         qtySp += fRaw(e.qty_sp); nilaiSp += fRaw(e.nilai_sp); nilaiFwa += fRaw(e.nilai_fwa);
         qtyVoucher += fRaw(e.qty_voucher); nilaiVoucher += fRaw(e.nilai_voucher);
         nilaiSaldo += fRaw(e.nilai_saldo);
-        tunggakan += fRaw(e.ar_piutang);
-        totalDibayar += fRaw(e.ar_bayar);
+      }
+      // FIX BUG (laporan admin - "sudah melunaskan lebih dari 1 juta, tp
+      // di hitungan total/sisa/piutang tidak sama"): Total Piutang/Total
+      // Dibayar/Sisa Piutang di kartu Ringkasan ini dulu dihitung dari
+      // `entries[dse].ar_piutang`/`.ar_bayar` - cache KOLOM HARIAN di
+      // mf_dse_prod_ar, cuma ke-update kalau ADMIN NGETIK ULANG nilainya
+      // di tab Input Harian. Sejak AR dipindah jadi per-transaksi
+      // (ar_piutang_items + ar_piutang_payments, lihat `arItemsAgg` di
+      // atas - SUMBER yg SAMA dipakai tabel baris per-DSE di bawah),
+      // pembayaran lewat popup "Edit AR" TIDAK menyentuh kolom cache lama
+      // itu lagi - makanya kartu Ringkasan ini keliatan "nyangkut" di
+      // angka lama padahal baris tabelnya sendiri sudah benar/ter-update.
+      // Diganti baca `arItemsAgg` (live, SAMA PERSIS sumber yg dipakai
+      // kolom Total Piutang/Total Dibayar/Sisa Piutang di tabel) supaya
+      // kartu Ringkasan & tabel selalu sinkron.
+      const agg = arItemsAgg[dse.dse_code];
+      if (agg) {
+        totalPiutangRaw += agg.totalPiutang;
+        totalDibayar += agg.totalDibayar;
       }
     }
+    const tunggakan = totalPiutangRaw - totalDibayar;
     // UPDATE (permintaan user - "Total Piutang | Total Dibayar | Sisa
     // Piutang, cardnya seperti ini juga"): StatTiles tab AR sekarang
     // menambahkan Total Piutang & Total Dibayar di samping Sisa Piutang
     // (tunggakan) yg sudah ada, pakai label/urutan sama persis dgn kolom
-    // tabel yg baru (Total Piutang, Total Dibayar, Sisa Piutang). Dihitung
-    // dari cache mf_dse_prod_ar yg SAMA dgn yg sudah dipakai `tunggakan`
-    // (entries[dse].ar_piutang = sisa, ar_bayar = dibayar HARI INI) - bukan
-    // query baru ke ar_piutang_items per-DSE (terlalu berat utk summary
-    // page-level) - totalPiutang = sisa + dibayar (identitas akuntansi
-    // harian: piutang hari ini = sisa yg belum dibayar + yg sudah dibayar).
-    const totalPiutang = tunggakan + totalDibayar;
+    // tabel yg baru (Total Piutang, Total Dibayar, Sisa Piutang). Sumbernya
+    // `arItemsAgg` (lihat FIX BUG di atas) - sama persis dgn yg dipakai
+    // kolom tabel, bukan lagi cache harian mf_dse_prod_ar.
+    const totalPiutang = totalPiutangRaw;
     return { totalAlokasi: columnFilteredDse.length, totalActive, totalVacant, totalInterview, qtySp, nilaiSp, nilaiFwa, qtyVoucher, nilaiVoucher, nilaiSaldo, tunggakan, totalDibayar, totalPiutang, totalPenjualan: nilaiSp + nilaiFwa + nilaiVoucher + nilaiSaldo };
-  }, [columnFilteredDse, identity, entries, periodMode, entryDate, statusEvents]);
+  }, [columnFilteredDse, identity, entries, periodMode, entryDate, statusEvents, arItemsAgg]);
 
   // UPDATE (permintaan user - "harusnya angkanya saja yang loading namun
   // summary card placeholdernya selalu ada"): shell kartu Ringkasan (ikon,
@@ -8049,7 +8119,26 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
         {!isSPM ? (
           <div style={{ padding: 40, textAlign: "center", color: t.mid, fontSize: 13 }}>Fitur ini khusus untuk role SPM Sumatera.</div>
         ) : (
-          <DSE_ControlCenter theme={theme} profile={profile} />
+          <>
+            {/* UPDATE (permintaan user - "buat dia di dalam menu control
+                center saja"): toggle sub-tab Monitoring / Database DSE,
+                di atas konten kategori Control Center. */}
+            <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+              <button onClick={() => setCcSubTab("monitor")}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 9, border: `1px solid ${ccSubTab === "monitor" ? t.blue : t.inputBd}`, background: ccSubTab === "monitor" ? t.blueBg : t.inputBg, color: ccSubTab === "monitor" ? t.blue : t.mid, fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: FONT }}>
+                <Layers size={14} /> Monitoring
+              </button>
+              <button onClick={() => setCcSubTab("database")}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 9, border: `1px solid ${ccSubTab === "database" ? t.blue : t.inputBd}`, background: ccSubTab === "database" ? t.blueBg : t.inputBg, color: ccSubTab === "database" ? t.blue : t.mid, fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: FONT }}>
+                <Database size={14} /> Database DSE
+              </button>
+            </div>
+            {ccSubTab === "database" ? (
+              <SDP_DseDatabase theme={theme} profile={profile} />
+            ) : (
+              <DSE_ControlCenter theme={theme} profile={profile} />
+            )}
+          </>
         )}
       </div>
     );

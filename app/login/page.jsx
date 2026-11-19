@@ -73,6 +73,24 @@ const WESKAHUB = {
   accent:   "#E8488E",
 };
 
+// FITRA (Fiber Sumatera) - mockup base-health churn utk bahan presentasi,
+// standalone di /fitra-preview, TIDAK butuh login (bukan bagian SandraHub).
+// Bukan FitraHub (Finance Sumatera Hub) di /fitra - sengaja pinjam logo
+// "fitra" yang sama (variant="fitra" di HubLogo) sesuai permintaan, cuma
+// beda tujuan.
+const FITRA_BASEHEALTH = {
+  id:       "fitra-basehealth",
+  variant:  "fitra",
+  name:     "FITRA",
+  desc:     "Fiber Sumatera Base Health",
+  sub:      "Churn & retention tracking FTTH",
+  path:     "/fitra-preview",
+  gradient: "linear-gradient(135deg,#ED1C24 0%,#C2187C 100%)",
+  border:   "rgba(237,28,36,0.35)",
+  glow:     "rgba(237,28,36,0.12)",
+  accent:   "#ED1C24",
+};
+
 export default function HubPickerPage() {
   const router     = useRouter();
   const [d, setD]  = useState(false);
@@ -125,6 +143,10 @@ export default function HubPickerPage() {
   const openWeskaHub = () => {
     localStorage.setItem("hub-choice", WESKAHUB.id);
     router.push(WESKAHUB.path);
+  };
+
+  const openFitraBaseHealth = () => {
+    router.push(FITRA_BASEHEALTH.path);
   };
 
   return (
@@ -389,6 +411,42 @@ export default function HubPickerPage() {
                         transition: "background 0.18s",
                       }}>
                         <ChevronRight size={14} color={hover === WESKAHUB.id ? "#fff" : t.mid} strokeWidth={2.5} />
+                      </div>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={openFitraBaseHealth}
+                    onMouseEnter={() => setHover(FITRA_BASEHEALTH.id)}
+                    onMouseLeave={() => setHover(null)}
+                    style={{
+                      width: "100%", border: "none", background: "none",
+                      padding: 0, cursor: "pointer", textAlign: "left", marginTop: 10,
+                    }}
+                  >
+                    <div style={{
+                      display: "flex", alignItems: "center", gap: 12,
+                      padding: "12px 14px", borderRadius: 12,
+                      border: `1.5px solid ${hover === FITRA_BASEHEALTH.id ? FITRA_BASEHEALTH.border : t.line}`,
+                      background: d ? "#0A0A0B" : "#F8F8FA",
+                      transition: "border-color 0.18s",
+                    }}>
+                      <HubLogo variant={FITRA_BASEHEALTH.variant} size={32} dark={d} shadow={false} inBox />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13.5, fontWeight: 800, color: t.hi }}>
+                          {FITRA_BASEHEALTH.name}
+                        </div>
+                        <div style={{ fontSize: 11.5, color: t.mid }}>
+                          {FITRA_BASEHEALTH.sub}
+                        </div>
+                      </div>
+                      <div style={{
+                        width: 28, height: 28, borderRadius: 8, flexShrink: 0,
+                        background: hover === FITRA_BASEHEALTH.id ? FITRA_BASEHEALTH.gradient : t.lo + "33",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        transition: "background 0.18s",
+                      }}>
+                        <ChevronRight size={14} color={hover === FITRA_BASEHEALTH.id ? "#fff" : t.mid} strokeWidth={2.5} />
                       </div>
                     </div>
                   </button>

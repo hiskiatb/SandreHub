@@ -72,7 +72,7 @@
  * Kelola daftar email Admin MC yang boleh login via OTP (tanpa password) dan
  * MC mana saja yang terpasang ke email itu. Dipakai oleh:
  *  - mf_dse_admin_mc_lookup (cek saat login — balikin SEMUA mc aktif)
- *  - mf_dse_admin_mc_login_apply (menerapkan role finance_mpx + partner_name
+ *  - mf_dse_admin_mc_login_apply (menerapkan role admin_partner_mdi + partner_name
  *    gabungan ke profil setelah OTP berhasil)
  *  - mf_dse_admin_mc_has_access (dipakai RLS utk cek akses per-MC)
  *
