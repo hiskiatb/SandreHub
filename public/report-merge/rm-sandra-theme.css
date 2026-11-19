@@ -1,0 +1,52 @@
+/*
+ * rm-sandra-theme.css — menyamakan tampilan Report Merge (index.html & home.html)
+ * dengan tema dashboard SandraHub: font DM Sans dan warna permukaan yang sama
+ * dengan token `tk()` di app/dashboard/page.jsx. Mode gelap/terang mengikuti
+ * dashboard (ReportMerge_Module menyalin `hub-theme` ke `rm-theme`), jadi tombol
+ * tema di dalam halaman disembunyikan. Hanya CSS: logika halaman tidak berubah.
+ * Dimuat SETELAH <style> halaman supaya token di bawah yang dipakai.
+ */
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap');
+
+:root, [data-theme="dark"] {
+  --font-brand: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'SF Pro Text', Roboto, system-ui, sans-serif;
+  --bg: #0D0D0E;
+  --surf: #161618;
+  --surf2: #1A1A1D;
+  --surf3: #202024;
+  --ink: #F2F2F3;
+  --ink2: #C9C9D1;
+  --muted: #8A8A96;
+  --line: #2A2A2F;
+  --line2: #34343A;
+  --shadow1: 0 1px 2px rgba(0, 0, 0, .55);
+  --shadow2: 0 6px 18px rgba(0, 0, 0, .50);
+  --radius-sm: 8px; --radius: 10px; --radius-lg: 14px;
+}
+[data-theme="light"] {
+  --bg: #F5F5F6;
+  --surf: #FFFFFF;
+  --surf2: #F0F0F2;
+  --surf3: #E8E8EC;
+  --ink: #1A1A1D;
+  --ink2: #3A3A42;
+  --muted: #5A5A68;
+  --line: #E2E2E6;
+  --line2: #D4D4DA;
+  --shadow1: 0 1px 2px rgba(26, 26, 29, .06);
+  --shadow2: 0 6px 18px rgba(26, 26, 29, .09);
+}
+
+body { font-family: var(--font-brand) !important; letter-spacing: -0.005em; }
+h1, h2, h3, .display { letter-spacing: -0.015em; }
+
+/* Motif lingkaran besar di latar diganti latar polos seperti dashboard. */
+.brand-bg { display: none !important; }
+
+/* Tema diatur dari dashboard SandraHub. */
+#themeToggle { display: none !important; }
+
+/* Kartu & panel: sudut, garis, dan bayangan seperti kartu dashboard. */
+.panel { border-radius: var(--radius-lg) !important; box-shadow: var(--shadow1) !important; }
+.topbar, .steprail { background: var(--surf) !important; }
+.btn { border-radius: var(--radius-sm) !important; }
