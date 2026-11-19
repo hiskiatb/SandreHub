@@ -1,5 +1,6 @@
 import { Geist, Geist_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
+import Script from "next/script";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -58,20 +59,24 @@ export default function RootLayout({ children }) {
     >
       <head>
         {/* Sync theme before React hydrates — eliminates dark flash.
-            <script> HTML NATIVE (bukan next/script) - lihat catatan di
-            atas kenapa next/script strategy="beforeInteractive" dilepas. */}
-        <script
-          id="theme-init"
-          suppressHydrationWarning
-          dangerouslySetInnerHTML={{
-            __html: `
+            FIX (console error Next.js 16 - "Encountered a script tag while
+            rendering React component. Scripts inside React components are
+            never executed when rendering on the client."): sebelumnya
+            sempat dipakai <script> HTML native (bukan next/script) krn
+            alasan lama yg sudah tidak tercatat jelas - tapi di Next.js 16
+            ini JUSTRU yg menyebabkan error di atas, karena <script> JSX
+            biasa (bukan komponen next/script) sekarang ditangkap sbg error
+            saat proses render. next/script dgn strategy="beforeInteractive"
+            adalah cara resmi Next.js utk kasus "script HARUS jalan sebelum
+            hydrate" ini (anti dark-flash) - dan TIDAK kena warning/error
+            tsb krn next/script punya penanganan khusus di luar render tree
+            biasa. */}
+        <Script id="theme-init" strategy="beforeInteractive">{`
 try {
   var t = localStorage.getItem('hub-theme') || localStorage.getItem('sh-theme');
   if (t) document.documentElement.setAttribute('data-theme', t);
 } catch(e) {}
-            `,
-          }}
-        />
+        `}</Script>
       </head>
       <body className="min-h-full flex flex-col">
         {children}

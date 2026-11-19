@@ -23,8 +23,51 @@ export const toMonthInt = (m) => {
 export const toYearInt = (y) => { const n = parseInt(y, 10); return Number.isFinite(n) ? n : null; };
 export const monthLabel = (m) => { const i = toMonthInt(m); return i ? MONTHS_ID[i - 1] : String(m ?? ""); };
 
-export const numOrZero = (v) => { const n = Number(String(v ?? "").replace(/[^0-9.-]/g, "")); return Number.isFinite(n) ? n : 0; };
-export const fmtIDR = (n) => { const v = numOrZero(n); return (v < 0 ? "-Rp " : "Rp ") + Math.abs(v).toLocaleString("id-ID"); };
+// FIX (bug nyata dilaporkan user - kotak input "SLA Fee" nongol
+// "25.328.920.336.056" padahal nilai aslinya cuma ~253 juta, & "Total
+// Data Provided" nongol "Rp 317.539.239,698" dgn 3 digit desimal yg
+// bikin rancu titik/koma): numOrZero versi lama cuma `Number(String(v)
+// .replace(/[^0-9.-]/g,""))` - kalau v itu angka float ASLI dari DB
+// (mis. 253289203.36056, hasil sisa residu float dari upload/hitungan
+// lama), String()-nya jadi "253289203.36056" lalu toSep() di bawah
+// MEMBUANG titik desimal itu juga (krn toSep cuma kenal \D = non-digit)
+// sehingga semua digit (integer+desimal) NYAMBUNG jadi satu angka raksasa
+// yg salah total (25 TRILIUN, bukan 253 JUTA). Rupiah di sistem ini
+// SELALU bilangan bulat (tidak ada sen) - jadi fix-nya: numOrZero WAJIB
+// membulatkan ke integer di titik ini juga (bukan cuma pas user ngetik
+// manual di NumInput), supaya nilai yg sampai ke toSep/fmtIDR SELALU
+// sudah bulat, apapun sumbernya (DB lama, hasil Bulk Upload Excel, atau
+// ketikan manual). Kalau v berupa STRING (bukan number JS asli - mis.
+// dari sel Excel atau ketikan user yg masih ada pemisah), baru pakai
+// konvensi sistem ini: "." = pemisah ribuan, "," = pemisah desimal
+// (SAMA PERSIS spt toLocaleString("id-ID") di fmtIDR & toSep di bawah),
+// supaya "25.328.920.336,056" dibaca sbg ~25,3 miliar (titik2 dibuang
+// sbg ribuan, koma TERAKHIR jadi titik desimal asli) - bukan kebaca 14
+// digit nyambung jadi 25,3 triliun.
+export const numOrZero = (v) => {
+  if (typeof v === "number") return Number.isFinite(v) ? Math.round(v) : 0;
+  let s = String(v ?? "").trim();
+  if (!s) return 0;
+  const neg = /^-/.test(s);
+  s = s.replace(/[^0-9.,]/g, "");
+  if (!s) return 0;
+  const lastComma = s.lastIndexOf(",");
+  let intStr, fracStr = "";
+  if (lastComma !== -1) {
+    intStr = s.slice(0, lastComma).replace(/[.,]/g, "");
+    fracStr = s.slice(lastComma + 1).replace(/[^0-9]/g, "");
+  } else {
+    intStr = s.replace(/\./g, "");
+  }
+  const n = Number(intStr + (fracStr ? "." + fracStr : ""));
+  if (!Number.isFinite(n)) return 0;
+  return neg ? -Math.round(Math.abs(n)) : Math.round(n);
+};
+// maximumFractionDigits:0 eksplisit (bukan cuma andalkan numOrZero sudah
+// bulat) - jaga2 supaya "Rp ...,xxx" dgn desimal yg bikin rancu titik/
+// koma TIDAK PERNAH nongol lagi di tampilan manapun, titik "." di sini
+// SELALU berarti pemisah ribuan, tidak pernah desimal.
+export const fmtIDR = (n) => { const v = numOrZero(n); return (v < 0 ? "-Rp " : "Rp ") + Math.abs(v).toLocaleString("id-ID", { maximumFractionDigits: 0 }); };
 export const fmtPct = (v) => (!Number.isFinite(v) || !v) ? "—" : `${v.toFixed(1).replace(".", ",")}%`;
 const toSep = (v) => { const s = String(v ?? "").replace(/\D/g, ""); return s === "" ? "" : s.replace(/\B(?=(\d{3})+(?!\d))/g, "."); };
 
@@ -89,8 +132,8 @@ export const SecLabel = ({ children, t, right }) => (
     {right}
   </div>
 );
-export const TH = ({ children, t, align = "left", width }) => (
-  <th style={{ padding:'7px 8px', width, textAlign:align, fontSize:10, fontWeight:700, letterSpacing:'0.08em', textTransform:'uppercase', color:t.lo }}>{children}</th>
+export const TH = ({ children, t, align = "left", width, color }) => (
+  <th style={{ padding:'7px 8px', width, textAlign:align, fontSize:10, fontWeight:700, letterSpacing:'0.08em', textTransform:'uppercase', color: color || t.lo }}>{children}</th>
 );
 
 export function FormHeader({ icon: Icon, title, activeContext, readOnly, t }) {
@@ -135,7 +178,11 @@ export function SecHero({ icon: Icon, eyebrow, title, t, children }) {
       <div style={{ display:'flex', alignItems:'center', gap:14 }}>
         <div style={{ width:38, height:38, borderRadius:9, flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', background:GRAD, color:'#fff' }}><Icon size={18} /></div>
         <div style={{ flex:1, minWidth:0 }}>
-          <div style={{ fontSize:10, fontWeight:700, letterSpacing:'0.10em', textTransform:'uppercase', color:t.blue, marginBottom:3 }}>{eyebrow}</div>
+          {/* FIX (permintaan user - "tidak perlu ada diisi oleh.."): baris label
+              ini cuma dirender kalau eyebrow diisi (bukan selalu tampil
+              kosong) - pemanggil yg tidak mau nampilin label ini tinggal
+              tidak pass prop eyebrow sama sekali. */}
+          {eyebrow && <div style={{ fontSize:10, fontWeight:700, letterSpacing:'0.10em', textTransform:'uppercase', color:t.blue, marginBottom:3 }}>{eyebrow}</div>}
           <div style={{ fontSize:17, fontWeight:800, letterSpacing:'-0.03em', color:t.hi, lineHeight:1.2 }}>{title}</div>
         </div>
         {children}

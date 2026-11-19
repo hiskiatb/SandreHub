@@ -48,34 +48,73 @@ const THead = ({ t }) => (
   </thead>
 );
 
-export default function PNL_SummaryV2({ theme, activeContext }) {
+// Gabung banyak baris pnl_reports_v2 jadi 1 "baris semu" dgn menjumlah
+// semua kolom numerik yg dipakai summarizePendapatan/summarizePengeluaran
+// - dipakai utk mode "ALL" (akumulasi semua partner/area yg match filter
+// di atas) sesuai permintaan user: "secara default dia akan all dulu,
+// akumulasi dari semua sumatera semua partner dan semua area".
+function mergeRows(rows) {
+  if (!rows || rows.length === 0) return null;
+  if (rows.length === 1) return rows[0];
+  const merged = { luar_template_amount: 0, pengeluaran_data: {} };
+  MARGIN_ROWS.forEach((r) => { merged[`margin_${r.id}`] = 0; merged[`margin_${r.id}_3id`] = 0; });
+  DATA_PROVIDED_ROWS.forEach((r) => { merged[r.id] = 0; });
+  const notes = [];
+  rows.forEach((row) => {
+    MARGIN_ROWS.forEach((r) => {
+      merged[`margin_${r.id}`] += numOrZero(row?.[`margin_${r.id}`]);
+      merged[`margin_${r.id}_3id`] += numOrZero(row?.[`margin_${r.id}_3id`]);
+    });
+    DATA_PROVIDED_ROWS.forEach((r) => { merged[r.id] += numOrZero(row?.[r.id]); });
+    merged.luar_template_amount += numOrZero(row?.luar_template_amount);
+    if (row?.luar_template_note) notes.push(`${row.partner_name || ""}/${row.branch || ""}: ${row.luar_template_note}`);
+    const peng = row?.pengeluaran_data || {};
+    PENGELUARAN_CATALOG.forEach((it) => {
+      const prev = numOrZero(merged.pengeluaran_data[it.id]?.total);
+      merged.pengeluaran_data[it.id] = { total: prev + numOrZero(peng[it.id]?.total) };
+    });
+  });
+  merged.luar_template_note = notes.join(" | ");
+  return merged;
+}
+
+export default function PNL_SummaryV2({ theme, activeContext, partnerScope }) {
   const d = theme === "dark";
   const t = useMemo(() => mk(d), [d]);
   const ctxKey = ctxKeyOf(activeContext);
-  const [loaded, setLoaded] = useState({ key: null, row: null });
-  const loading = !!ctxKey && loaded.key !== ctxKey;
-  const row = loaded.key === ctxKey ? loaded.row : null;
+  // BARU: kalau filter belum lengkap (partner/branch belum dipilih),
+  // jangan block dgn PnlPickerPrompt - langsung tampilkan akumulasi
+  // "ALL" sesuai filter Region/Partner/Cabang yg sudah dipilih di atas.
+  const isAggregate = !ctxKey;
+  const aggKey = useMemo(() => JSON.stringify({
+    p: activeContext?.mpxName || "", b: activeContext?.branch || "",
+    ty: activeContext?.mpxType || "", m: toMonthInt(activeContext?.month), y: toYearInt(activeContext?.year),
+    scope: isAggregate ? (partnerScope || []) : [],
+  }), [activeContext?.mpxName, activeContext?.branch, activeContext?.mpxType, activeContext?.month, activeContext?.year, isAggregate, partnerScope]);
+  const [loaded, setLoaded] = useState({ key: null, row: null, count: 0 });
+  const loading = loaded.key !== aggKey;
+  const row = loaded.key === aggKey ? loaded.row : null;
+  const rowCount = loaded.key === aggKey ? loaded.count : 0;
 
   useEffect(() => {
-    if (!ctxKey) return;
     let cancelled = false;
     (async () => {
-      const { data, error } = await supabase
-        .from("pnl_reports_v2")
-        .select("*")
-        .eq("partner_name", activeContext.mpxName)
-        .eq("branch", activeContext.branch)
-        .eq("mpc_mp3", activeContext.mpxType || "")
-        .eq("month", toMonthInt(activeContext.month))
-        .eq("year", toYearInt(activeContext.year))
-        .maybeSingle();
+      let query = supabase.from("pnl_reports_v2").select("*")
+        .eq("month", toMonthInt(activeContext?.month))
+        .eq("year", toYearInt(activeContext?.year));
+      if (activeContext?.mpxName) query = query.eq("partner_name", activeContext.mpxName);
+      else if (partnerScope && partnerScope.length > 0) query = query.in("partner_name", partnerScope);
+      if (activeContext?.branch) {
+        query = query.eq("branch", activeContext.branch).eq("mpc_mp3", activeContext.mpxType || "");
+      }
+      const { data, error } = await query;
       if (cancelled) return;
       if (error) console.error("[PNL_SummaryV2] gagal load:", error.message);
-      setLoaded({ key: ctxKey, row: data || null });
+      setLoaded({ key: aggKey, row: mergeRows(data || []), count: (data || []).length });
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ctxKey]);
+  }, [aggKey]);
 
   const inc = useMemo(() => summarizePendapatan(row), [row]);
   const exp = useMemo(() => summarizePengeluaran(row?.pengeluaran_data), [row]);
@@ -85,13 +124,25 @@ export default function PNL_SummaryV2({ theme, activeContext }) {
   const itemTotal = (id) => numOrZero(peng[id]?.total);
   const stepItems = (step, group) => PENGELUARAN_CATALOG.filter((it) => it.step === step && !it.qtyOnly && (!group || it.salesGroup === group));
 
+  // Label header utk mode akumulasi "ALL" - ga ubah FormHeader bareng
+  // (dipakai komponen lain), cukup override activeContext yg dikirim.
+  const headerContext = isAggregate
+    ? { ...activeContext, mpxName: activeContext?.mpxName || "Semua Partner", branch: activeContext?.branch || "Semua Area" }
+    : activeContext;
+
   return (
     <div style={{ width: "100%", margin: "0 auto", fontFamily: FONT, WebkitFontSmoothing: "antialiased", color: t.hi }}>
       <V2Styles d={d} t={t} />
-      <FormHeader icon={LayoutGrid} title="Summary P&L" activeContext={activeContext} t={t} />
+      <FormHeader icon={LayoutGrid} title="Summary P&L" activeContext={headerContext} t={t} />
 
       {loading ? <LoadingBlock label="Memuat Summary V2..." t={t} /> : (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {isAggregate && (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 9, padding: "12px 16px", borderRadius: 10, border: `1px solid ${t.line}`, background: t.sub, color: t.mid, fontSize: 12, fontWeight: 600 }}>
+              <Info size={14} style={{ flexShrink: 0, marginTop: 1, color: t.blue }} />
+              <span>Akumulasi dari {rowCount} laporan{!activeContext?.mpxName ? " (semua partner)" : ""}{!activeContext?.branch ? " (semua area)" : ""} sesuai filter Region/Partner/Cabang di atas. Pilih Partner &amp; Cabang di atas utk melihat 1 laporan spesifik.</span>
+            </div>
+          )}
           {!row && (
             <div style={{ display: "flex", alignItems: "flex-start", gap: 9, padding: "12px 16px", borderRadius: 10, border: `1px solid ${t.amberBd}`, background: t.amberBg, color: t.amber, fontSize: 12, fontWeight: 600 }}>
               <Info size={14} style={{ flexShrink: 0, marginTop: 1 }} />

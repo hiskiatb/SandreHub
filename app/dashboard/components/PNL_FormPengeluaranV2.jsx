@@ -52,10 +52,11 @@ export const PENGELUARAN_CATALOG = [
   { id: "perjalanan_dinas",    step: "SDM",  kategori: "HR Cost Non Sales",     item: "Perjalanan Dinas", salesGroup: "non_sales" },
   { id: "training",            step: "SDM",  kategori: "HR Cost Non Sales",     item: "Training", salesGroup: "non_sales" },
 
-  { id: "mkt_wholeseller",     step: "MARKETING COST", kategori: "Marketing Cost", item: "Program Wholeseller",
-    info: "TRADE SUPPLY, SP SELLIN, ACQ REV DATA & RGU GA", qtyOnly: true },
-  { id: "mkt_retail",          step: "MARKETING COST", kategori: "Marketing Cost", item: "Program Retail",
-    info: "25% * 3%", qtyOnly: true },
+  // Permintaan user ("tidak perlu ada subtitle, cukup qty dan amount
+  // juga utk wholeseller dan retail"): subtitle info dihapus & qtyOnly
+  // dicabut - sekarang 2 item ini isi Qty + Total (Rp) spt item lain.
+  { id: "mkt_wholeseller",     step: "MARKETING COST", kategori: "Marketing Cost", item: "Program Wholeseller" },
+  { id: "mkt_retail",          step: "MARKETING COST", kategori: "Marketing Cost", item: "Program Retail" },
   { id: "mkt_event",           step: "MARKETING COST", kategori: "Marketing Cost", item: "Program Event" },
   { id: "mkt_lain_total",      step: "MARKETING COST", kategori: "Marketing Cost", item: "Mkt Lain (Total)" },
 
@@ -142,6 +143,11 @@ export default function PNL_FormPengeluaranV2({ theme, profile, activeContext, c
   const t = useMemo(() => mk(d), [d]);
   const editable = !!canEdit && !readOnly;
   const partnerName = activeContext?.mpxName || "";
+  // Permintaan user ("saat pilih mc disuruh pilih area lagi, harusnya
+  // menyesuaikan filter area yang dipilih di atas"): Area/Cabang yg lagi
+  // aktif di filter atas halaman, dioper ke PNL_DepoManager biar Depo yg
+  // masih kosong otomatis ngikut Area itu - ga perlu nanya Area lagi.
+  const contextBranch = activeContext?.branch || "";
   const monthInt = toMonthInt(activeContext?.month);
   const yearInt = toYearInt(activeContext?.year);
   const periodReady = !!(partnerName && monthInt && yearInt);
@@ -200,15 +206,48 @@ export default function PNL_FormPengeluaranV2({ theme, profile, activeContext, c
   // pertama. Diturunkan (useMemo), BUKAN disinkronkan via effect+setState,
   // supaya tidak kena larangan "set-state-in-effect".
   const [selectedDepoIdRaw, setSelectedDepoId] = useState("");
+  const [selectedBranchRaw, setSelectedBranch] = useState("");
   const [selectedMcRaw, setSelectedMc] = useState("");
   const selectedDepoId = useMemo(
     () => (selectedDepoIdRaw && depos.some((dp) => dp.id === selectedDepoIdRaw)) ? selectedDepoIdRaw : (depos[0]?.id || ""),
     [selectedDepoIdRaw, depos],
   );
-  const selectedMc = useMemo(
-    () => (selectedMcRaw && mcList.some((m) => m.mc === selectedMcRaw)) ? selectedMcRaw : (mcList[0]?.mc || ""),
-    [selectedMcRaw, mcList],
+
+  // Permintaan user ("harusnya ada pilih area dulu ... jadi ga semua mc
+  // tampil"): District (MC) langkah Marketing Cost & Cost of Money
+  // difilter 2-tingkat - pilih Area (branch) dulu, baru District (mc)
+  // yg ditampilkan cuma yg ada di Area itu.
+  const branchOptions = useMemo(() => {
+    const seen = new Set();
+    const list = [];
+    mcList.forEach((m) => {
+      const b = m.branch || "(Tanpa Area)";
+      if (seen.has(b)) return;
+      seen.add(b);
+      list.push({ value: b, label: b });
+    });
+    return list.sort((a, b) => a.label.localeCompare(b.label));
+  }, [mcList]);
+  const selectedBranch = useMemo(
+    () => (selectedBranchRaw && branchOptions.some((b) => b.value === selectedBranchRaw)) ? selectedBranchRaw : (branchOptions[0]?.value || ""),
+    [selectedBranchRaw, branchOptions],
   );
+  const mcListInBranch = useMemo(
+    () => mcList.filter((m) => (m.branch || "(Tanpa Area)") === selectedBranch),
+    [mcList, selectedBranch],
+  );
+  const selectedMc = useMemo(
+    () => (selectedMcRaw && mcListInBranch.some((m) => m.mc === selectedMcRaw)) ? selectedMcRaw : (mcListInBranch[0]?.mc || ""),
+    [selectedMcRaw, mcListInBranch],
+  );
+  // Ganti Area -> pilihan District lama (dari Area lain) otomatis tidak
+  // valid lagi dan useMemo di atas jatuh balik ke District pertama di
+  // Area baru - tapi selectedMcRaw lama perlu direset juga supaya tidak
+  // "nyangkut" kalau user balik ke Area semula.
+  const handleBranchChange = useCallback((b) => {
+    setSelectedBranch(b);
+    setSelectedMc("");
+  }, []);
 
   // ── Nilai OPEX/SDM (per Depo) ────────────────────────────────────────
   const [depoValues, setDepoValues] = useState({});
@@ -330,9 +369,19 @@ export default function PNL_FormPengeluaranV2({ theme, profile, activeContext, c
   const anyDirty = depoDirty || mcDirty;
 
   const depoOptions = depos.map((dp) => ({ value: dp.id, label: dp.depo_name }));
-  const mcOptions = mcList.map((m) => ({ value: m.mc, label: m.branch ? `${m.mc} — ${m.branch}` : m.mc }));
+  const mcOptions = mcListInBranch.map((m) => ({ value: m.mc, label: m.mc }));
 
-  const depoTableProps = { values: depoValues, onChange: setDepoItemValue, readOnly: !editable || !selectedDepoId, t };
+  // Permintaan user ("sebelum menambahkan district, tidak bisa melakukan
+  // pengisian"): OPEX/SDM TIDAK boleh diisi kalau Depo yg sedang dipilih
+  // masih 0 District (biar ga ada biaya "nyangkut" di Depo kosong) -
+  // selain gate "belum ada Depo sama sekali" (needsDepoGate) yg sudah ada.
+  const selectedDepoMcCount = useMemo(
+    () => (depoMcRows || []).filter((r) => r.depo_id === selectedDepoId).length,
+    [depoMcRows, selectedDepoId],
+  );
+  const depoNeedsMc = !!selectedDepoId && selectedDepoMcCount === 0;
+
+  const depoTableProps = { values: depoValues, onChange: setDepoItemValue, readOnly: !editable || !selectedDepoId || depoNeedsMc, t };
   const mcTableProps = { values: mcValues, onChange: setMcItemValue, readOnly: !editable || !selectedMc, t };
 
   const needsDepoGate = isDepoStep && masterLoaded && depos.length === 0;
@@ -354,13 +403,18 @@ export default function PNL_FormPengeluaranV2({ theme, profile, activeContext, c
                   <div style={{ fontSize: 13, color: t.amber, background: t.amberBg, border: `1px solid ${t.amberBd}`, borderRadius: 10, padding: "12px 16px", fontWeight: 600 }}>
                     Anda perlu menambahkan Depo terlebih dahulu sebelum bisa mengisi laporan OPEX & SDM. Depo adalah kelompok District (MC) buatan Anda sendiri — bisa diubah kapan saja.
                   </div>
-                  <PNL_DepoManager t={t} d={d} partnerName={partnerName} depos={depos} depoMcRows={depoMcRows} mcList={mcList} editable={editable} onChanged={loadMaster} embedded />
+                  <PNL_DepoManager t={t} d={d} partnerName={partnerName} depos={depos} depoMcRows={depoMcRows} mcList={mcList} editable={editable} onChanged={loadMaster} contextBranch={contextBranch} embedded />
                 </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                   <ScopeSelector label="Depo" value={selectedDepoId} onChange={setSelectedDepoId} options={depoOptions} t={t}
                     extra={editable && <button onClick={() => setShowDepoManager((s) => !s)} className="v2btn-g" style={{ padding: "6px 10px" }}><Settings2 size={12} /> Kelola Depo</button>} />
-                  {showDepoManager && <PNL_DepoManager t={t} d={d} partnerName={partnerName} depos={depos} depoMcRows={depoMcRows} mcList={mcList} editable={editable} onChanged={loadMaster} onClose={() => setShowDepoManager(false)} />}
+                  {showDepoManager && <PNL_DepoManager t={t} d={d} partnerName={partnerName} depos={depos} depoMcRows={depoMcRows} mcList={mcList} editable={editable} onChanged={loadMaster} contextBranch={contextBranch} onClose={() => setShowDepoManager(false)} />}
+                  {depoNeedsMc && (
+                    <div style={{ fontSize: 13, color: t.amber, background: t.amberBg, border: `1px solid ${t.amberBd}`, borderRadius: 10, padding: "12px 16px", fontWeight: 600 }}>
+                      Depo ini belum punya District. Tambahkan minimal 1 District lewat &ldquo;Kelola Depo&rdquo; di atas sebelum mengisi OPEX & SDM-nya.
+                    </div>
+                  )}
                   <Card t={t}><Body><ItemTable items={itemsOf("OPEX")} showKategori {...depoTableProps} /></Body></Card>
                   <SubtotalBanner label="Total OPEX" value={depoSummary.totalOpex} />
                 </div>
@@ -376,13 +430,18 @@ export default function PNL_FormPengeluaranV2({ theme, profile, activeContext, c
                   <div style={{ fontSize: 13, color: t.amber, background: t.amberBg, border: `1px solid ${t.amberBd}`, borderRadius: 10, padding: "12px 16px", fontWeight: 600 }}>
                     Anda perlu menambahkan Depo terlebih dahulu sebelum bisa mengisi laporan OPEX & SDM.
                   </div>
-                  <PNL_DepoManager t={t} d={d} partnerName={partnerName} depos={depos} depoMcRows={depoMcRows} mcList={mcList} editable={editable} onChanged={loadMaster} embedded />
+                  <PNL_DepoManager t={t} d={d} partnerName={partnerName} depos={depos} depoMcRows={depoMcRows} mcList={mcList} editable={editable} onChanged={loadMaster} contextBranch={contextBranch} embedded />
                 </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                   <ScopeSelector label="Depo" value={selectedDepoId} onChange={setSelectedDepoId} options={depoOptions} t={t}
                     extra={editable && <button onClick={() => setShowDepoManager((s) => !s)} className="v2btn-g" style={{ padding: "6px 10px" }}><Settings2 size={12} /> Kelola Depo</button>} />
-                  {showDepoManager && <PNL_DepoManager t={t} d={d} partnerName={partnerName} depos={depos} depoMcRows={depoMcRows} mcList={mcList} editable={editable} onChanged={loadMaster} onClose={() => setShowDepoManager(false)} />}
+                  {showDepoManager && <PNL_DepoManager t={t} d={d} partnerName={partnerName} depos={depos} depoMcRows={depoMcRows} mcList={mcList} editable={editable} onChanged={loadMaster} contextBranch={contextBranch} onClose={() => setShowDepoManager(false)} />}
+                  {depoNeedsMc && (
+                    <div style={{ fontSize: 13, color: t.amber, background: t.amberBg, border: `1px solid ${t.amberBd}`, borderRadius: 10, padding: "12px 16px", fontWeight: 600 }}>
+                      Depo ini belum punya District. Tambahkan minimal 1 District lewat &ldquo;Kelola Depo&rdquo; di atas sebelum mengisi OPEX & SDM-nya.
+                    </div>
+                  )}
                   <Card t={t}><Body>
                     <SecLabel t={t} right={<span style={{ fontSize: 13, fontWeight: 700, color: t.hi, fontVariantNumeric: "tabular-nums" }}>{fmtIDR(depoSummary.totalSdmSales)}</span>}>HR Cost Sales</SecLabel>
                     <ItemTable items={itemsOf("SDM", "sales")} {...depoTableProps} />
@@ -401,6 +460,7 @@ export default function PNL_FormPengeluaranV2({ theme, profile, activeContext, c
             <>
               <SecHero icon={Megaphone} eyebrow="Langkah 3 dari 5" title="Marketing Cost" t={t} />
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <ScopeSelector label="Area" value={selectedBranch} onChange={handleBranchChange} options={branchOptions} t={t} />
                 <ScopeSelector label="District (MC)" value={selectedMc} onChange={setSelectedMc} options={mcOptions} t={t} />
                 <Card t={t}><Body><ItemTable items={itemsOf("MARKETING COST")} {...mcTableProps} /></Body></Card>
                 <SubtotalBanner label="Total Marketing Cost" value={mcSummary.totalMarketing} />
@@ -412,6 +472,7 @@ export default function PNL_FormPengeluaranV2({ theme, profile, activeContext, c
             <>
               <SecHero icon={Coins} eyebrow="Langkah 4 dari 5" title="Cost of Money" t={t} />
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <ScopeSelector label="Area" value={selectedBranch} onChange={handleBranchChange} options={branchOptions} t={t} />
                 <ScopeSelector label="District (MC)" value={selectedMc} onChange={setSelectedMc} options={mcOptions} t={t} />
                 <Card t={t}><Body><ItemTable items={itemsOf("COST OF MONEY")} {...mcTableProps} /></Body></Card>
                 <SubtotalBanner label="Total Cost of Money" value={mcSummary.totalCostOfMoney} />
@@ -431,7 +492,7 @@ export default function PNL_FormPengeluaranV2({ theme, profile, activeContext, c
                   <SumRow label="HR Cost Non Sales" value={depoSummary.totalSdmNonSales} indent t={t} />
                 </Body></Card>
                 <Card t={t}><Body>
-                  <SecLabel t={t}>Marketing & Cost of Money — District: {mcOptions.find((o) => o.value === selectedMc)?.label || "—"}</SecLabel>
+                  <SecLabel t={t}>Marketing & Cost of Money — Area: {selectedBranch || "—"} / District: {mcOptions.find((o) => o.value === selectedMc)?.label || "—"}</SecLabel>
                   <SumRow icon={Megaphone} label="Total Marketing Cost" value={mcSummary.totalMarketing} bold t={t} />
                   <SumRow icon={Coins} label="Total Cost of Money" value={mcSummary.totalCostOfMoney} bold t={t} />
                 </Body></Card>

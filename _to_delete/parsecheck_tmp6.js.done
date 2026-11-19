@@ -1,0 +1,10 @@
+const babel = require("@babel/core");
+const fs = require("fs");
+const file = "app/dashboard/components/PNL_MPX_Menu.jsx";
+const code = fs.readFileSync(file, "utf-8");
+try {
+  babel.transform(code, { filename: file, presets: ["next/babel"] });
+  console.log("PARSE_OK");
+} catch (e) {
+  console.log("PARSE_FAIL:", e.message);
+}

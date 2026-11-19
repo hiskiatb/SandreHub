@@ -20,8 +20,9 @@
 // Disimpan ke tabel `pnl_reports_v2` (terpisah dari pnl_reports V1),
 // 1 baris per partner+branch+mpc_mp3+month+year.
 import { useEffect, useMemo, useState, useCallback } from "react";
-import { ArrowUpRight, Banknote, Info, Lock, Save, ShieldCheck } from "lucide-react";
+import { ArrowUpRight, Banknote, Info, Lock, Save, ShieldCheck, Upload } from "lucide-react";
 import supabase from "../../../lib/supabase";
+import PNL_DataProvidedBulkUpload from "./PNL_DataProvidedBulkUpload";
 import {
   FONT, mk, V2Styles, NumInput, Card, Body, SecLabel, TH, FormHeader, SecHero,
   SubtotalBanner, FooterBar, LoadingBlock, toMonthInt, toYearInt, numOrZero, fmtIDR, ctxKeyOf,
@@ -29,13 +30,20 @@ import {
 
 // 6 baris margin partner — id dipakai sebagai key kolom DB (margin_<id>
 // utk IM3 dan margin_<id>_3id utk 3ID).
+// Permintaan user ("menunya namanya Total Margin Penjualan, biar tidak
+// berulang"): label per baris dipersingkat jadi cuma pembedanya saja -
+// judul "Total Margin Penjualan" cukup ditulis SEKALI sbg section label
+// di atas tabel (lihat SecLabel di PNL_FormPendapatanV2.jsx), bukan
+// diulang di tiap baris. File lain (PivotSummary/SummaryV2) yg sebelumnya
+// strip prefix "Total Margin Penjualan " dari label ini tetap aman -
+// .replace() jadi no-op kalau prefix-nya memang sudah tidak ada.
 export const MARGIN_ROWS = [
-  { id: "sp0", label: "Total Margin Penjualan SP 0" },
-  { id: "sp_ori", label: "Total Margin Penjualan SP ORI" },
-  { id: "voucher0", label: "Total Margin Penjualan Voucher 0" },
-  { id: "voucher_ori", label: "Total Margin Penjualan Voucher ORI" },
-  { id: "saldo", label: "Total Margin Penjualan Saldo" },
-  { id: "fwa", label: "Total Margin Penjualan FWA" },
+  { id: "sp0", label: "SP 0" },
+  { id: "sp_ori", label: "SP ORI" },
+  { id: "voucher0", label: "Voucher 0" },
+  { id: "voucher_ori", label: "Voucher ORI" },
+  { id: "saldo", label: "Saldo" },
+  { id: "fwa", label: "FWA" },
 ];
 
 // 9 baris "Data Provided" — diisi SPM, bukan partner.
@@ -69,7 +77,7 @@ const LockNote = ({ children, t }) => (
   <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: 99, border: `1px solid ${t.line}`, background: t.sub, fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: t.mid, flexShrink: 0, whiteSpace: "nowrap" }}><Lock size={10} />{children}</span>
 );
 
-export default function PNL_FormPendapatanV2({ theme, profile, activeContext, canEditPendapatan, canEditDataProvided, setIsFormDirty, readOnly }) {
+export default function PNL_FormPendapatanV2({ theme, profile, activeContext, canEditPendapatan, canEditDataProvided, setIsFormDirty, readOnly, masterData }) {
   const d = theme === "dark";
   const t = useMemo(() => mk(d), [d]);
 
@@ -81,11 +89,21 @@ export default function PNL_FormPendapatanV2({ theme, profile, activeContext, ca
   const [luarTemplateNote, setLuarTemplateNote] = useState("");
   const [dataProvided, setDataProvided] = useState(emptyDataProvided);
   const [dirty, setDirty] = useState(false);
+  // BARU (permintaan user - "buat sistem untuk pengupload data yang kita
+  // provide, dan bisa download template ... pertama kita pilih periode
+  // dulu"): modal bulk upload Data Provided, dipakai SPM biar ga perlu
+  // isi 1-1 per Partner+Branch via form di atas.
+  const [showBulkUpload, setShowBulkUpload] = useState(false);
   const loading = !!ctxKey && loadedKey !== ctxKey;
 
   const canEditIncome = !!canEditPendapatan && !readOnly;
+  // canEditProvided sekarang CUMA ngontrol tampil/tidaknya tombol "Bulk
+  // Upload" (satu-satunya jalur isi Data Provided) - bukan lagi dipakai
+  // utk bikin tabel Data Provided bisa diketik manual, dan bukan lagi
+  // dihitung ke canSave krn handleSave tidak pernah nulis kolom Data
+  // Provided lagi (lihat handleSave di atas).
   const canEditProvided = !!canEditDataProvided && !readOnly;
-  const canSave = canEditIncome || canEditProvided;
+  const canSave = canEditIncome;
 
   const markDirty = useCallback(() => { setDirty(true); setIsFormDirty?.(true); }, [setIsFormDirty]);
 
@@ -150,9 +168,6 @@ export default function PNL_FormPendapatanV2({ theme, profile, activeContext, ca
         payload.luar_template_amount = numOrZero(luarTemplateAmount);
         payload.luar_template_note = luarTemplateNote || null;
       }
-      if (canEditProvided) {
-        DATA_PROVIDED_ROWS.forEach((r) => { payload[r.id] = numOrZero(dataProvided[r.id]); });
-      }
       const { error } = await supabase
         .from("pnl_reports_v2")
         .upsert(payload, { onConflict: "partner_name,branch,mpc_mp3,month,year" });
@@ -176,18 +191,19 @@ export default function PNL_FormPendapatanV2({ theme, profile, activeContext, ca
       {loading ? <LoadingBlock label="Memuat Form Pendapatan V2..." t={t} /> : (
         <>
           {/* ── Form Pendapatan (Area Level) — diisi Partner ── */}
-          <SecHero icon={Banknote} eyebrow="Diisi oleh Partner (Admin MC / Admin Area)" title="Form Pendapatan (Area Level)" t={t}>
+          <SecHero icon={Banknote} title="Form Pendapatan (Area Level)" t={t}>
             {!canEditIncome && <LockNote t={t}>Hanya lihat</LockNote>}
           </SecHero>
           <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 28 }}>
             <Card t={t}><Body>
+              <SecLabel t={t}>Total Margin Penjualan</SecLabel>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 560 }}>
                   <thead>
                     <tr style={{ borderBottom: `1px solid ${t.line}` }}>
                       <TH t={t}>Produk</TH>
-                      <TH t={t} align="right" width={170}>IM3</TH>
-                      <TH t={t} align="right" width={170}>3ID</TH>
+                      <TH t={t} align="right" width={170} color={t.amber}>IM3</TH>
+                      <TH t={t} align="right" width={170} color="#C6168D">3ID</TH>
                       <TH t={t} align="right" width={140}>Total</TH>
                     </tr>
                   </thead>
@@ -242,8 +258,18 @@ export default function PNL_FormPendapatanV2({ theme, profile, activeContext, ca
 
           {/* ── Data Provided (Area Level) — diisi SPM ── */}
           <SecHero icon={ShieldCheck} eyebrow="Diisi oleh SPM Sumatera" title="Data Provided (Area Level)" t={t}>
-            {!canEditProvided && <LockNote t={t}>Hanya lihat</LockNote>}
+            {canEditProvided && (
+              <button onClick={() => setShowBulkUpload(true)}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, border: `1px solid ${t.blueBd}`, borderRadius: 9, padding: "8px 13px", background: t.blueBg, color: t.blue, fontFamily: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap" }}>
+                <Upload size={13} /> Bulk Upload
+              </button>
+            )}
+            <LockNote t={t}>Hanya lihat — isi lewat Bulk Upload</LockNote>
           </SecHero>
+          {showBulkUpload && (
+            <PNL_DataProvidedBulkUpload t={t} d={d} masterData={masterData} dataProvidedRows={DATA_PROVIDED_ROWS} profile={profile}
+              onClose={() => setShowBulkUpload(false)} />
+          )}
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <Card t={t}><Body>
               <div style={{ overflowX: "auto" }}>
@@ -259,8 +285,7 @@ export default function PNL_FormPendapatanV2({ theme, profile, activeContext, ca
                       <tr key={r.id} className="v2row" style={{ borderBottom: `1px solid ${t.lineH}` }}>
                         <td style={{ padding: "9px 8px", fontWeight: 700, color: t.hi }}>{r.label}</td>
                         <td style={{ padding: "9px 8px", width: 220 }}>
-                          <NumInput numericValue={dataProvided[r.id]} readOnly={!canEditProvided}
-                            onChange={(v) => { setDataProvided((p) => ({ ...p, [r.id]: v })); markDirty(); }} />
+                          <NumInput numericValue={dataProvided[r.id]} readOnly />
                         </td>
                       </tr>
                     ))}

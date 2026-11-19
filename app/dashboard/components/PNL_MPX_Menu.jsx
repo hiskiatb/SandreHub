@@ -93,7 +93,6 @@ export default function PNL_MPX_Menu({ theme = "dark", onSelect, onExit, items, 
             <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.4px" }}>{title}</div>
             <span style={{ fontSize: 10.5, fontWeight: 700, color: t.lo, background: t.sub, border: `1px solid ${t.line}`, borderRadius: 99, padding: "2px 9px" }}>{items.length} modul</span>
           </div>
-          <div style={{ fontSize: 13, color: t.mid, marginTop: 3 }}>Pilih modul laporan P&amp;L di bawah. Gunakan filter Region/Partner/Branch di sidebar untuk mempersempit tampilan.</div>
         </div>
       </div>
 

@@ -31,7 +31,7 @@ import { createPortal } from "react-dom";
 import supabase from "../../../lib/supabase";
 import {
   Loader2, Layers, CheckCircle2, AlertTriangle, Circle, ChevronDown, ChevronRight,
-  Search, CalendarDays, X, Building2, MapPin, ChevronsDown, ChevronsUp, Filter,
+  Search, CalendarDays, X, Building2, MapPin, ChevronsDown, ChevronsUp, Filter, RefreshCw,
 } from "lucide-react";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif`;
@@ -97,6 +97,33 @@ function getAvailableMonths() {
   return out;
 }
 
+// BARU (permintaan user - "saya ingin bisa tracking juga siapa saja yang
+// belum mengisi bulan oktober / november / sepanjang waktu"): daftar bulan
+// utk selector kartu "Belum Mengisi Penjualan" - beda keperluan dari
+// getAvailableMonths() di atas (itu utk grid harian, boleh "mepet" ke bulan
+// depan; ini cuma relevan sampai BULAN INI saja, diurutkan terbaru dulu
+// biar bulan yg paling sering dicek ada di atas dropdown).
+function getNeverFilledMonthOptions() {
+  const now = new Date();
+  const curY = now.getFullYear(), curM = now.getMonth() + 1;
+  const out = [];
+  for (let y = curY; y >= START_YEAR; y--) {
+    const mStart = y === curY ? curM : 12;
+    const mEnd = y === START_YEAR ? 1 : 1;
+    for (let m = mStart; m >= mEnd; m--) {
+      out.push({ year: y, month: m, key: `${y}-${pad2(m)}`, label: `${MONTH_NAMES[m - 1]} ${y}` });
+    }
+  }
+  return out;
+}
+// Rentang tanggal [awal, akhir] 1 bulan kalender - dipakai filter query
+// mf_dse_prod_ar.tanggal, BUKAN dibatasi "sampai hari ini" sama sekali:
+// hari2 yg belum kejadian otomatis ga punya baris apa pun, jadi aman
+// disertakan di rentang tanpa bikin hasil salah.
+function monthDateRange(year, month) {
+  return { start: `${year}-${pad2(month)}-01`, end: `${year}-${pad2(month)}-${pad2(daysInMonth(year, month))}` };
+}
+
 function Select({ t, value, onChange, options, placeholder, icon: Icon }) {
   return (
     <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
@@ -153,15 +180,96 @@ export default function DSE_ControlCenter({ theme, profile }) {
   // banyak - MC dianggap "pernah mengisi" kalau MUNCUL SATU KALI SAJA di
   // mf_dse_prod_ar, kapanpun tanggalnya.
   const [everFilledMc, setEverFilledMc] = useState(null); // null = belum selesai load, Set kalau sudah
+  // FIX (bugreport user - "MC MEDAN PETISAH/MEDAN BARU sudah isi Oktober
+  // tapi masih ditandai belum mengisi"): root cause-nya BUKAN logic
+  // query-nya (data di DB sudah benar & query-nya sudah benar ketika
+  // di-cek manual via SQL) - tapi cache di state React (everFilledMc utk
+  // "Sepanjang Waktu" & monthFilledCache utk bulan spesifik) TIDAK PERNAH
+  // di-invalidate. Kasus nyata: user buka Control Center & pilih
+  // "Oktober 2026" SEBELUM entri penjualan DSE utk kedua MC itu
+  // di-input (datanya baru masuk beberapa menit kemudian di hari yg
+  // sama) - begitu data baru masuk di tabel, cache di browser yg sudah
+  // kepalang ke-fetch TIDAK tahu & tetap nampilin hasil lama sampai
+  // halaman di-reload penuh. Makanya ditambah refreshTick + tombol
+  // Refresh manual di bawah biar user bisa minta data terbaru tanpa
+  // reload halaman.
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [everFilledLoading, setEverFilledLoading] = useState(true);
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      setEverFilledLoading(true);
       const rows = await fetchAllRows((afterId, limit) => supabase.from("mf_dse_prod_ar").select("id, mc").gt("id", afterId).order("id", { ascending: true }).limit(limit));
       if (cancelled) return;
       setEverFilledMc(new Set(rows.map((r) => (r.mc || "").toLowerCase()).filter(Boolean)));
+      setEverFilledLoading(false);
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [refreshTick]);
+
+  // BARU (permintaan user - selector Oktober/November/Sepanjang Waktu utk
+  // kartu "Belum Mengisi Penjualan"): "" = Sepanjang Waktu (pakai
+  // everFilledMc di atas, TIDAK diubah sama sekali - tetap all-time persis
+  // spt semula). Kalau user pilih 1 bulan spesifik, fetch BARU yg di-scope
+  // tanggal bulan itu SAJA (pola fetchAllRows sama persis spt everFilledMc -
+  // WAJIB paginated, krn 1 bulan transaksi DSE bisa >1000 baris & gampang
+  // kepotong diam2 kalau query tanpa .range()/.gt("id",...) - lihat catatan
+  // bugfix fetchAllRows di atas). Hasil per-bulan di-cache di ref (key
+  // "YYYY-MM") supaya gonta-ganti antar bulan yg sudah pernah dibuka ga
+  // nge-query ulang ke server.
+  const [neverFilledScope, setNeverFilledScope] = useState(""); // "" | "YYYY-MM"
+  // FIX (lint react-hooks/refs - "Cannot access refs during render"): cache
+  // hasil per-bulan DULU disimpan di useRef lalu dibaca langsung di dalam
+  // useMemo (render path) - itu dilarang krn ref.current bisa berubah tanpa
+  // React tahu perlu re-render. Sekarang cache-nya state biasa (plain
+  // object, bukan Map, biar gampang di-spread immutable) - setiap fetch
+  // bulan baru selesai, di-merge ke state ini via setState normal.
+  const [monthFilledCache, setMonthFilledCache] = useState({}); // { "YYYY-MM": Set<mc lowercase> }
+  const monthFilledInFlightRef = useRef(new Set()); // dedupe fetch concurrent - CUMA dibaca/ditulis di dalam effect, bukan di render
+  const [monthFilledLoadingKey, setMonthFilledLoadingKey] = useState(null);
+  useEffect(() => {
+    if (!neverFilledScope) return; // Sepanjang Waktu - ga perlu fetch apa2
+    if (neverFilledScope in monthFilledCache) return; // sudah di-cache
+    if (monthFilledInFlightRef.current.has(neverFilledScope)) return; // sudah lagi di-fetch (mis. efek ini re-run krn dependency lain)
+    monthFilledInFlightRef.current.add(neverFilledScope);
+    let cancelled = false;
+    const [yStr, mStr] = neverFilledScope.split("-");
+    const { start, end } = monthDateRange(Number(yStr), Number(mStr));
+    setMonthFilledLoadingKey(neverFilledScope);
+    (async () => {
+      const rows = await fetchAllRows((afterId, limit) =>
+        supabase.from("mf_dse_prod_ar").select("id, mc").gt("id", afterId).gte("tanggal", start).lte("tanggal", end).order("id", { ascending: true }).limit(limit));
+      monthFilledInFlightRef.current.delete(neverFilledScope);
+      if (cancelled) return;
+      const set = new Set(rows.map((r) => (r.mc || "").toLowerCase()).filter(Boolean));
+      setMonthFilledCache((prev) => ({ ...prev, [neverFilledScope]: set }));
+      setMonthFilledLoadingKey(null);
+    })();
+    return () => { cancelled = true; };
+  }, [neverFilledScope, monthFilledCache]);
+  // Set yg BENAR2 dipakai utk perbandingan "sudah pernah isi" - null kalau
+  // scope bulan tsb MASIH loading (bukan Set kosong!), supaya kartu ga
+  // sempat salah nampilin "SEMUA MC belum isi" selagi data belum datang.
+  const neverFilledScopeSet = useMemo(() => {
+    if (!neverFilledScope) return everFilledLoading ? null : everFilledMc;
+    if (monthFilledLoadingKey === neverFilledScope) return null;
+    return monthFilledCache[neverFilledScope] || null;
+  }, [neverFilledScope, everFilledMc, everFilledLoading, monthFilledLoadingKey, monthFilledCache]);
+  // Tombol Refresh manual: buang cache bulan yg lagi dipilih (biar effect
+  // di atas fetch ulang krn "neverFilledScope in monthFilledCache" jadi
+  // false lagi) + trigger ulang fetch "Sepanjang Waktu" via refreshTick.
+  const handleRefreshNeverFilled = () => {
+    setRefreshTick((x) => x + 1);
+    if (neverFilledScope) {
+      setMonthFilledCache((prev) => {
+        if (!(neverFilledScope in prev)) return prev;
+        const next = { ...prev };
+        delete next[neverFilledScope];
+        return next;
+      });
+    }
+  };
+  const neverFilledMonthOptions = useMemo(() => getNeverFilledMonthOptions(), []);
 
   // UPDATE (permintaan user - "seharusnya bisa pilih region / di filter
   // per partner juga"): filter cascading Partner -> Region -> Branch.
@@ -263,10 +371,16 @@ export default function DSE_ControlCenter({ theme, profile }) {
   // ini sekarang bisa toggle pengelompokan Branch <-> Partner (dulu
   // hardcoded per Branch saja) - helper generik `groupNeverFilled` dipakai
   // utk kedua mode biar logicnya satu sumber, ga duplikat.
+  // FIX (scope-aware): dulu SELALU pakai everFilledMc (all-time) - sekarang
+  // pakai neverFilledScopeSet, yg otomatis = everFilledMc kalau scope
+  // "Sepanjang Waktu", atau Set hasil fetch bulan terpilih. Kalau scope set
+  // masih null (lagi loading / belum sempat ke-fetch) -> list kosong DULU
+  // (bukan "semua MC dianggap belum isi") supaya kartu ga sempat nampilin
+  // angka yg salah sebelum data bulan itu selesai di-fetch.
   const neverFilledMcs = useMemo(() => {
-    if (!everFilledMc) return [];
-    return mcRows.filter((r) => !everFilledMc.has(r.mc.toLowerCase()));
-  }, [mcRows, everFilledMc]);
+    if (!neverFilledScopeSet) return [];
+    return mcRows.filter((r) => !neverFilledScopeSet.has(r.mc.toLowerCase()));
+  }, [mcRows, neverFilledScopeSet]);
   const groupNeverFilled = (field, fallbackLabel) => {
     const map = new Map();
     for (const r of neverFilledMcs) {
@@ -499,7 +613,7 @@ export default function DSE_ControlCenter({ theme, profile }) {
           ALL-TIME (bukan bulan yg lagi dipilih), didesain utk di-screenshot
           & dikirim langsung ke Branch terkait (judul tegas, dikelompokkan
           per Branch, MC ditampilkan sbg chip biar ringkas). */}
-      {everFilledMc && neverFilledTotal > 0 && (
+      {(neverFilledScopeSet || monthFilledLoadingKey) && (
         <div style={{ background: t.card, border: `1.5px solid ${d ? "rgba(248,113,113,0.28)" : "rgba(220,38,38,0.22)"}`, borderRadius: 18, overflow: "hidden", boxShadow: t.shadowSm }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "16px 18px" }}>
             <button onClick={() => setNeverCardCollapsed((v) => !v)} style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 12, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left", padding: 0 }}>
@@ -507,18 +621,31 @@ export default function DSE_ControlCenter({ theme, profile }) {
                 <AlertTriangle size={18} color={t.red} />
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14.5, fontWeight: 800, color: t.hi }}>MC Belum Pernah Mengisi Penjualan (Sepanjang Waktu)</div>
-                <div style={{ fontSize: 11.5, color: t.mid, marginTop: 1 }}>{neverFilledTotal} District belum pernah ada entri Penjualan DSE sejak awal</div>
+                <div style={{ fontSize: 14.5, fontWeight: 800, color: t.hi }}>
+                  MC Belum Mengisi Penjualan {neverFilledScope ? `(${neverFilledMonthOptions.find((o) => o.key === neverFilledScope)?.label || neverFilledScope})` : "(Sepanjang Waktu)"}
+                </div>
+                <div style={{ fontSize: 11.5, color: t.mid, marginTop: 1 }}>
+                  {neverFilledScope
+                    ? (monthFilledLoadingKey === neverFilledScope
+                        ? "Memuat data bulan terpilih..."
+                        : `${neverFilledTotal} District belum ada entri Penjualan DSE di bulan ini`)
+                    : (everFilledLoading
+                        ? "Memuat data..."
+                        : `${neverFilledTotal} District belum pernah ada entri Penjualan DSE sejak awal`)}
+                </div>
               </div>
-              <span style={{ flexShrink: 0, padding: "5px 12px", borderRadius: 999, background: t.redBg, color: t.red, fontSize: 13, fontWeight: 800 }}>{neverFilledTotal}</span>
+              {neverFilledScopeSet && <span style={{ flexShrink: 0, padding: "5px 12px", borderRadius: 999, background: t.redBg, color: t.red, fontSize: 13, fontWeight: 800 }}>{neverFilledTotal}</span>}
               {neverCardCollapsed ? <ChevronRight size={15} color={t.mid} /> : <ChevronDown size={15} color={t.mid} />}
             </button>
           </div>
           {!neverCardCollapsed && (
             <>
               {/* UPDATE (permintaan user - "tambahkan yang dibagi per
-                  partner"): toggle pengelompokan Branch <-> Partner. */}
-              <div style={{ padding: "0 18px 12px", display: "flex", alignItems: "center", gap: 8 }}>
+                  partner"): toggle pengelompokan Branch <-> Partner.
+                  BARU (permintaan user - "saya ingin bisa tracking juga
+                  siapa saja yang belum mengisi bulan oktober / november /
+                  sepanjang waktu"): selector scope di baris yg sama. */}
+              <div style={{ padding: "0 18px 12px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 11, fontWeight: 700, color: t.mid }}>Kelompokkan:</span>
                 <div style={{ display: "flex", background: t.sub, border: `1px solid ${t.line}`, borderRadius: 9, padding: 3, gap: 2 }}>
                   {[{ k: "branch", label: "Per Branch" }, { k: "partner", label: "Per Partner" }].map((opt) => (
@@ -528,6 +655,16 @@ export default function DSE_ControlCenter({ theme, profile }) {
                     </button>
                   ))}
                 </div>
+                <span style={{ fontSize: 11, fontWeight: 700, color: t.mid, marginLeft: 6 }}>Periode:</span>
+                <select value={neverFilledScope} onChange={(e) => setNeverFilledScope(e.target.value)}
+                  style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", background: t.sub, border: `1px solid ${t.line}`, borderRadius: 9, color: t.hi, fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, padding: "7px 11px", cursor: "pointer" }}>
+                  <option value="">Sepanjang Waktu</option>
+                  {neverFilledMonthOptions.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+                </select>
+                <button type="button" onClick={handleRefreshNeverFilled} title="Muat ulang data terbaru (data baru yg baru diinput ga otomatis masuk tanpa ini)"
+                  style={{ display: "flex", alignItems: "center", gap: 5, border: `1px solid ${t.line}`, borderRadius: 9, padding: "7px 11px", background: t.sub, color: t.mid, fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
+                  <RefreshCw size={12} /> Refresh
+                </button>
               </div>
               <div style={{ padding: "0 18px 18px", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 10 }}>
                 {neverFilledGrouped.map(({ label, items }) => (
