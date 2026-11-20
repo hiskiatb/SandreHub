@@ -1,6 +1,6 @@
 -- 20261120_payout_invoice_reminders.sql
 -- Payout Tracker: pengingat "Invoice Not Submitted" ke partner/agency.
---   payout_partner_contacts  = email partner/agency, diisi dari sheet "Email Partner" saat admin Publish
+--   payout_partner_contacts  = email partner/agency, diisi dari sheet "Master Mapping" saat admin Publish
 --   payout_invoice_reminders = riwayat pengingat yang dikirim
 -- Hanya admin SPM (spm_sumatera) & admin internal Indosat (internal_ioh) yang boleh baca/tulis.
 -- Aman dijalankan ulang.

@@ -11,7 +11,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from "react"
 import supabase from "../../../lib/supabase";
 import { DocsCell, PoDocsTab, usePartnerDocStats } from "./PayoutPartnerDocs";
 import { PartnerLettersTab } from "./PayoutPartnerLetters";
-import { InvoiceReminderModal, ReminderButton, readContactsSheet, saveContacts, CONTACTS_SHEET } from "./PayoutInvoiceReminder";
+import { InvoiceReminderModal, InvoiceReminderDashboard, ReminderButton, readContactsSheet, saveContacts, CONTACTS_SHEET } from "./PayoutInvoiceReminder";
 import { DOC_REF_COLUMN, refKey, statKey, doneCount, DOC_TYPES, canManageApprovals } from "../../../lib/payoutPartnerDocs";
 
 let _xlsx = null;
@@ -1990,7 +1990,7 @@ function computeInsights(rows) {
     const sofar = invD ? workDaysBetween(invD, today) : null;              // Invoice → hari ini (hari kerja)
     const mk = rowMonthKey(r);
     const bastD = toDate(gcell(r,H_BAST_APP)) || toDate(gcell(r,H_BAST_RCV));
-    const item = { name, title:gstr(r,["project title"])||"—", inv:r._inv, invId:r._invId, amt, status:st, ns, proc,
+    const item = { name, title:gstr(r,["project title"])||"—", prog:gstr(r,["program type"])||"—", inv:r._inv, invId:r._invId, amt, status:st, ns, proc,
       invD, clvD, est, bastD, hasBast:!!(findCol(r,H_BAST_APP)||findCol(r,H_BAST_RCV)), cyc:sofar, period:mk?ymLabel(mk):"—" };
     open.push(item);
     o.open++; o.openAmt += amt;
@@ -2119,6 +2119,7 @@ function DetailsTabs(props) {
   const tabs = [
     { id:"out",  label:"Outstanding", count:ins.open.length },
     { id:"own",  label:isAg?"Agencies":"Partners", count:ins.owners.length },
+    ...(canManageApprovals(props.profile) ? [{ id:"rem", label:"Invoice Reminder", count:new Set(ins.open.filter(x=>x.ns).map(x=>x.name)).size }] : []),
   ];
   const cur = tabs.some(x=>x.id===tab) ? tab : "out";
   return (
@@ -2126,7 +2127,7 @@ function DetailsTabs(props) {
       <div style={{display:"flex",gap:22,padding:"0 20px",borderBottom:`1px solid ${t.line}`,background:t.surf2,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"none"}} role="tablist">
         {tabs.map(x=><TabBtn key={x.id} label={x.label} count={x.count} active={cur===x.id} onClick={()=>setTab(x.id)} t={t}/>)}
         {/* Satu tombol ekspor: Outstanding → daftar tagihan (semua tanggal); tab lain → ringkasan bulanan */}
-        {cur==="out" ? <div style={{marginLeft:"auto",display:"flex",alignItems:"center",flexShrink:0,padding:"8px 0"}}>
+        {cur==="rem" ? null : cur==="out" ? <div style={{marginLeft:"auto",display:"flex",alignItems:"center",flexShrink:0,padding:"8px 0"}}>
           <Btn t={t} variant="primary" sm onClick={()=>exportOutstanding(outRows(ins,view,sort), isAg, view, props.showToast)}>Export Excel</Btn>
         </div> : <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8,flexShrink:0,padding:"8px 0"}}>
           <span style={{fontSize:12.5,color:t.muted,whiteSpace:"nowrap"}}>Export summary</span>
@@ -2136,6 +2137,7 @@ function DetailsTabs(props) {
       </div>
       {cur==="out"  && <OutstandingTab ins={ins} isAg={isAg} w={w} t={t} view={view} setView={setView} sort={sort} setSort={setSort} canRemind={canManageApprovals(props.profile)} showToast={props.showToast}/>}
       {cur==="own"  && <PartnersTab ins={ins} isAg={isAg} w={w} t={t}/>}
+      {cur==="rem"  && <InvoiceReminderDashboard ins={ins} isAg={isAg} w={w} t={t} showToast={props.showToast}/>}
     </Card>
   );
 }

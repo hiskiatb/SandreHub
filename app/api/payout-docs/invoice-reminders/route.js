@@ -2,7 +2,7 @@
 // Pengingat "Invoice Not Submitted" ke partner/agency (Payout Tracker).
 // Hanya admin SPM & admin internal Indosat (APPROVAL_ADMIN_ROLES), dicek di sini (server).
 //
-// Sumber email = sheet "Email Partner" di Excel yang di-upload admin (lihat readContactsSheet di
+// Sumber email = sheet "Master Mapping" di Excel yang di-upload admin (lihat readContactsSheet di
 // PayoutTracker.jsx). Saat Publish, isinya disimpan ke tabel payout_partner_contacts (action "import").
 //
 // body.action:
@@ -17,7 +17,7 @@ import { createClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
 import { partnerKey, APPROVAL_ADMIN_ROLES } from "../../../../lib/payoutPartnerDocs";
 import {
-  invoiceReminderEmail, cleanInvoiceItem, isEmail, normEmail, MAX_REMINDER_ITEMS, MAX_REMINDER_TO,
+  invoiceReminderEmail, cleanInvoiceItem, invKey, isEmail, normEmail, MAX_REMINDER_ITEMS, MAX_REMINDER_TO,
 } from "../../../../lib/payoutInvoiceReminderEmail";
 
 const CONTACTS_TABLE = "payout_partner_contacts";
@@ -100,14 +100,19 @@ async function recipients(auth, body) {
 
   let logReady = true;
   const last = {};
-  const lg = await auth.db.from(LOG_TABLE).select("owner_key, sent_at, sent_by_name").eq("segment", segment).eq("status", "sent").in("owner_key", keys).order("sent_at", { ascending: false }).limit(3000);
+  const inv = {};   // owner_key → { invKey → { at, count } } : tagihan mana yang sudah pernah diingatkan
+  const lg = await auth.db.from(LOG_TABLE).select("owner_key, sent_at, sent_by_name, invoices").eq("segment", segment).eq("status", "sent").in("owner_key", keys).order("sent_at", { ascending: false }).limit(3000);
   if (lg.error) logReady = false;
-  else (lg.data || []).forEach((r) => { const l = (last[r.owner_key] ||= { count: 0, at: r.sent_at, by: r.sent_by_name || "" }); l.count++; });
+  else (lg.data || []).forEach((r) => {
+    const l = (last[r.owner_key] ||= { count: 0, at: r.sent_at, by: r.sent_by_name || "" }); l.count++;
+    const m = (inv[r.owner_key] ||= {});
+    (Array.isArray(r.invoices) ? r.invoices : []).forEach((x) => { const k = invKey(x); const e = (m[k] ||= { count: 0, at: r.sent_at }); e.count++; });
+  });
 
   const out = {};
   owners.forEach((o) => {
     const k = partnerKey(o), c = contacts[k];
-    out[o] = { key: k, to: c?.emails_to || [], cc: c?.emails_cc || [], pic: c?.pic || "", last: last[k] || null };
+    out[o] = { key: k, to: c?.emails_to || [], cc: c?.emails_cc || [], pic: c?.pic || "", last: last[k] || null, inv: inv[k] || {} };
   });
   return Response.json({ owners: out, contactsReady: true, logReady });
 }

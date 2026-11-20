@@ -1,15 +1,15 @@
 "use client";
 // Payout Tracker: email pengingat "Invoice Not Submitted" ke partner/agency.
-//  • Sumber email = sheet "Email Partner" di Excel upload (readContactsSheet), disimpan saat Publish (saveContacts).
+//  • Sumber email = sheet "Master Mapping" di Excel upload (readContactsSheet), disimpan saat Publish (saveContacts).
 //  • Dikirim dari Dashboard → Outstanding (InvoiceReminderModal).
 // Hanya admin SPM & admin internal Indosat (dicek juga di server: /api/payout-docs/invoice-reminders).
 
 import React, { useEffect, useMemo, useState } from "react";
 import supabase from "../../../lib/supabase";
-import { invoiceReminderEmail, parseEmails, MAX_REMINDER_TO } from "../../../lib/payoutInvoiceReminderEmail";
+import { invoiceReminderEmail, parseEmails, invKey, MAX_REMINDER_TO } from "../../../lib/payoutInvoiceReminderEmail";
 
 const API = "/api/payout-docs/invoice-reminders";
-export const CONTACTS_SHEET = "Email Partner";
+export const CONTACTS_SHEET = "Master Mapping";
 
 async function call(body) {
   const { data: { session } = {} } = await supabase.auth.getSession();
@@ -23,14 +23,17 @@ async function call(body) {
   return json;
 }
 
-/* ── Sheet "Email Partner" ──────────────────────────────────────────────────
+/* ── Sheet "Master Mapping" (email partner) ──────────────────────────────────────────────────
    Kolom (urutan bebas, baris judul boleh di 10 baris pertama):
      Tipe (Partner/Agency) · Nama Partner / Agency · Email To · Email CC · PIC
    "Email To"/"Email CC" boleh berisi beberapa alamat dipisah koma/titik koma.
    Tanpa kolom Tipe → baris berlaku untuk Partner dan Agency (dicocokkan lewat nama). */
 const nk = (s) => String(s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
 export function readContactsSheet(XLSX, wb) {
-  const name = wb.SheetNames.find((s) => /\b(email|e-mail|kontak|contact)\b/.test(nk(s)) && !/prepaid/.test(nk(s)));
+  // Sheet "Master Mapping" (nama utama); cadangan: sheet bernama email/kontak/contact
+  const name = wb.SheetNames.find((s) => nk(s) === "master mapping")
+    || wb.SheetNames.find((s) => /^master mapping/.test(nk(s)))
+    || wb.SheetNames.find((s) => /\b(email|e-mail|kontak|contact)\b/.test(nk(s)) && !/prepaid/.test(nk(s)));
   if (!name) return null;
   const arr = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: "" });
   const hi = arr.slice(0, 10).findIndex((r) => r.some((c) => /e-?mail/.test(nk(c))));
@@ -150,7 +153,7 @@ export function InvoiceReminderModal({ items, owners: initial, allOwners = [], i
     try {
       const r = await call({ action: "send", segment, note, items: ready.map((g) => ({
         owner: g.name, to: toOf(g.name), cc: ccOf(g.name),
-        invoices: g.items.map((x) => ({ title: x.title, period: x.period, inv: x.inv, invId: x.invId, amt: x.amt })),
+        invoices: g.items.map((x) => ({ title: x.title, period: x.period, inv: x.inv, invId: x.invId, prog: x.prog, amt: x.amt })),
       })) });
       setResult(r);
       showToast?.(r.failed ? `${r.sent} terkirim, ${r.failed} gagal` : `Pengingat terkirim ke ${r.sent} ${own}`, r.failed ? "error" : "success");
@@ -254,6 +257,182 @@ export function InvoiceReminderModal({ items, owners: initial, allOwners = [], i
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ── Dashboard "Invoice Reminder" ───────────────────────────────────────────
+   Visual status pengingat untuk semua tagihan Invoice Not Submitted:
+   KPI · per Program (sudah / belum diingatkan) · tabel per partner (bulk & per partner). */
+const DAY_MS = 864e5;
+function Kpi({ label, value, sub, c, t }) {
+  return (
+    <div style={{ padding: "12px 14px", borderRadius: 14, border: `1px solid ${t.line}`, background: t.surf2, minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 600, color: t.ink2 }}><span style={{ width: 9, height: 9, borderRadius: 3, background: c }} />{label}</div>
+      <div style={{ fontSize: 24, fontWeight: 800, color: t.ink, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+      <div style={{ fontSize: 12, color: t.muted, marginTop: 2 }}>{sub}</div>
+    </div>
+  );
+}
+
+export function InvoiceReminderDashboard({ ins, isAg, w = 1200, t, showToast }) {
+  const [now, setNow] = useState(() => Date.now());
+  const own = isAg ? "agency" : "partner", Own = isAg ? "Agency" : "Partner";
+  const segment = isAg ? "agency" : "partner";
+  const items = useMemo(() => ins.open.filter((x) => x.ns && x.name && x.name !== "—"), [ins]);
+  const allOwners = useMemo(() => ins.owners.map((o) => o.name).filter((n) => n && n !== "—"), [ins]);
+  const [info, setInfo] = useState(null);
+  const [err, setErr] = useState("");
+  const [reload, setReload] = useState(0);
+  const [modal, setModal] = useState(null);           // null | [nama pemilik]
+  const [pick, setPick] = useState(() => new Set());
+  const [prog, setProg] = useState("");
+  const [fil, setFil] = useState("all");               // all | never | done | noemail
+  const ownersKey = [...new Set(items.map((x) => x.name))].join("\u0001");
+
+  useEffect(() => {
+    let alive = true;
+    call({ action: "recipients", segment, owners: ownersKey.split("\u0001").filter(Boolean) })
+      .then((r) => { if (alive) { setInfo(r); setErr(""); setNow(Date.now()); } })
+      .catch((e) => alive && setErr(e.message));
+    return () => { alive = false; };
+  }, [ownersKey, segment, reload]);
+
+  const remOf = (x) => info?.owners?.[x.name]?.inv?.[invKey(x)] || null;
+  const progs = useMemo(() => [...new Set(items.map((x) => x.prog || "—"))].sort(), [items]);
+  const scoped = prog ? items.filter((x) => (x.prog || "—") === prog) : items;
+
+  // Per program
+  const byProg = useMemo(() => {
+    const m = {};
+    scoped.forEach((x) => { const k = x.prog || "—"; const r = (m[k] ||= { k, n: 0, amt: 0, remN: 0, remAmt: 0 }); r.n++; r.amt += x.amt; if (remOf(x)) { r.remN++; r.remAmt += x.amt; } });
+    return Object.values(m).sort((a, b) => b.amt - a.amt);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scoped, info]);
+
+  // Per partner
+  const owners = useMemo(() => {
+    const m = {};
+    scoped.forEach((x) => {
+      const o = (m[x.name] ||= { name: x.name, n: 0, amt: 0, remN: 0, progs: new Set(), oldest: null });
+      o.n++; o.amt += x.amt; o.progs.add(x.prog || "—"); if (remOf(x)) o.remN++;
+    });
+    return Object.values(m).map((o) => {
+      const c = info?.owners?.[o.name];
+      const last = c?.last || null, emails = (c?.to || []).length;
+      const age = last ? Math.floor((now - new Date(last.at).getTime()) / DAY_MS) : null;
+      const st = !emails ? "noemail" : !last ? "never" : age > 7 ? "stale" : "recent";
+      return { ...o, progs: [...o.progs].sort(), last, emails, age, st };
+    }).sort((a, b) => ({ never: 0, stale: 1, noemail: 2, recent: 3 }[a.st] - { never: 0, stale: 1, noemail: 2, recent: 3 }[b.st]) || b.amt - a.amt);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scoped, info]);
+
+  const shown = owners.filter((o) => fil === "all" || (fil === "never" && (o.st === "never")) || (fil === "done" && (o.st === "recent" || o.st === "stale")) || (fil === "noemail" && o.st === "noemail"));
+  const tot = { n: scoped.length, amt: scoped.reduce((a, x) => a + x.amt, 0), remN: scoped.filter(remOf).length };
+  tot.remAmt = scoped.filter(remOf).reduce((a, x) => a + x.amt, 0);
+  const cnt = (s) => owners.filter((o) => o.st === s).length;
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+  const phone = w < 640;
+  const tone = { never: [t.badBg, t.badBd, t.badDark, "Belum diingatkan"], stale: [t.warnBg, t.warnBd, t.warnDark, "Diingatkan > 7 hari lalu"], recent: [t.goodBg || t.surf3, t.goodBd || t.line2, t.goodDark, "Sudah diingatkan"], noemail: [t.surf3, t.line2, t.muted, "Email belum ada"] };
+  const togglePick = (n) => setPick((s) => { const x = new Set(s); x.has(n) ? x.delete(n) : x.add(n); return x; });
+  const sendable = shown.filter((o) => o.emails);
+  const openFor = (names) => setModal(names);
+
+  const th = { textAlign: "left", padding: "8px 8px", fontSize: 12, fontWeight: 600, color: t.muted, borderBottom: `1px solid ${t.line}`, whiteSpace: "nowrap" };
+  const td = { padding: "8px 8px", fontSize: 12.5, color: t.ink2, borderBottom: `1px solid ${t.line}`, verticalAlign: "middle" };
+  const fchip = (k, l, n) => (
+    <button key={k} type="button" onClick={() => setFil(k)} aria-pressed={fil === k}
+      style={{ fontFamily: "inherit", fontSize: 12.5, fontWeight: 600, padding: "4px 11px", borderRadius: 99, cursor: "pointer", border: `1px solid ${fil === k ? "#32BCAD" : t.line2}`, background: fil === k ? "#32BCAD1f" : t.surf, color: fil === k ? t.ink : t.ink2 }}>{l} · {n}</button>
+  );
+
+  return (
+    <div style={{ padding: 18 }}>
+      {err && <div style={{ padding: "8px 12px", borderRadius: 10, background: t.badBg, border: `1px solid ${t.badBd}`, color: t.badDark, fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
+      {info && !info.contactsReady && <div style={{ padding: "8px 12px", borderRadius: 10, background: t.warnBg, border: `1px solid ${t.warnBd}`, color: t.warnDark, fontSize: 12.5, marginBottom: 10 }}>Database email partner &amp; riwayat pengingat belum disiapkan (SQL belum dijalankan). Status &ldquo;sudah diingatkan&rdquo; baru tercatat setelah itu.</div>}
+
+      <div style={{ display: "grid", gridTemplateColumns: w >= 900 ? "repeat(4,minmax(0,1fr))" : w >= 520 ? "repeat(2,minmax(0,1fr))" : "1fr", gap: 10, marginBottom: 14 }}>
+        <Kpi t={t} label="Invoice belum disubmit" c={t.bad} value={tot.n} sub={`${rpWord(tot.amt)} · ${owners.length} ${own}`} />
+        <Kpi t={t} label="Sudah diingatkan" c={t.good} value={`${pct(tot.remN, tot.n)}%`} sub={`${tot.remN} invoice · ${rpWord(tot.remAmt)}`} />
+        <Kpi t={t} label={`${Own} belum diingatkan`} c={t.warn} value={cnt("never") + cnt("stale")} sub={`${cnt("never")} belum pernah · ${cnt("stale")} lebih dari 7 hari`} />
+        <Kpi t={t} label={`${Own} tanpa email`} c={t.muted} value={cnt("noemail")} sub={`isi di sheet ${CONTACTS_SHEET}`} />
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: w >= 1100 ? "minmax(0,5fr) minmax(0,7fr)" : "1fr", gap: 14, alignItems: "start" }}>
+        {/* Per program */}
+        <div style={{ border: `1px solid ${t.line}`, borderRadius: 12, padding: 14 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: t.ink }}>Per program</div>
+            {prog && <button type="button" onClick={() => setProg("")} style={{ fontFamily: "inherit", fontSize: 12, border: 0, background: "none", color: "#32BCAD", cursor: "pointer", padding: 0 }}>tampilkan semua</button>}
+          </div>
+          <div style={{ fontSize: 12, color: t.muted, marginBottom: 10, display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, borderRadius: 2, background: t.good }} />Sudah diingatkan</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, borderRadius: 2, background: t.bad }} />Belum</span>
+            <span>· klik program untuk memfilter</span>
+          </div>
+          {byProg.length === 0 ? <div style={{ fontSize: 12.5, color: t.muted, padding: "8px 0" }}>Tidak ada invoice yang belum disubmit.</div> : (() => {
+            const max = Math.max(...byProg.map((r) => r.amt)) || 1;
+            return byProg.map((r) => (
+              <button key={r.k} type="button" onClick={() => setProg(prog === r.k ? "" : r.k)} aria-pressed={prog === r.k}
+                title={`${r.k}: ${r.n} invoice, ${rpWord(r.amt)} · ${r.remN} sudah diingatkan (${rpWord(r.remAmt)})`}
+                style={{ display: "block", width: "100%", textAlign: "left", fontFamily: "inherit", background: prog === r.k ? t.surf3 : "transparent", border: 0, borderRadius: 8, padding: "6px 6px", cursor: "pointer", color: t.ink }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12.5 }}>
+                  <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.k}</span>
+                  <span style={{ color: t.ink2, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{rpWord(r.amt)} · {r.remN}/{r.n}</span>
+                </div>
+                <div style={{ display: "flex", height: 10, marginTop: 4, borderRadius: 99, background: t.surf3, overflow: "hidden" }}>
+                  <div style={{ width: `${(r.remAmt / max) * 100}%`, background: t.good }} />
+                  <div style={{ width: `${((r.amt - r.remAmt) / max) * 100}%`, background: t.bad, marginLeft: r.remAmt && r.amt - r.remAmt ? 2 : 0 }} />
+                </div>
+              </button>
+            ));
+          })()}
+        </div>
+
+        {/* Per partner */}
+        <div style={{ border: `1px solid ${t.line}`, borderRadius: 12, padding: 14, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: t.ink, marginRight: 4 }}>Per {own}{prog ? ` · ${prog}` : ""}</div>
+            {fchip("all", "Semua", owners.length)}{fchip("never", "Belum pernah", cnt("never"))}{fchip("done", "Sudah", cnt("recent") + cnt("stale"))}{fchip("noemail", "Tanpa email", cnt("noemail"))}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+            <Button t={t} sm primary disabled={!pick.size} onClick={() => openFor([...pick])}>✉ Ingatkan terpilih · {pick.size}</Button>
+            <Button t={t} sm disabled={!sendable.length} onClick={() => openFor(sendable.map((o) => o.name))}>✉ Ingatkan semua yang tampil · {sendable.length}</Button>
+            {pick.size > 0 && <Button t={t} sm onClick={() => setPick(new Set())}>Batal pilih</Button>}
+          </div>
+          {shown.length === 0 ? <div style={{ fontSize: 12.5, color: t.muted, padding: "8px 0" }}>Tidak ada {own} di filter ini.</div> : (
+            <div style={{ overflowX: "auto", border: `1px solid ${t.line}`, borderRadius: 10 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead><tr>
+                  <th style={{ ...th, width: 28 }}><input type="checkbox" aria-label="Pilih semua" checked={sendable.length > 0 && sendable.every((o) => pick.has(o.name))} onChange={(e) => setPick(e.target.checked ? new Set(sendable.map((o) => o.name)) : new Set())} /></th>
+                  <th style={th}>{Own}</th>
+                  {!phone && <th style={th}>Program</th>}
+                  <th style={{ ...th, textAlign: "right" }}>Invoice</th>
+                  <th style={th}>Status pengingat</th>
+                  <th style={th} />
+                </tr></thead>
+                <tbody>
+                  {shown.map((o) => { const [bg, bd, c, l] = tone[o.st]; return (
+                    <tr key={o.name}>
+                      <td style={td}><input type="checkbox" disabled={!o.emails} checked={pick.has(o.name)} onChange={() => togglePick(o.name)} aria-label={`Pilih ${o.name}`} /></td>
+                      <td style={{ ...td, color: t.ink, fontWeight: 600, maxWidth: 240 }}>{o.name}<div style={{ fontWeight: 400, fontSize: 12, color: t.muted }}>{o.emails ? `${o.emails} email` : "belum ada email"}</div></td>
+                      {!phone && <td style={{ ...td, maxWidth: 220 }}>{o.progs.join(", ")}</td>}
+                      <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}><div style={{ color: t.ink, fontWeight: 600 }}>{rpWord(o.amt)}</div><div style={{ fontSize: 12, color: t.muted }}>{o.n} invoice{o.remN ? ` · ${o.remN} diingatkan` : ""}</div></td>
+                      <td style={td}>
+                        <span style={{ display: "inline-block", padding: "2px 9px", borderRadius: 99, background: bg, border: `1px solid ${bd}`, color: c, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>{l}</span>
+                        {o.last && <div style={{ fontSize: 12, color: t.muted, marginTop: 3 }}>{fmtWhen(o.last.at)} · {o.last.count}×</div>}
+                      </td>
+                      <td style={{ ...td, textAlign: "right" }}><Button t={t} sm disabled={!o.emails} title={o.emails ? undefined : `Tambahkan email di sheet ${CONTACTS_SHEET}`} onClick={() => openFor([o.name])}>✉ Ingatkan</Button></td>
+                    </tr>
+                  ); })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {modal && <InvoiceReminderModal items={items} owners={modal} allOwners={allOwners} isAg={isAg} t={t} showToast={showToast}
+        onClose={() => { setModal(null); setPick(new Set()); setReload((n) => n + 1); }} />}
     </div>
   );
 }
