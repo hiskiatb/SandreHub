@@ -55,6 +55,7 @@ import MFTS_Module      from "./components/MFTS_Module";
 import MenuAccessManager from "./components/MenuAccessManager";
 import PTS_Module        from "./components/PTS_Module";
 import ReportMerge_Module from "./components/ReportMerge_Module";
+import KPI_InternalSales  from "./components/KPI_InternalSales";
 import PNL_MPX_Menu       from "./components/PNL_MPX_Menu";
 import AdminMcMapping     from "./components/AdminMcMapping";
 import AdminAreaMapping   from "./components/AdminAreaMapping";
@@ -262,7 +263,7 @@ const getCurrentYear      = () => CURRENT_YEAR.toString();
 // sendiri (lihat DSE_ProdAR.jsx) - date picker bulan/tahun di header jadi
 // redundan & membingungkan kalau tetap tampil di halaman ini.
 const DATA_PROVIDED_BULK_VIEW = "data-provided-bulk-v2"; // dideklarasikan di sini (BUKAN di dekat PNL_VIEWS_V2 di bawah) krn dipakai duluan oleh HIDE_DATE_PICKER_VIEWS tepat di bawah ini - const harus sudah ada sebelum dipakai (TDZ).
-const HIDE_DATE_PICKER_VIEWS    = new Set(["overview","control-center","pivot-summary","pnl-mpx-v2","control-center-v2","pivot-summary-v2","payout-tracker","admin-panel","import-wizard","sdp-status","sdp2","mc-cluster","kode-otoritas","mfts","menu-access","promotor-tracking","pnl-mpx","dse-prod-ar","user-management","summary-v2","pendapatan-v2","pengeluaran-v2",DATA_PROVIDED_BULK_VIEW]); // UPDATE (permintaan user - "pindahkan period selector yg sebelumnya disamping navbar, jadi di sebelah kanan button pengeluaran, rata kanan"): date picker global di navbar disembunyikan khusus utk 3 tab Summary/Pendapatan/Pengeluaran V2 - gantinya dipasang ulang di baris tab (lihat blok "Laporan P&L" V2 di bawah).
+const HIDE_DATE_PICKER_VIEWS    = new Set(["overview","control-center","pivot-summary","pnl-mpx-v2","control-center-v2","pivot-summary-v2","payout-tracker","kpi-internal-sales","admin-panel","import-wizard","sdp-status","sdp2","mc-cluster","kode-otoritas","mfts","menu-access","promotor-tracking","pnl-mpx","dse-prod-ar","user-management","summary-v2","pendapatan-v2","pengeluaran-v2",DATA_PROVIDED_BULK_VIEW]); // UPDATE (permintaan user - "pindahkan period selector yg sebelumnya disamping navbar, jadi di sebelah kanan button pengeluaran, rata kanan"): date picker global di navbar disembunyikan khusus utk 3 tab Summary/Pendapatan/Pengeluaran V2 - gantinya dipasang ulang di baris tab (lihat blok "Laporan P&L" V2 di bawah).
 
 // Daftar role di tabel profiles, dipakai dropdown "Pilih Role" di menu
 // User Management (permintaan user - "beda beda untuk detailnya"). ready:
@@ -672,6 +673,10 @@ export default function DashboardPage() {
   const isReadOnly      = isIOHAny;
   const canMonitor      = isSPM || isIOHAny || isMPX;
   const canSdp          = isSPM || isSDPMember || isIOHAny;   // IOH: lihat saja (read-only)
+  // KPI Internal Sales: lihat = SPM + Internal IOH (regional IOH otomatis
+  // difilter ke region-nya); upload = SPM + internal_ioh (admin IOH Sumatera).
+  const canKpiIS         = isSPM || isIOHAny;
+  const canUploadKpiIS   = isSPM || hasRole(profile, "internal_ioh");
   const canReportMerge   = isSPM || isIOHAny;   // Report Merge: SPM Sumatera + Internal IOH, Admin Partner (MDI) TIDAK boleh
   // Audiens asli menu "MPX P&L Report V1" di sidebar (permintaan user -
   // "untuk mpx p&l report v1 pindahkan ke archive") - dipisah jadi
@@ -1170,6 +1175,7 @@ export default function DashboardPage() {
                     </>
                   )}
                   {!isSDPMember && !isMPX && !isAdminArea && <SNavItem icon={<Wallet size={14} />}      label="Payout Tracker"       active={view === "payout-tracker"} maint={menuMaint("payout-tracker")} onClick={() => navigate("payout-tracker")} />}
+                  {canKpiIS && <SNavItem icon={<TrendingUp size={14} />} label="KPI Internal Sales" active={view === "kpi-internal-sales"} onClick={() => navigate("kpi-internal-sales")} />}
                   {canSdp       && <SNavItem icon={<Store size={14} />}       label="SDP Management"       active={view === "sdp2"}           onClick={() => navigate("sdp2")} />}
                   {/* UPDATE (permintaan user - "mapping admin mc itu
                       seharusnya didalam dse prod, bukan menjadi menu
@@ -1458,6 +1464,14 @@ export default function DashboardPage() {
                       accent={{ color: "#C6168D", bg: d ? "rgba(198,22,141,0.11)" : "rgba(198,22,141,0.07)", bd: d ? "rgba(198,22,141,0.28)" : "rgba(198,22,141,0.16)", shadow: "rgba(198,22,141,0.16)" }} />
                   )}
 
+                  {/* KPI Internal Sales — upload Excel KPI bulanan, tampil dashboard skor */}
+                  {canKpiIS && (
+                    <DashCard icon={<TrendingUp size={20} />} title="KPI Internal Sales"
+                      desc="Skor KPI HOR, HOA, DSO, DSP & KAM per bulan: ringkasan, ranking, dan rincian per orang."
+                      tag="Baru" active={true} onClick={() => navigate("kpi-internal-sales")} t={t} d={d}
+                      accent={{ color: d ? "#F59E0B" : "#D97706", bg: d ? "rgba(245,158,11,0.12)" : "rgba(217,119,6,0.07)", bd: d ? "rgba(245,158,11,0.30)" : "rgba(217,119,6,0.18)", shadow: "rgba(217,119,6,0.16)" }} />
+                  )}
+
                   {/* SDP Management — SPM, BSM, CSE, PIC, dan IOH (lihat saja) */}
                   {canSdp && (
                     <DashCard icon={<Store size={20} />} title="SDP Management"
@@ -1671,6 +1685,14 @@ export default function DashboardPage() {
               <motion.div key="pt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
                 <PayoutTracker theme={theme} profile={profile} regionFilter={iohRegionView} partnerName={isMPX ? (profile?.partner_name || null) : (activePartner || null)} filterType={activeType !== "ALL" ? activeType : null} readOnly={isReadOnly} masterData={masterData} />
+              </motion.div>
+            )}
+
+            {/* ── KPI Internal Sales ── */}
+            {view === "kpi-internal-sales" && canKpiIS && (
+              <motion.div key="kpi-is" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
+                <KPI_InternalSales t={t} d={d} profile={profile} canUpload={canUploadKpiIS} regionFilter={iohRegionView} />
               </motion.div>
             )}
 
