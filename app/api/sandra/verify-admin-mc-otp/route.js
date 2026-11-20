@@ -84,9 +84,29 @@ export async function POST(req) {
       const { data } = await supabaseAdmin.rpc("mf_dse_admin_area_lookup", { p_email: cleanEmail });
       areaLookup = data;
     }
+    // FIX (bug "sudah daftar jadi Region Level tapi masih ditolak pas
+    // verifikasi OTP" - endpoint ini TADINYA cuma tau Admin MC/Admin Area,
+    // padahal /sandra/login (jalur umum) SUDAH mendeteksi & mengirim OTP
+    // juga utk Partner Level/Circle/Region Level (lihat loop mf_dse_admin_
+    // {partner,circle,region}_lookup di handleEmailNext) - langkah
+    // verifikasi di sini ketinggalan, jadi 3 role baru itu SELALU gagal di
+    // step ini meski OTP-nya sendiri benar. Sekarang dicek juga.
+    let partnerLookup = null, circleLookup = null, regionLookup = null;
     if (!mcLookup?.found && !areaLookup?.found) {
+      const { data } = await supabaseAdmin.rpc("mf_dse_admin_partner_lookup", { p_email: cleanEmail });
+      partnerLookup = data;
+    }
+    if (!mcLookup?.found && !areaLookup?.found && !partnerLookup?.found) {
+      const { data } = await supabaseAdmin.rpc("mf_dse_admin_circle_lookup", { p_email: cleanEmail });
+      circleLookup = data;
+    }
+    if (!mcLookup?.found && !areaLookup?.found && !partnerLookup?.found && !circleLookup?.found) {
+      const { data } = await supabaseAdmin.rpc("mf_dse_admin_region_lookup", { p_email: cleanEmail });
+      regionLookup = data;
+    }
+    if (!mcLookup?.found && !areaLookup?.found && !partnerLookup?.found && !circleLookup?.found && !regionLookup?.found) {
       return NextResponse.json(
-        { success: false, error: "Email ini belum terdaftar sebagai Admin MC atau Admin Area." },
+        { success: false, error: "Email ini belum terdaftar sebagai Admin MC, Admin Area, Partner Level, Circle, atau Region Level." },
         { status: 403 }
       );
     }
