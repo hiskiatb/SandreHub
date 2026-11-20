@@ -117,13 +117,23 @@ async function recipients(auth, body) {
   return Response.json({ owners: out, contactsReady: true, logReady });
 }
 
+// Pengirim: sama dengan Report Merge / Smart Mail (env SENDER_EMAIL + SENDER_NAME, default
+// snd@spmsumatera.site). SENDER_EMAIL boleh berupa alamat saja atau "Nama <alamat>".
+const DEFAULT_SENDER_EMAIL = "snd@spmsumatera.site";
+const DEFAULT_SENDER_NAME = "Sales & Distribution Sumatera";
+function senderFrom() {
+  const email = (process.env.SENDER_EMAIL || DEFAULT_SENDER_EMAIL).trim();
+  if (email.includes("<")) return email;
+  return `${(process.env.SENDER_NAME || DEFAULT_SENDER_NAME).trim()} <${email}>`;
+}
+
 async function send(auth, body, req) {
   if (!process.env.RESEND_API_KEY) return jsonError("Email service is not configured (RESEND_API_KEY).", 500);
   const segment = seg(body.segment);
   const note = String(body.note || "").trim().slice(0, 2000);
   const items = (Array.isArray(body.items) ? body.items : []).slice(0, MAX_OWNERS);
   if (!items.length) return jsonError("Pilih minimal satu partner/agency.");
-  const from = process.env.SENDER_EMAIL || "SandraHub <no-reply@sandrahub.io>";
+  const from = senderFrom();
   const resend = new Resend(process.env.RESEND_API_KEY);
   const senderName = auth.profile.full_name || "";
   const base = appUrl(req);
