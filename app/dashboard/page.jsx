@@ -1392,13 +1392,13 @@ export default function DashboardPage() {
                               MDI_Dashboard.jsx. SPM-only, sama scope-nya
                               dgn Control Center/Pivot Summary di atas
                               (data lintas semua Partner). */}
-                          {isSPM && <SNavItem icon={<Trophy size={13} />} label="MDI Dashboard" active={view === "mdi-dashboard"} onClick={() => navigate("mdi-dashboard")} />}
+                          {(isSPM || isAdminLevel) && <SNavItem icon={<Trophy size={13} />} label="MDI Dashboard" active={view === "mdi-dashboard"} onClick={() => navigate("mdi-dashboard")} />}
                           {isTrueSPM && <SNavItem icon={<Upload size={13} />} label="Upload Data Provided" active={view === DATA_PROVIDED_BULK_VIEW} onClick={() => navigate(DATA_PROVIDED_BULK_VIEW)} />}
                         </div>
                       )}
                     </>
                   )}
-                  {!isSDPMember && !isMPX && !isAdminArea && <SNavItem icon={<Wallet size={14} />}      label="Payout Tracker"       active={view === "payout-tracker"} maint={menuMaint("payout-tracker")} onClick={() => navigate("payout-tracker")} />}
+                  {!isSDPMember && !isMPX && (!isAdminArea || isAdminLevel) && <SNavItem icon={<Wallet size={14} />}      label="Payout Tracker"       active={view === "payout-tracker"} maint={menuMaint("payout-tracker")} onClick={() => navigate("payout-tracker")} />}
                   {canSdp       && <SNavItem icon={<Store size={14} />}       label="SDP Management"       active={view === "sdp2"}           onClick={() => navigate("sdp2")} />}
                   {/* UPDATE (permintaan user - "mapping admin mc itu
                       seharusnya didalam dse prod, bukan menjadi menu
@@ -1686,14 +1686,36 @@ export default function DashboardPage() {
                       Area, dipakai utk analisis"): lihat MDI_Dashboard.jsx.
                       SPM-only - data lintas semua Partner, sama scope-nya
                       dgn Control Center/Pivot Summary. */}
-                  {isSPM && (
+                  {/* FIX (permintaan user - "dashboard mdi juga bisa diakses
+                      harusnya"): dibuka juga ke admin_partner/admin_region/
+                      admin_circle (isAdminLevel) - TETAP tidak ke admin_mc/
+                      admin_area (keduanya cuma dapat MDI P&L Report & Prod.
+                      & AR saja, konsisten dgn posisi mereka di hierarki).
+                      Data-nya di-scope per partner/region di dalam MDI_
+                      Dashboard.jsx sendiri (lihat prop profile/masterData
+                      di bawah) - admin_circle TETAP lihat semua (seluruh
+                      Sumatera), sejalan dgn 3 tingkat yg sama dipakai di
+                      Payout Tracker. */}
+                  {(isSPM || isAdminLevel) && (
                     <DashCard icon={<Trophy size={20} />} title="MDI Dashboard"
                       desc="Slide analisis per Partner per bulan — KPI score, leaderboard PNL, AR, dan produktivitas DSE per Area."
                       tag="Baru" active={true} onClick={() => navigate("mdi-dashboard")} t={t} d={d}
                       accent={{ color: d ? "#FFCB05" : "#C49A00", bg: d ? "rgba(255,203,5,0.13)" : "rgba(255,203,5,0.09)", bd: d ? "rgba(255,203,5,0.30)" : "rgba(255,203,5,0.22)", shadow: "rgba(255,203,5,0.20)" }} />
                   )}
 
-                  {!isSDPMember && !isMPX && !isAdminArea && (
+                  {/* FIX (bug ditemukan user - "admin region ko ga dapat Payout
+                      Tracker, padahal udah SEHARUSNYA bisa"): akun multi-role
+                      (admin_region + admin_area sekaligus, lihat profile_extra_
+                      roles) tadinya SELALU kena blokir `!isAdminArea` di sini -
+                      exclusion itu ditujukan utk admin_area MURNI (domainnya
+                      cuma Prod & AR/HoA), tapi jadi ikut memblokir akun yg
+                      JUGA punya admin_partner/circle/region (yang SEHARUSNYA
+                      dapat Payout Tracker scoped, lihat ROLE_VIEWS di
+                      PayoutTracker.jsx). Sekarang exclusion admin_area
+                      dilonggarkan kalau akun itu JUGA isAdminLevel - sejalan
+                      dgn filosofi "hak akses teratas digabung" yg sudah
+                      dipakai di tempat lain (mis. getCategoryOptionsForRoles). */}
+                  {!isSDPMember && !isMPX && (!isAdminArea || isAdminLevel) && (
                     <DashCard icon={<Wallet size={20} />} title="Payout Tracker"
                       desc="Monitoring pembayaran Partner & Agency Prepaid — SLA, funnel, heatmap, dan raw data."
                       tag="Payout" active={true} onClick={() => navigate("payout-tracker")} t={t} d={d}
@@ -1909,7 +1931,7 @@ export default function DashboardPage() {
             )}
 
             {/* ── Payout Tracker ── */}
-            {view === "payout-tracker" && !isSDPMember && !isMPX && !isAdminArea && !viewUnderMaint && (
+            {view === "payout-tracker" && !isSDPMember && !isMPX && (!isAdminArea || isAdminLevel) && !viewUnderMaint && (
               <motion.div key="pt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
                 <PayoutTracker theme={theme} profile={profile} regionFilter={isAdminRegionRole ? (profile?.partner_name || null) : iohRegionView} partnerName={isMPX ? (profile?.partner_name || null) : isAdminPartnerRole ? (profile?.partner_name || null) : (activePartner || null)} filterType={activeType !== "ALL" ? activeType : null} readOnly={isReadOnly || isAdminLevel} masterData={masterData} />
@@ -1917,10 +1939,10 @@ export default function DashboardPage() {
             )}
 
             {/* ── MDI Dashboard — slide analisis per Partner per bulan ── */}
-            {view === "mdi-dashboard" && isSPM && !viewUnderMaint && (
+            {view === "mdi-dashboard" && (isSPM || isAdminLevel) && !viewUnderMaint && (
               <motion.div key="mdidash" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
-                <MDI_Dashboard theme={theme} />
+                <MDI_Dashboard theme={theme} profile={profile} masterData={masterData} />
               </motion.div>
             )}
 

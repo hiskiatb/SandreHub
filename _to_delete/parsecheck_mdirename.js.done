@@ -1,0 +1,11 @@
+const babel = require("@babel/core");
+const fs = require("fs");
+["app/dashboard/page.jsx","app/dashboard/components/PNL_FormPendapatanV2.jsx"].forEach(filename => {
+  const code = fs.readFileSync(filename, "utf-8");
+  try {
+    babel.transform(code, { filename, presets: ["next/babel"] });
+    console.log(filename, "PARSE_OK");
+  } catch (e) {
+    console.log(filename, "PARSE_FAIL:", e.message);
+  }
+});

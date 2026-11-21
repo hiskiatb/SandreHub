@@ -58,6 +58,28 @@ import supabase from "../../../lib/supabase";
 import { FONT, GRAD, mk, numOrZero, fmtIDR, MONTHS_ID } from "./PNL_V2Shared";
 import { DATA_PROVIDED_ROWS, MARGIN_ROWS, summarizePendapatan } from "./PNL_FormPendapatanV2";
 import { summarizePengeluaran } from "./PNL_FormPengeluaranV2";
+import { hasRole } from "./DSE_ProdAR";
+
+// FIX (permintaan user - "dashboard mdi juga bisa diakses harusnya", lalu
+// scope-nya diklarifikasi: "scoped, admin_partner/region/circle saja, admin_mc
+// & admin_area TETAP tidak akses" - sejalan dgn 3 tingkat yg sama dipakai di
+// Payout Tracker): partner MULTI-VALUE (dipisah koma) pakai normalizeName
+// biar aman dari selisih prefix PT./CV./Tbk. antar sumber data (mf_dse_
+// database.mdi vs masterData.partner_name vs profiles.partner_name) - copy
+// persis dari PayoutTracker.jsx (helper kecil, sengaja diduplikasi di sini
+// drpd di-share lintas file demi kesederhanaan, konsisten dgn pola yg sudah
+// ada di codebase ini).
+function normalizeName(s) {
+  if (!s) return "";
+  let n = s.toString().trim().toUpperCase();
+  for (const sf of [", PT.", ", CV.", ", TBK.", ", PT", ", CV", ", TBK"]) {
+    if (n.endsWith(sf)) { n = n.slice(0, -sf.length).trimEnd().replace(/,\s*$/, "").trim(); break; }
+  }
+  for (const pf of ["PT. ", "CV. ", "TBK. ", "PT ", "CV ", "TBK "]) {
+    if (n.startsWith(pf)) { n = n.slice(pf.length).trim(); break; }
+  }
+  return n.trim();
+}
 
 const START_YEAR = 2026;
 const now = new Date();
@@ -339,7 +361,7 @@ const slideVariants = {
   exit: (dir) => ({ x: dir >= 0 ? -48 : 48, opacity: 0 }),
 };
 
-export default function MDI_Dashboard({ theme }) {
+export default function MDI_Dashboard({ theme, profile, masterData }) {
   const d = theme === "dark";
   const t = useMemo(() => mk(d), [d]);
 
@@ -527,8 +549,35 @@ export default function MDI_Dashboard({ theme }) {
           };
         });
 
-        setSlides(built);
-        setIdx((i) => (built.length ? Math.min(i, built.length - 1) : 0));
+        // FIX (permintaan user - "dashboard mdi juga bisa diakses harusnya",
+        // scope: admin_partner/region/circle saja, filtering data konsisten
+        // dgn 3 tingkat Payout Tracker - circle = seluruh Sumatera (TANPA
+        // filter, sama spt SPM), region = partner2 yg region-nya cocok
+        // (ditautkan via masterData.region, krn built[].partner tidak py
+        // info region sendiri), partner = cocokkan nama partner langsung.
+        // "Hak akses teratas digabung": kalau akun py >1 role sekaligus,
+        // yg terluas menang (circle > region > partner).
+        let scoped = built;
+        if (!hasRole(profile, "admin_circle")) {
+          if (hasRole(profile, "admin_region")) {
+            const targetRegions = String(profile?.partner_name || "").split(",").map((r) => r.toUpperCase().trim()).filter(Boolean);
+            if (targetRegions.length) {
+              scoped = scoped.filter((sl) => {
+                const match = (masterData || []).find((m) => normalizeName(m.partner_name) === normalizeName(sl.partner));
+                const region = match?.region?.toUpperCase().trim();
+                return region && targetRegions.includes(region);
+              });
+            }
+          } else if (hasRole(profile, "admin_partner")) {
+            const targetPartners = String(profile?.partner_name || "").split(",").map((p) => normalizeName(p.trim())).filter(Boolean);
+            if (targetPartners.length) {
+              scoped = scoped.filter((sl) => targetPartners.includes(normalizeName(sl.partner)));
+            }
+          }
+        }
+
+        setSlides(scoped);
+        setIdx((i) => (scoped.length ? Math.min(i, scoped.length - 1) : 0));
       } catch (e) {
         if (!cancelled) setErr(e.message || "Gagal memuat data MDI Dashboard.");
       } finally {
@@ -536,7 +585,7 @@ export default function MDI_Dashboard({ theme }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [month, year]);
+  }, [month, year, profile, masterData]);
 
   const total = slides.length;
   const goto = useCallback((i, direction) => {

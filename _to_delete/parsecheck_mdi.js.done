@@ -1,0 +1,15 @@
+const babel = require("@babel/core");
+const fs = require("fs");
+const files = [
+  "app/dashboard/components/MDI_Dashboard.jsx",
+  "app/dashboard/page.jsx",
+];
+for (const f of files) {
+  const code = fs.readFileSync(f, "utf8");
+  try {
+    babel.transform(code, { presets: ["next/babel"], filename: f });
+    console.log(f, "PARSE OK");
+  } catch (e) {
+    console.log(f, "PARSE FAIL:", e.message);
+  }
+}

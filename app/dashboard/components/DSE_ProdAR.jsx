@@ -5862,10 +5862,26 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // Admin Area tapi TANPA exception "kalau ada role lain yg bisa edit"
   // (role2 ini belum pernah dikombinasikan dgn role edit manapun).
   const isAdminLevel = hasAnyRole(profile, ["admin_partner", "admin_circle", "admin_region"]);
-  // Admin Area dipaksa view-only utk tab "dse" HANYA kalau dia TIDAK juga
-  // punya role lain yg berhak edit (admin_partner_mdi/spm_sumatera) - "kalau
-  // terdaftar di dua role, salah satunya bisa edit, maka dia bisa edit".
-  const dseEditLocked = (isAdminArea && !isMPX && !isSPM) || isAdminLevel;
+  // FIX (permintaan user - "ubah agar admin area bisa ubah juga, berlaku
+  // utk semua email yg mengalami hal yg sama & kedepannya"): BANYAK akun
+  // admin_area (mis. partner PT ULTIMA MULTIMEDIA JAYA - Padang,
+  // Pekanbaru, dkk, dilaporkan user via WhatsApp - "kenapa tidak bisa
+  // isi report penjualan") TERNYATA staff operasional yg tugasnya
+  // SEHARI-HARI isi laporan DSE (Penjualan SP/FWA/Voucher/Saldo +
+  // Informasi DSE + AR/Piutang) - desain lama di bawah ini (dicoret)
+  // memaksa SEMUA admin_area view-only, asumsi awalnya role ini cuma
+  // dipakai utk pengawas/supervisor. Sekarang admin_area dibebaskan
+  // PENUH dari forceLock ini (sama spt admin_mc/MPX), berlaku global &
+  // permanen utk SEMUA email admin_area (bukan cuma partner tertentu).
+  // RLS INSERT/UPDATE di mf_dse_prod_ar/ar_piutang_items/
+  // ar_piutang_payments/mf_dse_info_periods JUGA sudah ditambah policy
+  // khusus admin_area (migration allow_admin_area_write_dse_sales_and_
+  // ar) - dso_piutang_*/hoa_piutang_* & mf_dse_database SUDAH PUNYA
+  // policy write admin_area dari sebelumnya, cuma 4 tabel di atas yg
+  // ketinggalan. isAdminLevel (admin_partner/circle/region - role BARU
+  // lain, beda tujuan) TETAP view-only murni spt sebelumnya, TIDAK
+  // diubah oleh fix ini.
+  const dseEditLocked = isAdminLevel;
 
   // UPDATE (permintaan user - satu email Admin District sekarang bisa dipasang ke
   // lebih dari 1 District lewat mf_dse_admin_mc_mapping): dulu lockedMc cuma 1

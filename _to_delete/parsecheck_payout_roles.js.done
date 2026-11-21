@@ -1,0 +1,20 @@
+const babel = require("@babel/core");
+const fs = require("fs");
+const path = require("path");
+const files = [
+  "../app/dashboard/components/PayoutTracker.jsx",
+  "../app/dashboard/page.jsx",
+];
+let ok = true;
+files.forEach((f) => {
+  const filePath = path.resolve(__dirname, f);
+  const code = fs.readFileSync(filePath, "utf-8");
+  try {
+    babel.transform(code, { presets: ["next/babel"], filename: filePath });
+    console.log("PARSE OK:", f);
+  } catch (e) {
+    ok = false;
+    console.error("PARSE ERROR:", f, e.message);
+  }
+});
+if (!ok) process.exit(1);

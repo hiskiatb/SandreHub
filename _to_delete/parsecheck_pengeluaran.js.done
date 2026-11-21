@@ -1,0 +1,12 @@
+const babel = require("@babel/core");
+const fs = require("fs");
+const path = require("path");
+const filePath = path.resolve(__dirname, "../app/dashboard/components/PNL_FormPengeluaranV2.jsx");
+const code = fs.readFileSync(filePath, "utf-8");
+try {
+  babel.transform(code, { presets: ["next/babel"], filename: filePath });
+  console.log("PARSE OK");
+} catch (e) {
+  console.error("PARSE ERROR:", e.message);
+  process.exit(1);
+}
