@@ -16,16 +16,18 @@
 //   2) "Data Provided (Area Level)" — diisi SPM SUMATERA (bukan
 //      partner): SLA Fee, TDS, Sales Margin Otomatis, Sales Margin,
 //      Tactical Program HQ/Circle/Region, Champion Rewards, Other
-//      Rewards.
+//      Rewards. Read-only di sini - tombol "Bulk Upload" yg sebelumnya
+//      ada di section ini DIHAPUS (permintaan user: duplikat dgn menu
+//      terpisah "Upload Data Provided" di landing MDI P&L Report yg
+//      memanggil komponen bulk-upload yg sama utk SEMUA Branch/Partner).
 // Disimpan ke tabel `pnl_reports_v2` (terpisah dari pnl_reports V1),
 // 1 baris per partner+branch+mpc_mp3+month+year.
 import { useEffect, useMemo, useState, useCallback } from "react";
-import { ArrowUpRight, Banknote, Info, Lock, Save, ShieldCheck, Upload } from "lucide-react";
+import { ArrowUpRight, Banknote, Gauge, Info, Lock, Save, ShieldCheck } from "lucide-react";
 import supabase from "../../../lib/supabase";
-import PNL_DataProvidedBulkUpload from "./PNL_DataProvidedBulkUpload";
 import {
-  FONT, mk, V2Styles, NumInput, Card, Body, SecLabel, TH, FormHeader, SecHero,
-  SubtotalBanner, FooterBar, LoadingBlock, toMonthInt, toYearInt, numOrZero, fmtIDR, ctxKeyOf,
+  FONT, GRAD, mk, V2Styles, NumInput, Card, Body, SecLabel, TH, FormHeader, SecHero,
+  SubtotalBanner, FooterBar, LoadingBlock, toMonthInt, toYearInt, numOrZero, fmtIDR, fmtPct, ctxKeyOf,
 } from "./PNL_V2Shared";
 
 // 6 baris margin partner — id dipakai sebagai key kolom DB (margin_<id>
@@ -57,6 +59,15 @@ export const DATA_PROVIDED_ROWS = [
   { id: "tactical_program_region", label: "Tactical Program Region" },
   { id: "champion_rewards", label: "Champion Rewards" },
   { id: "other_rewards", label: "Other Rewards" },
+  // BARU (permintaan user - "tambahkan KPI score di sebelah kanannya" +
+  // "nanti diupload bersamaan dengan SLA Fee, TDS, dll" + "formatnya
+  // persentase"): satu-satunya baris di sini yang nilainya PERSEN, bukan
+  // Rupiah - ditandai isScore supaya DIKECUALIKAN dari semua penjumlahan
+  // uang (totalDataProvided/summarizePendapatan) dan dari tabel
+  // Komponen/Nominal (Rp) di bawah, tapi tetap ikut di alur upload/
+  // download Bulk Upload Data Provided yang sama (array ini jg dipakai
+  // generik oleh PNL_DataProvidedBulkUpload.jsx).
+  { id: "kpi_score", label: "KPI Score (%)", isScore: true },
 ];
 
 // Ringkasan pendapatan dari 1 baris pnl_reports_v2 - dipakai juga oleh
@@ -64,7 +75,7 @@ export const DATA_PROVIDED_ROWS = [
 export function summarizePendapatan(row) {
   let totalIm3 = 0, total3id = 0, totalDataProvided = 0;
   MARGIN_ROWS.forEach((r) => { totalIm3 += numOrZero(row?.[`margin_${r.id}`]); total3id += numOrZero(row?.[`margin_${r.id}_3id`]); });
-  DATA_PROVIDED_ROWS.forEach((r) => { totalDataProvided += numOrZero(row?.[r.id]); });
+  DATA_PROVIDED_ROWS.forEach((r) => { if (!r.isScore) totalDataProvided += numOrZero(row?.[r.id]); });
   const totalMargin = totalIm3 + total3id;
   const luarTemplate = numOrZero(row?.luar_template_amount);
   return { totalIm3, total3id, totalMargin, luarTemplate, totalDataProvided, grandTotal: totalMargin + luarTemplate + totalDataProvided };
@@ -77,7 +88,25 @@ const LockNote = ({ children, t }) => (
   <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: 99, border: `1px solid ${t.line}`, background: t.sub, fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: t.mid, flexShrink: 0, whiteSpace: "nowrap" }}><Lock size={10} />{children}</span>
 );
 
-export default function PNL_FormPendapatanV2({ theme, profile, activeContext, canEditPendapatan, canEditDataProvided, setIsFormDirty, readOnly, masterData }) {
+// BARU (permintaan user - "jelaskan yang diinput merupakan margin bukan
+// total penjualan" + "tidak perlu ada kalkulator pembantu cukup diinfo
+// secara jelas"): warna solid dipakai sbg badge kolom IM3/3ID - kontrasnya
+// jauh lebih jelas drpd teks kuning/magenta tipis di atas putih, biar
+// user langsung ngeh lagi ngisi kolom yang mana. Kalkulator bantu
+// (Harga Jual − Harga Modal) SEMPAT dibikin tapi dicabut lagi atas
+// permintaan user - cukup catatan teks penjelas di atas tabel (lihat di
+// bawah). CATATAN: NumInput (PNL_V2Shared.jsx) sudah MEMANG tidak bisa
+// menerima angka minus sama sekali (filternya `replace(/\D/g,"")` buang
+// semua karakter non-digit termasuk "-"), jadi aturan "margin di sini
+// tidak boleh minus" sudah otomatis terjaga dari sisi input - selisih
+// minus (Harga Jual < Harga Modal) seharusnya dicatat di Marketing Cost
+// (Form Pengeluaran), bukan di sini.
+const MARGIN_COL_ACCENT = {
+  im3: { solid: "#D97706" },
+  id3: { solid: "#C6168D" },
+};
+
+export default function PNL_FormPendapatanV2({ theme, profile, activeContext, canEditPendapatan, setIsFormDirty, readOnly, masterData }) {
   const d = theme === "dark";
   const t = useMemo(() => mk(d), [d]);
 
@@ -89,21 +118,15 @@ export default function PNL_FormPendapatanV2({ theme, profile, activeContext, ca
   const [luarTemplateNote, setLuarTemplateNote] = useState("");
   const [dataProvided, setDataProvided] = useState(emptyDataProvided);
   const [dirty, setDirty] = useState(false);
-  // BARU (permintaan user - "buat sistem untuk pengupload data yang kita
-  // provide, dan bisa download template ... pertama kita pilih periode
-  // dulu"): modal bulk upload Data Provided, dipakai SPM biar ga perlu
-  // isi 1-1 per Partner+Branch via form di atas.
-  const [showBulkUpload, setShowBulkUpload] = useState(false);
   const loading = !!ctxKey && loadedKey !== ctxKey;
 
   const canEditIncome = !!canEditPendapatan && !readOnly;
-  // canEditProvided sekarang CUMA ngontrol tampil/tidaknya tombol "Bulk
-  // Upload" (satu-satunya jalur isi Data Provided) - bukan lagi dipakai
-  // utk bikin tabel Data Provided bisa diketik manual, dan bukan lagi
-  // dihitung ke canSave krn handleSave tidak pernah nulis kolom Data
-  // Provided lagi (lihat handleSave di atas).
-  const canEditProvided = !!canEditDataProvided && !readOnly;
   const canSave = canEditIncome;
+  // BARU (permintaan user - "kalo nominal diisi, keterangan menjadi
+  // mandatory"): Nominal "Di Luar Template" > 0 tanpa Keterangan jadi
+  // angka misterius yg sulit diaudit nanti - begitu Nominal diisi,
+  // Keterangan wajib diisi juga sebelum form bisa disimpan.
+  const luarTemplateNoteRequired = numOrZero(luarTemplateAmount) > 0 && !luarTemplateNote.trim();
 
   const markDirty = useCallback(() => { setDirty(true); setIsFormDirty?.(true); }, [setIsFormDirty]);
 
@@ -141,13 +164,17 @@ export default function PNL_FormPendapatanV2({ theme, profile, activeContext, ca
   const totals = useMemo(() => {
     let im3 = 0, id3 = 0, dp = 0;
     MARGIN_ROWS.forEach((r) => { im3 += numOrZero(margin[r.id]?.im3); id3 += numOrZero(margin[r.id]?.id3); });
-    DATA_PROVIDED_ROWS.forEach((r) => { dp += numOrZero(dataProvided[r.id]); });
+    DATA_PROVIDED_ROWS.forEach((r) => { if (!r.isScore) dp += numOrZero(dataProvided[r.id]); });
     const luar = numOrZero(luarTemplateAmount);
     return { im3, id3, margin: im3 + id3, luar, partner: im3 + id3 + luar, dataProvided: dp };
   }, [margin, dataProvided, luarTemplateAmount]);
 
   const handleSave = async () => {
     if (!ctxKey) return;
+    if (luarTemplateNoteRequired) {
+      alert("Keterangan wajib diisi kalau Nominal \"Di Luar Template\" tidak kosong.");
+      return;
+    }
     setSaving(true);
     try {
       const payload = {
@@ -197,13 +224,25 @@ export default function PNL_FormPendapatanV2({ theme, profile, activeContext, ca
           <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 28 }}>
             <Card t={t}><Body>
               <SecLabel t={t}>Total Margin Penjualan</SecLabel>
+              {/* BARU (permintaan user - "jelaskan yang diinput merupakan
+                  margin bukan total penjualan"): catatan tegas di atas
+                  tabel - angka yg diisi di sini bukan omzet/nilai jual
+                  kotor, tapi MARGIN (selisih Jual-Modal) yg sudah bersih. */}
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 9, padding: "10px 14px", borderRadius: 9, background: t.blueBg, border: `1px solid ${t.blueBd}`, marginBottom: 16, fontSize: 12, color: t.mid, lineHeight: 1.55 }}>
+                <Info size={14} style={{ flexShrink: 0, marginTop: 1, color: t.blue }} />
+                <span><b style={{ color: t.hi }}>Yang diisi di sini adalah MARGIN, bukan total penjualan (omzet).</b> Margin = Harga Jual − Harga Modal. Nilai di kolom ini <b style={{ color: t.hi }}>tidak boleh minus</b> — kalau hasil hitungan Harga Jual − Harga Modal minus, itu artinya selisihnya dicatat sebagai <b style={{ color: t.hi }}>Marketing Cost</b> (di Form Pengeluaran), bukan di sini.</span>
+              </div>
               <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 560 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 600 }}>
                   <thead>
                     <tr style={{ borderBottom: `1px solid ${t.line}` }}>
                       <TH t={t}>Produk</TH>
-                      <TH t={t} align="right" width={170} color={t.amber}>IM3</TH>
-                      <TH t={t} align="right" width={170} color="#C6168D">3ID</TH>
+                      <th style={{ padding: "7px 8px", width: 190, textAlign: "right" }}>
+                        <span style={{ display: "inline-flex", padding: "3px 11px", borderRadius: 6, fontSize: 10.5, fontWeight: 800, letterSpacing: "0.06em", background: MARGIN_COL_ACCENT.im3.solid, color: "#fff" }}>IM3</span>
+                      </th>
+                      <th style={{ padding: "7px 8px", width: 190, textAlign: "right" }}>
+                        <span style={{ display: "inline-flex", padding: "3px 11px", borderRadius: 6, fontSize: 10.5, fontWeight: 800, letterSpacing: "0.06em", background: MARGIN_COL_ACCENT.id3.solid, color: "#fff" }}>3ID</span>
+                      </th>
                       <TH t={t} align="right" width={140}>Total</TH>
                     </tr>
                   </thead>
@@ -213,11 +252,11 @@ export default function PNL_FormPendapatanV2({ theme, profile, activeContext, ca
                       return (
                         <tr key={r.id} className="v2row" style={{ borderBottom: `1px solid ${t.lineH}` }}>
                           <td style={{ padding: "9px 8px", fontWeight: 700, color: t.hi }}>{r.label}</td>
-                          <td style={{ padding: "9px 6px", width: 170 }}>
+                          <td style={{ padding: "9px 6px", width: 190 }}>
                             <NumInput numericValue={margin[r.id]?.im3} readOnly={!canEditIncome}
                               onChange={(v) => { setMargin((p) => ({ ...p, [r.id]: { ...p[r.id], im3: v } })); markDirty(); }} />
                           </td>
-                          <td style={{ padding: "9px 6px", width: 170 }}>
+                          <td style={{ padding: "9px 6px", width: 190 }}>
                             <NumInput numericValue={margin[r.id]?.id3} readOnly={!canEditIncome}
                               onChange={(v) => { setMargin((p) => ({ ...p, [r.id]: { ...p[r.id], id3: v } })); markDirty(); }} />
                           </td>
@@ -236,40 +275,77 @@ export default function PNL_FormPendapatanV2({ theme, profile, activeContext, ca
               </div>
             </Body></Card>
 
-            <Card t={t}><Body>
-              <SecLabel t={t}>Di Luar Template</SecLabel>
-              <div style={{ display: "grid", gridTemplateColumns: "minmax(180px, 240px) 1fr", gap: 14, alignItems: "start" }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 10, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: t.mid, marginBottom: 6 }}>Nominal (Rp)</label>
-                  <NumInput numericValue={luarTemplateAmount} readOnly={!canEditIncome}
-                    onChange={(v) => { setLuarTemplateAmount(v); markDirty(); }} />
+            <Card t={t} style={{ overflow: "hidden" }}>
+              {/* FIX (permintaan user - "rapikan bagian ini menjadi sangat
+                  bagus"): header diganti dari SecLabel polos (cuma garis
+                  merah + teks) jadi icon-badge + judul + subteks penjelas,
+                  dipisah garis tipis dari isi form - mengikuti gaya
+                  SecHero yg sudah dipakai utk section "Data Provided" di
+                  bawah, supaya section opsional/"di luar kebiasaan" ini
+                  kelihatan beda & lebih jelas maksudnya drpd cuma label
+                  generik. */}
+              <div style={{ padding: "20px 24px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: t.blueBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <Banknote size={17} color={t.blue} strokeWidth={2} />
                 </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 10, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: t.mid, marginBottom: 6 }}>Keterangan</label>
-                  <textarea className="v2ta" rows={2} disabled={!canEditIncome} value={luarTemplateNote}
-                    placeholder="Jelaskan pendapatan di luar template di atas..."
-                    onChange={(e) => { setLuarTemplateNote(e.target.value); markDirty(); }} />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: t.hi, letterSpacing: "-0.01em" }}>Pendapatan Lain di Luar Template</div>
+                  <div style={{ fontSize: 11.5, color: t.lo, marginTop: 1 }}>Pendapatan tambahan di luar kategori Margin Penjualan di atas (opsional)</div>
                 </div>
               </div>
-            </Body></Card>
+              <div style={{ height: 1, background: t.lineH }} />
+              <Body style={{ paddingTop: 20 }}>
+                {/* FIX (permintaan user - "apa keterangan nya dibawah ya
+                    agar lebih rapi karena ini tinggi kolom kan beda"):
+                    dulu Nominal & Keterangan sejajar 2 kolom - tinggi
+                    textarea Keterangan (apalagi kalau isinya panjang,
+                    jadi beberapa baris) bikin dua kolom itu ga rata/rapi.
+                    Sekarang ditumpuk vertikal: Nominal di atas (lebar
+                    dibatasi spy ga melebar penuh tanpa alasan), Keterangan
+                    di bawah full width. */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+                  <div style={{ maxWidth: 260 }}>
+                    <label style={{ display: "block", fontSize: 10, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: t.mid, marginBottom: 6 }}>Nominal (Rp)</label>
+                    <NumInput numericValue={luarTemplateAmount} readOnly={!canEditIncome}
+                      onChange={(v) => { setLuarTemplateAmount(v); markDirty(); }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: 10, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: t.mid, marginBottom: 6 }}>
+                      Keterangan{numOrZero(luarTemplateAmount) > 0 && <span style={{ color: t.red }}> *</span>}
+                    </label>
+                    <textarea className="v2ta" rows={2} disabled={!canEditIncome} value={luarTemplateNote}
+                      placeholder="Jelaskan pendapatan di luar template di atas..."
+                      style={luarTemplateNoteRequired ? { borderColor: t.red, boxShadow: `0 0 0 3px ${t.redBg}` } : undefined}
+                      onChange={(e) => { setLuarTemplateNote(e.target.value); markDirty(); }} />
+                    {luarTemplateNoteRequired && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 6, fontSize: 11, fontWeight: 600, color: t.red }}>
+                        <Info size={11} />Wajib diisi karena Nominal sudah diisi.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </Body>
+            </Card>
 
-            <SubtotalBanner label="Total Pendapatan Partner" value={totals.partner} />
+            <SubtotalBanner label={`Total Pendapatan Area ${activeContext?.branch || "—"}`} value={totals.partner} />
           </div>
 
-          {/* ── Data Provided (Area Level) — diisi SPM ── */}
-          <SecHero icon={ShieldCheck} eyebrow="Diisi oleh SPM Sumatera" title="Data Provided (Area Level)" t={t}>
-            {canEditProvided && (
-              <button onClick={() => setShowBulkUpload(true)}
-                style={{ display: "inline-flex", alignItems: "center", gap: 6, border: `1px solid ${t.blueBd}`, borderRadius: 9, padding: "8px 13px", background: t.blueBg, color: t.blue, fontFamily: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap" }}>
-                <Upload size={13} /> Bulk Upload
-              </button>
-            )}
-            <LockNote t={t}>Hanya lihat — isi lewat Bulk Upload</LockNote>
+          {/* ── Distribution Fee & Rewards (dulu "Data Provided (Area Level)") — diisi SPM ── */}
+          {/* BARU (permintaan user - "tambahkan KPI score di sebelah
+              kanannya, buat uinya bagus"): skor KPI area ini (persen,
+              diupload bersamaan dengan SLA Fee/TDS/dll lewat Bulk Upload
+              Data Provided yang sama) ditonjolkan sbg badge di header
+              section, bukan baris tabel Rupiah biasa - lihat KPI_ROWS
+              isScore di DATA_PROVIDED_ROWS. */}
+          <SecHero icon={ShieldCheck} eyebrow="Diisi oleh SPM Sumatera" title="Distribution Fee & Rewards" t={t}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 16px", borderRadius: 11, background: "rgba(255,255,255,0.55)", border: `1px solid ${t.blueBd}`, flexShrink: 0 }}>
+              <div style={{ width: 30, height: 30, borderRadius: 8, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: GRAD, color: "#fff" }}><Gauge size={15} /></div>
+              <div>
+                <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: t.mid, lineHeight: 1 }}>KPI Score</div>
+                <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-0.02em", color: t.hi, lineHeight: 1.25 }}>{fmtPct(dataProvided.kpi_score)}</div>
+              </div>
+            </div>
           </SecHero>
-          {showBulkUpload && (
-            <PNL_DataProvidedBulkUpload t={t} d={d} masterData={masterData} dataProvidedRows={DATA_PROVIDED_ROWS} profile={profile}
-              onClose={() => setShowBulkUpload(false)} />
-          )}
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <Card t={t}><Body>
               <div style={{ overflowX: "auto" }}>
@@ -281,7 +357,7 @@ export default function PNL_FormPendapatanV2({ theme, profile, activeContext, ca
                     </tr>
                   </thead>
                   <tbody>
-                    {DATA_PROVIDED_ROWS.map((r) => (
+                    {DATA_PROVIDED_ROWS.filter((r) => !r.isScore).map((r) => (
                       <tr key={r.id} className="v2row" style={{ borderBottom: `1px solid ${t.lineH}` }}>
                         <td style={{ padding: "9px 8px", fontWeight: 700, color: t.hi }}>{r.label}</td>
                         <td style={{ padding: "9px 8px", width: 220 }}>
@@ -293,17 +369,12 @@ export default function PNL_FormPendapatanV2({ theme, profile, activeContext, ca
                 </table>
               </div>
             </Body></Card>
-            <SubtotalBanner label="Total Data Provided" value={totals.dataProvided} />
-          </div>
-
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 11, color: t.lo, padding: "16px 2px 0" }}>
-            <Info size={12} style={{ flexShrink: 0, marginTop: 1 }} />
-            <span>Form Pendapatan V2 ini terpisah dari MPX P&L Report (V1) — data tidak saling memengaruhi.</span>
+            <SubtotalBanner label="Total Distribution Fee & Rewards" value={totals.dataProvided} />
           </div>
 
           {canSave && (
             <FooterBar t={t} d={d}>
-              <button onClick={handleSave} disabled={saving || !dirty} className="v2btn-p"><Save size={13} />{saving ? "Menyimpan..." : "Simpan"}</button>
+              <button onClick={handleSave} disabled={saving || !dirty || luarTemplateNoteRequired} className="v2btn-p"><Save size={13} />{saving ? "Menyimpan..." : "Simpan"}</button>
             </FooterBar>
           )}
         </>

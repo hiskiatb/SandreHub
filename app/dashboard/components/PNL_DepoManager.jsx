@@ -28,7 +28,7 @@
 // menyesuaikan filter area yang dipilih di atas saja jadi tinggal pilih
 // mc saja").
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Building2, Check, ChevronDown, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { ArrowRight, Building2, Check, ChevronDown, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
 import supabase from "../../../lib/supabase";
 import { FONT } from "./PNL_V2Shared";
 
@@ -38,6 +38,21 @@ export default function PNL_DepoManager({ t, d, partnerName, depos, depoMcRows, 
   const [renameId, setRenameId] = useState(null);
   const [renameVal, setRenameVal] = useState("");
   const [err, setErr] = useState("");
+
+  // BARU (permintaan user - "pada saat menambahkan depo wajib pilih
+  // minimal satu district / MC"): Area + District dipilih DI FORM
+  // "Tambah Depo" itu sendiri, sebelum Depo-nya dibuat - bukan lagi
+  // opsional sesudahnya. Depo baru cuma jadi dibuat kalau ada minimal
+  // 1 District tercentang (lihat tombol "Tambahkan Depo" di bawah).
+  const [newPickerBranch, setNewPickerBranch] = useState("");
+  const [newPickerChecked, setNewPickerChecked] = useState(() => new Set());
+  // BARU (permintaan user - "masukkan nama depo dulu baru klik lanjut
+  // baru tampil mc tersisanya"): form "Tambah Depo Baru" dipecah jadi 2
+  // langkah - isi Nama dulu lalu klik "Lanjut", BARU muncul picker
+  // Area/District. Sebelumnya nama + picker District tampil bareng
+  // sekaligus, yg bikin bingung.
+  const [newFormStep, setNewFormStep] = useState(1);
+  const [unassignedExpanded, setUnassignedExpanded] = useState(false);
 
   // Depo yg baru saja dibuat (utk auto-scroll + highlight + auto-buka picker)
   const [freshDepoId, setFreshDepoId] = useState(null);
@@ -94,6 +109,20 @@ export default function PNL_DepoManager({ t, d, partnerName, depos, depoMcRows, 
   // balik ke "" supaya user pilih Area manual spt biasa.
   const autoPickerBranch = (contextBranch && unassignedBranches.includes(contextBranch)) ? contextBranch : "";
 
+  // Area & District yg dipilih di FORM "Tambah Depo" (sebelum Depo
+  // dibuat) - sama konsepnya spt pickerCandidates/pickerBranch milik
+  // Depo yg sudah ada, tapi dipisah krn belum ada depoId.
+  const newBranchChosen = autoPickerBranch || newPickerBranch;
+  const newCandidates = newBranchChosen ? unassigned.filter((m) => (m.branch || "(Tanpa Area)") === newBranchChosen) : [];
+  const toggleNewPicked = (mc) => {
+    setNewPickerChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(mc)) next.delete(mc); else next.add(mc);
+      return next;
+    });
+  };
+  const pickAllNewRemaining = () => setNewPickerChecked(new Set(newCandidates.map((m) => m.mc)));
+
   // Begitu Depo baru muncul di props (setelah onChanged me-reload master),
   // scroll ke kartunya + buka langsung panel pilih District (kalau masih
   // ada District tersisa utk dimasukkan).
@@ -118,16 +147,26 @@ export default function PNL_DepoManager({ t, d, partnerName, depos, depoMcRows, 
 
   const addDepo = async () => {
     const name = newName.trim();
-    if (!name) return;
+    const mcs = Array.from(newPickerChecked);
+    if (!name || mcs.length === 0) return;
     setSavingNew(true); setErr("");
     try {
       const { data, error } = await supabase.from("pnl_v2_depo")
         .insert({ partner_name: partnerName, depo_name: name })
         .select("id").single();
       if (error) throw error;
+      const depoId = data?.id;
+      if (depoId) {
+        const { error: mcErr } = await supabase.from("pnl_v2_depo_mc")
+          .upsert(mcs.map((mc) => ({ mc, depo_id: depoId })), { onConflict: "mc" });
+        if (mcErr) throw mcErr;
+      }
       setNewName("");
+      setNewPickerBranch("");
+      setNewPickerChecked(new Set());
+      setNewFormStep(1);
       await onChanged?.();
-      if (data?.id) setFreshDepoId(data.id);
+      if (depoId) setFreshDepoId(depoId);
     } catch (e) {
       setErr(e.message || "Gagal menambah Depo.");
     } finally {
@@ -222,35 +261,153 @@ export default function PNL_DepoManager({ t, d, partnerName, depos, depoMcRows, 
 
   return (
     <div style={{ fontFamily: FONT, border: `1px solid ${t.line}`, borderRadius: 12, background: t.card, boxShadow: t.sm }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", borderBottom: `1px solid ${t.line}` }}>
-        <Building2 size={16} color={t.hi} />
-        <div style={{ fontWeight: 800, fontSize: 14, color: t.hi, flex: 1 }}>Kelola Depo</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 18px", borderBottom: `1px solid ${t.line}` }}>
+        <div style={{ width: 32, height: 32, borderRadius: 8, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg,#ED1C24,#C6168D)", color: "#fff" }}>
+          <Building2 size={16} />
+        </div>
+        <div style={{ fontWeight: 800, fontSize: 14.5, color: t.hi, flex: 1, letterSpacing: "-0.01em" }}>Kelola Depo</div>
         {!embedded && onClose && (
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: t.lo, padding: 4 }}><X size={16} /></button>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: t.lo, padding: 4, display: "flex" }}><X size={16} /></button>
         )}
       </div>
 
       <div style={{ padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
         {err && <div style={{ fontSize: 12, color: t.red, background: t.redBg, border: `1px solid ${t.redBd}`, borderRadius: 8, padding: "8px 12px" }}>{err}</div>}
 
-        {editable && (
-          <div style={{ display: "flex", gap: 8 }}>
-            <input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") addDepo(); }}
-              placeholder="Nama Depo baru (mis. Depo 1 - Pusat Kota)"
-              style={{ flex: 1, padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13, fontFamily: "inherit" }}
-            />
-            <button onClick={addDepo} disabled={savingNew || !newName.trim()} className="v2btn-p" style={{ whiteSpace: "nowrap" }}>
-              <Plus size={14} /> {savingNew ? "Menambahkan..." : "Tambahkan Depo"}
-            </button>
+        {editable && unassigned.length === 0 && (
+          <div style={{ fontSize: 11.5, color: t.mid, padding: "4px 2px" }}>
+            Semua District sudah masuk ke salah satu Depo — tidak ada District tersisa untuk membuat Depo baru.
           </div>
         )}
 
-        {(!depos || depos.length === 0) && (
+        {editable && unassigned.length > 0 && (
+          <div style={{ border: `1px solid ${t.line}`, borderRadius: 10, background: t.sub, padding: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>
+              Tambah Depo Baru
+            </div>
+
+            {/* BARU (permintaan user - "masukkan nama depo dulu baru
+                klik lanjut baru tampil mc tersisanya"): Langkah 1 - cuma
+                Nama Depo + tombol "Lanjut". Picker Area/District BELUM
+                muncul sama sekali di sini - baru muncul di Langkah 2
+                sesudah nama-nya dikonfirmasi. */}
+            {newFormStep === 1 ? (
+              <>
+                <input
+                  autoFocus
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && newName.trim()) setNewFormStep(2); }}
+                  placeholder="Masukkan Nama Depo"
+                  style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13, fontFamily: "inherit" }}
+                />
+                <button onClick={() => setNewFormStep(2)} disabled={!newName.trim()} className="v2btn-p" style={{ width: "100%", justifyContent: "center", marginTop: 10 }}>
+                  Lanjut <ArrowRight size={14} />
+                </button>
+              </>
+            ) : (
+              <>
+                {/* Langkah 2 - nama sudah dikunci, ditampilkan sbg label
+                    + tombol "Ganti" utk balik ke Langkah 1 kalau mau
+                    ubah nama lagi. */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, marginBottom: 12 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: t.hi }}>{newName}</span>
+                  <button onClick={() => setNewFormStep(1)} style={{ background: "none", border: "none", cursor: "pointer", color: t.blue, fontSize: 11.5, fontWeight: 700 }}>Ganti</button>
+                </div>
+
+                {/* FIX (permintaan user - "rapikan agar tidak terlihat
+                    berantakan"): bagian Area + District dibungkus kartu
+                    putih tersendiri (sama persis gaya panel picker
+                    District utk Depo yg SUDAH ada di bawah - lihat
+                    "pickerOpen" render) biar jelas kelihatan sbg satu
+                    grup, bukan numpuk jadi satu blok abu-abu polos. */}
+                <div style={{ border: `1px solid ${t.line}`, borderRadius: 8, background: t.card, padding: 10 }}>
+                  {/* BARU (permintaan user - "pada saat menambahkan depo
+                      wajib pilih minimal satu district / MC"): Area +
+                      District WAJIB dipilih di sini dulu sebelum tombol
+                      "Tambahkan Depo" bisa diklik - Depo kosong (tanpa
+                      District) sudah tidak bisa dibuat lagi lewat form
+                      ini. */}
+                  {!autoPickerBranch && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>
+                        Pilih Area — 1 Depo cuma boleh 1 Area
+                      </div>
+                      <div style={{ position: "relative" }}>
+                        <select
+                          value={newPickerBranch}
+                          onChange={(e) => { setNewPickerBranch(e.target.value); setNewPickerChecked(new Set()); }}
+                          style={{ width: "100%", appearance: "none", WebkitAppearance: "none", padding: "7px 30px 7px 10px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12.5, fontWeight: 700, fontFamily: "inherit" }}
+                        >
+                          <option value="">— Pilih Area —</option>
+                          {unassignedBranches.map((b) => <option key={b} value={b}>{b}</option>)}
+                        </select>
+                        <div style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", color: t.lo, pointerEvents: "none", display: "flex" }}>
+                          <ChevronDown size={13} />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {autoPickerBranch && (
+                    <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, marginBottom: 8, display: "flex", alignItems: "center", gap: 5 }}>
+                      Area: <span style={{ color: t.blue }}>{autoPickerBranch}</span>
+                      <span style={{ fontWeight: 500, color: t.lo }}>(ikut filter Cabang di atas)</span>
+                    </div>
+                  )}
+
+                  {newBranchChosen && (
+                    newCandidates.length === 0 ? (
+                      <div style={{ fontSize: 11.5, color: t.mid, padding: "4px 2px" }}>Semua District di Area {newBranchChosen} sudah masuk ke salah satu Depo.</div>
+                    ) : (
+                      <>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                            Pilih minimal 1 District di Area {newBranchChosen} ({newCandidates.length})
+                          </span>
+                          <button onClick={pickAllNewRemaining} style={{ background: "none", border: "none", cursor: "pointer", color: t.blue, fontSize: 11, fontWeight: 700 }}>
+                            Pilih semua
+                          </button>
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 2, maxHeight: 220, overflowY: "auto" }}>
+                          {newCandidates.map((m) => {
+                            const checked = newPickerChecked.has(m.mc);
+                            return (
+                              <label key={m.mc} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 6, cursor: "pointer", background: checked ? t.blueBg : "transparent" }}>
+                                <span style={{
+                                  width: 16, height: 16, borderRadius: 4, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+                                  border: `1.5px solid ${checked ? t.blue : t.inputBd}`, background: checked ? t.blue : "transparent",
+                                }}>
+                                  {checked && <Check size={11} color="#fff" strokeWidth={3} />}
+                                </span>
+                                <input type="checkbox" checked={checked} onChange={() => toggleNewPicked(m.mc)} style={{ display: "none" }} />
+                                <span style={{ fontSize: 12.5, color: t.hi }}>{m.mc}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )
+                  )}
+                </div>
+
+                <button onClick={addDepo} disabled={savingNew || !newName.trim() || newPickerChecked.size === 0} className="v2btn-p" style={{ width: "100%", justifyContent: "center", marginTop: 12 }}>
+                  <Plus size={14} /> {savingNew ? "Menambahkan..." : `Tambahkan Depo${newPickerChecked.size > 0 ? ` (${newPickerChecked.size} District)` : ""}`}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* FIX (permintaan user - "rapikan agar tidak terlihat
+            berantakan"): pesan ini dulu SELALU muncul di bawah form
+            "Tambah Depo Baru" meski form itu sendiri sudah jelas (jadi
+            kesannya aneh - "Belum ada Depo" nongol SETELAH form
+            tambahnya). Sekarang cuma tampil utk user yg TIDAK editable
+            (mis. viewer) yg sama sekali ga lihat form-nya - mereka yg
+            perlu konteks kenapa daftar Depo kosong. */}
+        {!editable && (!depos || depos.length === 0) && (
           <div style={{ fontSize: 12.5, color: t.mid, padding: "6px 2px" }}>
-            Belum ada Depo. {editable ? "Tambahkan Depo di atas untuk mulai mengelompokkan District." : "Hubungi admin Partner untuk membuat Depo."}
+            Belum ada Depo. Hubungi admin Partner untuk membuat Depo.
           </div>
         )}
 
@@ -279,6 +436,12 @@ export default function PNL_DepoManager({ t, d, partnerName, depos, depoMcRows, 
                 scrollMarginTop: 24,
               }}
             >
+              {/* FIX (permintaan user - "perbaiki total UI ini"): header
+                  kartu dipecah jadi 2 baris - Nama + tombol aksi di baris
+                  atas, badge Area/jumlah District di baris bawah.
+                  Sebelumnya semua (nama, 2 badge, 2 ikon aksi) numpuk di
+                  1 baris sempit, jadi padat & susah dibaca di layar
+                  sempit. */}
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: isFresh ? 6 : 10 }}>
                 {renameId === dp.id ? (
                   <>
@@ -293,20 +456,24 @@ export default function PNL_DepoManager({ t, d, partnerName, depos, depoMcRows, 
                   </>
                 ) : (
                   <>
-                    <div style={{ fontWeight: 800, fontSize: 13.5, color: t.hi, flex: 1 }}>{dp.depo_name}</div>
-                    {lockedBranch && (
-                      <span style={{ fontSize: 10.5, fontWeight: 700, color: t.blue, background: t.blueBg, border: `1px solid ${t.blueBd}`, borderRadius: 999, padding: "2px 8px" }}>
-                        Area: {lockedBranch}
-                      </span>
-                    )}
-                    <span style={{ fontSize: 10.5, fontWeight: 700, color: t.mid, background: t.card, border: `1px solid ${t.line}`, borderRadius: 999, padding: "2px 8px" }}>
-                      {mcs.length} District
-                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 800, fontSize: 14, color: t.hi, marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dp.depo_name}</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {lockedBranch && (
+                          <span style={{ fontSize: 10.5, fontWeight: 700, color: t.blue, background: t.blueBg, border: `1px solid ${t.blueBd}`, borderRadius: 999, padding: "2px 8px" }}>
+                            Area: {lockedBranch}
+                          </span>
+                        )}
+                        <span style={{ fontSize: 10.5, fontWeight: 700, color: t.mid, background: t.card, border: `1px solid ${t.line}`, borderRadius: 999, padding: "2px 8px" }}>
+                          {mcs.length} District
+                        </span>
+                      </div>
+                    </div>
                     {editable && (
-                      <>
-                        <button onClick={() => { setRenameId(dp.id); setRenameVal(dp.depo_name); }} title="Ubah nama" style={{ background: "none", border: "none", cursor: "pointer", color: t.mid, padding: 4 }}><Pencil size={13} /></button>
-                        <button onClick={() => deleteDepo(dp.id, dp.depo_name)} title="Hapus Depo" style={{ background: "none", border: "none", cursor: "pointer", color: t.red, padding: 4 }}><Trash2 size={13} /></button>
-                      </>
+                      <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0, alignSelf: "flex-start" }}>
+                        <button onClick={() => { setRenameId(dp.id); setRenameVal(dp.depo_name); }} title="Ubah nama" style={{ background: "none", border: "none", cursor: "pointer", color: t.mid, padding: 6, display: "flex" }}><Pencil size={13} /></button>
+                        <button onClick={() => deleteDepo(dp.id, dp.depo_name)} title="Hapus Depo" style={{ background: "none", border: "none", cursor: "pointer", color: t.red, padding: 6, display: "flex" }}><Trash2 size={13} /></button>
+                      </div>
                     )}
                   </>
                 )}
@@ -346,14 +513,19 @@ export default function PNL_DepoManager({ t, d, partnerName, depos, depoMcRows, 
                       <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>
                         1. Pilih Area dulu — 1 Depo cuma boleh 1 Area
                       </div>
-                      <select
-                        value={pickerBranch}
-                        onChange={(e) => { setPickerBranch(e.target.value); setPickerChecked(new Set()); }}
-                        style={{ width: "100%", padding: "7px 10px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12.5, fontWeight: 700, fontFamily: "inherit" }}
-                      >
-                        <option value="">— Pilih Area —</option>
-                        {unassignedBranches.map((b) => <option key={b} value={b}>{b}</option>)}
-                      </select>
+                      <div style={{ position: "relative" }}>
+                        <select
+                          value={pickerBranch}
+                          onChange={(e) => { setPickerBranch(e.target.value); setPickerChecked(new Set()); }}
+                          style={{ width: "100%", appearance: "none", WebkitAppearance: "none", padding: "7px 30px 7px 10px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12.5, fontWeight: 700, fontFamily: "inherit" }}
+                        >
+                          <option value="">— Pilih Area —</option>
+                          {unassignedBranches.map((b) => <option key={b} value={b}>{b}</option>)}
+                        </select>
+                        <div style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", color: t.lo, pointerEvents: "none", display: "flex" }}>
+                          <ChevronDown size={13} />
+                        </div>
+                      </div>
                     </div>
                   )}
                   {/* Area sudah ngikut filter Cabang yg aktif di atas halaman
@@ -413,9 +585,40 @@ export default function PNL_DepoManager({ t, d, partnerName, depos, depoMcRows, 
           );
         })}
 
+        {/* FIX (permintaan user - "mengapa ada ini" + "perbaiki total UI
+            ini"): dulu baris ini cuma teks statis dgn ikon chevron yg
+            kelihatan kayak bisa diklik tapi sebenarnya ga ngapa-ngapain -
+            bikin bingung. Angka ini MEMANG valid (bukan bug): "Kelola
+            Depo" cakupannya 1 PARTNER penuh (semua Area-nya), jadi kalau
+            partner itu beroperasi di beberapa Area, District dari Area
+            yg BELUM dibikinin Depo tetap keitung "belum masuk Depo
+            manapun" meski Area yg lagi aktif di filter atas sudah
+            lengkap. Sekarang chevron-nya beneran bisa diklik utk buka
+            daftar District-nya per Area, biar langsung kelihatan Area
+            mana yg belum ada Depo-nya. */}
         {unassigned.length > 0 && depos?.length > 0 && (
-          <div style={{ fontSize: 11.5, color: t.amber, display: "flex", alignItems: "center", gap: 6 }}>
-            <ChevronDown size={12} /> {unassigned.length} District belum masuk Depo manapun.
+          <div style={{ border: `1px solid ${t.amberBd}`, borderRadius: 8, background: t.amberBg, overflow: "hidden" }}>
+            <button
+              onClick={() => setUnassignedExpanded((v) => !v)}
+              style={{ width: "100%", display: "flex", alignItems: "center", gap: 6, padding: "9px 12px", background: "none", border: "none", cursor: "pointer", fontSize: 11.5, fontWeight: 700, color: t.amber, fontFamily: "inherit", textAlign: "left" }}
+            >
+              <ChevronDown size={12} style={{ transform: unassignedExpanded ? "rotate(180deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }} />
+              {unassigned.length} District (di {unassignedBranches.length} Area) belum masuk Depo manapun.
+            </button>
+            {unassignedExpanded && (
+              <div style={{ padding: "0 12px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+                {unassignedBranches.map((b) => (
+                  <div key={b}>
+                    <div style={{ fontSize: 10.5, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>{b}</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                      {unassigned.filter((m) => (m.branch || "(Tanpa Area)") === b).map((m) => (
+                        <span key={m.mc} style={{ fontSize: 11, fontWeight: 600, color: t.mid, background: t.card, border: `1px solid ${t.line}`, borderRadius: 999, padding: "2px 8px" }}>{m.mc}</span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

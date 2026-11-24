@@ -136,15 +136,28 @@ export const TH = ({ children, t, align = "left", width, color }) => (
   <th style={{ padding:'7px 8px', width, textAlign:align, fontSize:10, fontWeight:700, letterSpacing:'0.08em', textTransform:'uppercase', color: color || t.lo }}>{children}</th>
 );
 
-export function FormHeader({ icon: Icon, title, activeContext, readOnly, t }) {
+export function FormHeader({ icon: Icon, title, activeContext, readOnly, t, children }) {
   return (
-    <div style={{ display:'flex', alignItems:'center', gap:14, marginBottom:28 }}>
-      <div style={{ width:46, height:46, borderRadius:10, flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', background:GRAD, color:'#fff', boxShadow:'0 2px 10px rgba(237,28,36,0.30)' }}><Icon size={25} /></div>
-      <div style={{ minWidth:0, flex:1 }}>
-        <div style={{ fontSize:20, fontWeight:800, letterSpacing:'-0.035em', color:t.hi, lineHeight:1.2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{title} {monthLabel(activeContext?.month)} {activeContext?.year}</div>
-        <div style={{ fontSize:12, fontWeight:600, letterSpacing:'0.02em', color:t.mid, marginTop:4, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{[activeContext?.mpxType, activeContext?.mpxName, activeContext?.branch].filter(Boolean).join(' · ')}</div>
+    <div style={{ marginBottom:28 }}>
+      <div style={{ display:'flex', alignItems:'center', gap:14 }}>
+        <div style={{ width:46, height:46, borderRadius:10, flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', background:GRAD, color:'#fff', boxShadow:'0 2px 10px rgba(237,28,36,0.30)' }}><Icon size={25} /></div>
+        <div style={{ minWidth:0, flex:1 }}>
+          <div style={{ fontSize:20, fontWeight:800, letterSpacing:'-0.035em', color:t.hi, lineHeight:1.2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{title} {monthLabel(activeContext?.month)} {activeContext?.year}</div>
+          <div style={{ fontSize:12, fontWeight:600, letterSpacing:'0.02em', color:t.mid, marginTop:4, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{[activeContext?.mpxType, activeContext?.mpxName, activeContext?.branch].filter(Boolean).join(' · ')}</div>
+        </div>
+        {readOnly && <div style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'5px 12px', borderRadius:99, background:t.amberBg, border:`1px solid ${t.amberBd}`, color:t.amber, fontSize:11, fontWeight:700, flexShrink:0, whiteSpace:'nowrap' }}><Eye size={12} /> Mode Lihat</div>}
       </div>
-      {readOnly && <div style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'5px 12px', borderRadius:99, background:t.amberBg, border:`1px solid ${t.amberBd}`, color:t.amber, fontSize:11, fontWeight:700, flexShrink:0, whiteSpace:'nowrap' }}><Eye size={12} /> Mode Lihat</div>}
+      {/* FIX (permintaan user - "rapikan, sangat berantakan"): slot
+          opsional (dipakai PNL_FormPengeluaranV2 utk picker Depo) dulu
+          nempel SEBARIS sama judul - di layar sempit judul jadi kepotong
+          ("Form Pengeluaran November 20...") krn space-nya dimakan
+          picker. Sekarang dipindah jadi BARIS KEDUA di bawah judul,
+          rata kanan, biar judul selalu dapat lebar penuh. */}
+      {children && (
+        <div style={{ display:'flex', justifyContent:'flex-end', marginTop:14, paddingTop:14, borderTop:`1px solid ${t.lineH}` }}>
+          {children}
+        </div>
+      )}
     </div>
   );
 }

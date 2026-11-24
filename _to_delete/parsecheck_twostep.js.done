@@ -1,0 +1,9 @@
+const babel = require("@babel/core");
+const fs = require("fs");
+const file = "app/dashboard/components/PNL_DepoManager.jsx";
+try {
+  babel.transformSync(fs.readFileSync(file, "utf-8"), { presets: ["next/babel"], filename: file });
+  console.log("PARSE_OK");
+} catch (e) {
+  console.log("PARSE_FAIL:", e.message);
+}

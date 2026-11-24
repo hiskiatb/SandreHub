@@ -1,0 +1,6 @@
+const babel = require("@babel/core");
+const fs = require("fs");
+const filename = "app/dashboard/page.jsx";
+const code = fs.readFileSync(filename, "utf-8");
+try { babel.transform(code, { filename, presets: ["next/babel"] }); console.log("PARSE_OK"); }
+catch (e) { console.log("PARSE_FAIL:", e.message); }

@@ -23,7 +23,7 @@ import {
   Table2, Wallet, PanelLeftClose, PanelLeftOpen,
   FileSpreadsheet, Users, Key, Briefcase, Wrench, Mail, Sparkles, Archive,
   Database, TrendingUp, UserRoundCog, Landmark,
-  Pencil, Check, Loader2, Upload,
+  Pencil, Check, Loader2, Upload, Trophy,
 } from "lucide-react";
 
 import FormPendapatan   from "./components/PNL_FormPendapatan";
@@ -47,6 +47,7 @@ import PayoutTracker    from "./components/PayoutTracker";
 import NotificationBell from "./components/NotificationBell";
 import AdminPanel       from "./components/PNL_AdminPanel";
 import PNL_ImportWizard from "./components/PNL_ImportWizard";
+import MDI_Dashboard    from "./components/MDI_Dashboard";
 import SDP_StatusForm   from "./components/SDP_StatusForm";
 import SDP2_StatusForm  from "./components/SDP2_StatusForm";
 import MC_ClusterMapping from "./components/MC_ClusterMapping";
@@ -246,6 +247,20 @@ const buildGlobalCSS = (d, t) => `
     transition: border-color .14s, color .14s, background .14s; outline: none;
   }
   .icon-btn:hover { border-color: ${t.blueBd}; color: ${t.blue}; background: ${t.blueSoft}; }
+  /* FIX (permintaan user - "jangan ada outline saat focus button", lihat
+     screenshot FilterSelect "SOLOK" kena garis hitam tebal pas diklik):
+     beberapa browser (terutama Chrome/Edge di macOS) tetap menggambar
+     focus ring bawaan native di elemen <select>/<button> walau sudah ada
+     outline:"none" inline - inline style kadang kalah spesifisitas dari
+     User-Agent stylesheet utk :focus-visible. Rule global ini (bukan
+     scoped) ngunci outline/box-shadow mati total saat focus utk semua
+     select & button di dashboard, apapun browser-nya. */
+  select:focus, select:focus-visible,
+  button:focus, button:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
+    -webkit-tap-highlight-color: transparent;
+  }
 `;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -289,6 +304,17 @@ const PNL_VIEWS = new Set(["summary","pendapatan","pengeluaran"]);
 // V2, Pendapatan V2, Pengeluaran V2 - tanpa Control Center/Pivot/Import
 // dulu di versi awal ini).
 const PNL_VIEWS_V2 = new Set(["summary-v2","pendapatan-v2","pengeluaran-v2"]);
+// BARU (permintaan user - "mengapa masih ada tampilan [PnlPickerPrompt]
+// ... harusnya langsung saja, semisal dia partner langsung diarahkan ke
+// total semua area di partner tersebut, untuk level region circle juga
+// gitu konsep, namun scopenya menjadi lebih luas"): Pendapatan V2 &
+// Pengeluaran V2 adalah FORM isian (wajib 1 Partner+Cabang spesifik,
+// beda dari Summary V2 yg bisa aggregate "ALL") - dulu kalau belum ada
+// Partner+Cabang terpilih, user diblok layar penuh PnlPickerPrompt dan
+// harus manual pilih. Sekarang auto-pilih Partner+Cabang PERTAMA yang
+// tersedia (tetap bisa diganti dari filter bar di atas tab) supaya tidak
+// pernah nyangkut di layar pemilih itu lagi.
+const PNL_V2_FORM_VIEWS = new Set(["pendapatan-v2","pengeluaran-v2"]);
 // Filter Laporan (Region/Partner/Branch) di sidebar HANYA relevan untuk 4
 // modul di dalam menu "MPX P&L Report" — di luar situ disembunyikan
 // (bukan lagi daftar "sembunyikan di view X", tapi allow-list "tampilkan
@@ -319,7 +345,22 @@ const CONTROLLABLE_MENUS = {
 const menuKeyForView = (v) => (PNL_VIEWS.has(v) ? "summary" : v);
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
-function FilterSelect({ label, value, onChange, children, t, d, disabled, icon }) {
+function FilterSelect({ label, value, onChange, children, t, d, disabled, icon, displayValue }) {
+  // BARU (permintaan user - "tapi disini nya tetap dibuat berapa region
+  // berapa areanya, hanya saja pas di klik cukup menampilkan nama
+  // partnernya"): native <select> SELALU menampilkan teks <option> yg
+  // lagi kepilih persis sama baik pas tertutup (kotak) maupun pas
+  // terbuka (daftar pilihan) - tidak ada cara bawaan HTML utk beda-in
+  // keduanya. Trik yg dipakai: teks asli select-nya dibikin transparent
+  // (opacity:0, tapi select-nya TETAP di-klik & dropdown-nya TETAP
+  // kebuka normal - popup/daftar pilihan dirender terpisah oleh browser,
+  // TIDAK ikut transparent), terus kotak yg keliatan ("closed state")
+  // diisi <div> overlay terpisah (pointerEvents:none, supaya klik tetap
+  // tembus ke select di bawahnya) yg nampilin `displayValue` - teks lebih
+  // ringkas pilihan si pemanggil (co: nama partner polos tanpa embel2
+  // region/area). Kalau `displayValue` tidak dikasih (prop lain spt
+  // Region/Tipe), fallback ke rendering native biasa spt sebelumnya.
+  const useOverlay = displayValue !== undefined && displayValue !== "";
   return (
     <div style={{ opacity: disabled ? 0.4 : 1, pointerEvents: disabled ? "none" : "auto" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, paddingLeft: 2 }}>
@@ -328,9 +369,14 @@ function FilterSelect({ label, value, onChange, children, t, d, disabled, icon }
       </div>
       <div style={{ display: "flex", alignItems: "center", border: `1px solid ${t.inputBd}`, borderRadius: 8, background: t.inputBg, height: 36, position: "relative", transition: "border-color .12s" }}>
         <select value={value} onChange={e => onChange(e.target.value)}
-          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", appearance: "none", WebkitAppearance: "none", background: "transparent", border: "none", fontSize: 13.5, fontWeight: 500, color: t.hi, outline: "none", cursor: "pointer", paddingLeft: 12, paddingRight: 32, fontFamily: "inherit" }}>
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", appearance: "none", WebkitAppearance: "none", background: "transparent", border: "none", fontSize: 13.5, fontWeight: 500, color: useOverlay ? "transparent" : t.hi, outline: "none", cursor: "pointer", paddingLeft: 12, paddingRight: 32, fontFamily: "inherit" }}>
           {children}
         </select>
+        {useOverlay && (
+          <div style={{ position: "absolute", left: 12, right: 32, top: 0, height: "100%", display: "flex", alignItems: "center", pointerEvents: "none", fontSize: 13.5, fontWeight: 500, color: t.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {displayValue}
+          </div>
+        )}
         <div style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", color: t.lo, pointerEvents: "none", display: "flex" }}>
           <ChevronDown size={14} />
         </div>
@@ -486,6 +532,7 @@ function PnlPickerPrompt({
   regions, filteredPartners, availableTypes, availableBranches,
   activeRegion, setActiveRegion, activePartner, setActivePartner,
   activeType, setActiveType, activeBranch, setActiveBranch, onBack,
+  partnerOptionLabel,
 }) {
   const hasPartner    = !!activePartner;
   const hasBranch     = !!activeBranch;
@@ -493,10 +540,10 @@ function PnlPickerPrompt({
   const headline = !hasPartner
     ? (isMPX ? "Partner kamu sedang dimuat" : iohLockedRegion ? `Pilih partner dari region ${iohLockedRegion}` : "Pilih partner untuk membuka laporan")
     : typeAmbiguous ? "Partner ini punya beberapa tipe (MPC/MP3)"
-    : !hasBranch ? "Partner ini punya beberapa cabang" : "Konteks laporan siap";
+    : !hasBranch ? "Partner ini punya beberapa area" : "Konteks laporan siap";
   const sub = !hasPartner ? "Filter di bawah ini sinkron dengan sidebar — atur dari mana saja."
-    : typeAmbiguous ? "Pilih salah satu tipe agar daftar cabang tepat."
-    : !hasBranch ? "Pilih salah satu cabang untuk melanjutkan." : "Memuat tab laporan…";
+    : typeAmbiguous ? "Pilih salah satu tipe agar daftar area tepat."
+    : !hasBranch ? "Pilih salah satu area untuk melanjutkan." : "Memuat tab laporan…";
 
   return (
     <div style={{ maxWidth: 560, margin: "40px auto 0", padding: "36px 32px 32px", borderRadius: 14, border: `1px dashed ${t.blueBd}`, background: t.blueSoft }}>
@@ -520,10 +567,10 @@ function PnlPickerPrompt({
             <Globe size={12} style={{ flexShrink: 0 }} />Region terkunci: {iohLockedRegion}
           </div>
         )}
-        <FilterSelect label="Nama Partner" icon={<Building2 size={12} />} value={activePartner}
+        <FilterSelect label="Nama Partner" icon={<Building2 size={12} />} value={activePartner} displayValue={activePartner}
           onChange={v => { setActivePartner(v); setActiveBranch(""); setActiveType("ALL"); }} t={t} d={d} disabled={isMPX}>
           <option value="" disabled>Pilih Partner</option>
-          {filteredPartners.map(p => <option key={p} value={p}>{p}</option>)}
+          {filteredPartners.map(p => <option key={p} value={p} style={{ color: t.hi }}>{partnerOptionLabel ? partnerOptionLabel(p) : p}</option>)}
         </FilterSelect>
         {hasPartner && availableTypes.length > 1 && (
           <FilterSelect label="Tipe (MPC / MP3)" icon={<SlidersHorizontal size={12} />} value={activeType}
@@ -533,10 +580,10 @@ function PnlPickerPrompt({
           </FilterSelect>
         )}
         <FilterSelect
-          label={typeAmbiguous ? "Cabang (pilih Tipe dulu)" : availableBranches.length > 1 ? "Cabang (pilih salah satu)" : "Branch"}
+          label={typeAmbiguous ? "Area (pilih Tipe dulu)" : availableBranches.length > 1 ? "Area (pilih salah satu)" : "Area"}
           icon={<Store size={12} />} value={activeBranch} onChange={v => setActiveBranch(v)}
           t={t} d={d} disabled={!hasPartner || typeAmbiguous}>
-          <option value="" disabled>Pilih Cabang</option>
+          <option value="" disabled>Pilih Area</option>
           {availableBranches.map(b => <option key={b} value={b}>{b}</option>)}
         </FilterSelect>
       </div>
@@ -653,8 +700,22 @@ export default function DashboardPage() {
   // Partner Level, Circle, Region Level dari data dse itu juga") - READ-
   // ONLY, cuma lihat Prod. & AR scoped ke pt_name/circle/region masing2
   // (RLS di DB), tidak dapat gate edit (canEditPendapatan/canEdit) spt
-  // isMPX/isAdminArea, dan tidak dapat akses Payout Tracker/PNL MPX.
+  // isMPX/isAdminArea, dan tidak dapat akses PNL MPX.
+  // UPDATE (permintaan user - "1. Dashboard, DF&Champions, Raw Data = per
+  // partner, 2. +YTD Summary = per region, 3. +Forecast = all circle
+  // Sumatera"): ketiga role ini SEKARANG dapat akses Payout Tracker juga,
+  // tapi scoped bertingkat sesuai role - admin_partner cuma lihat
+  // Dashboard/Distribution Fee & Champions/Raw Data partner sendiri,
+  // admin_region tambah YTD Summary (region sendiri), admin_circle tambah
+  // Forecast (tanpa filter - circle Sumatera penuh). Scope tab diatur di
+  // ROLE_VIEWS/ROLE_KIND PayoutTracker.jsx, scope DATA (partnerName/
+  // regionFilter) dikunci dari profiles.partner_name (diisi otomatis oleh
+  // mf_dse_admin_partner_login_apply / mf_dse_admin_region_login_apply -
+  // bisa berisi >1 nilai dipisah koma kalau 1 email terdaftar di >1
+  // partner/region).
   const isAdminLevel = hasAnyRole(profile, ["admin_partner", "admin_circle", "admin_region"]);
+  const isAdminPartnerRole = hasRole(profile, "admin_partner");
+  const isAdminRegionRole  = hasRole(profile, "admin_region");
   const isIOHAny    = IOH_ROLES.has(profile?.role);
   const isSFM       = SFM_ROLES.has(profile?.role);
   const canMfts     = isSPM || isIOHAny || isSFM;
@@ -919,13 +980,26 @@ export default function DashboardPage() {
     // Cemerlang di NORTH+SOUTH SUMATERA, PT Trimindo Jaya Mandiri di
     // CENTRAL+NORTH SUMATERA) - utk partner begini, region yg BENAR
     // tergantung Cabang mana yg dipilih, bukan cuma baris pertama partner
-    // itu yg kebetulan ketemu duluan di masterData. Kalau Cabang sudah
-    // dipilih, cari region dari kombinasi partner+branch yg persis dulu,
-    // baru fallback ke baris pertama partner itu kalau Cabang belum dipilih.
-    const partnerData = (activeBranch
-      ? masterData.find(i => i.partner_name === activePartner && i.branch_name === activeBranch)
-      : null) || masterData.find(i => i.partner_name === activePartner);
-    if (partnerData?.region) setActiveRegion(partnerData.region);
+    // itu yg kebetulan ketemu duluan di masterData.
+    if (activeBranch) {
+      const row = masterData.find(i => i.partner_name === activePartner && i.branch_name === activeBranch);
+      if (row?.region) setActiveRegion(row.region);
+      return;
+    }
+    // FIX (user - "harusnya tetap bisa dipilih regionnya namun misal
+    // regionnya diganti ... tetap bisa otomatis akan pilih salah satu
+    // area di region baru yang dipilih"): kalau Cabang BELUM dipilih dan
+    // partner-nya multi-region, JANGAN paksa activeRegion ke baris
+    // pertama partner itu (dulu bikin race - begitu user ganti Region
+    // sendiri & activeBranch sempat kekosongkan, effect ini balik
+    // nimpa pilihan user sebelum effect auto-pick cabang sempat jalan).
+    // Biarkan activeRegion apa adanya (bisa jadi baru saja diganti user)
+    // - begitu cabang baru kepilih (lewat effect auto-pick di bawah),
+    // cabang path di atas yg akan mengunci activeRegion dgn benar.
+    // Partner SATU region tetap auto-diisi langsung spt sebelumnya.
+    const partnerRows = masterData.filter(i => i.partner_name === activePartner);
+    const distinctRegions = new Set(partnerRows.map(r => r.region));
+    if (distinctRegions.size === 1 && partnerRows[0]?.region) setActiveRegion(partnerRows[0].region);
   }, [activePartner, activeBranch, masterData, iohLockedRegion]);
 
   const filteredPartners = useMemo(() => {
@@ -953,6 +1027,99 @@ export default function DashboardPage() {
     return [...new Set(masterData.filter(i => i.partner_name === activePartner && (activeType === "ALL" || i.mpc_mp3 === activeType)).map(i => i.branch_name))];
   }, [masterData, activePartner, activeType]);
 
+  // Kelompokkan availableBranches per region (permintaan user - "pada
+  // area juga dibagi sectionnya per region ... tetap menampilkan semua
+  // area yang ada di partner dipilih namun disection sesuai regionnya,
+  // agar pindah pindahnya tetap mudah dipahami"): daftar Cabang TETAP
+  // menampilkan SEMUA cabang milik partner yg aktif (lintas region, TIDAK
+  // difilter ke 1 region saja) - cuma dikelompokkan jadi <optgroup> per
+  // region spy kelihatan jelas cabang mana masuk region mana, terutama utk
+  // partner yg beroperasi di >1 region (co: PT Trimindo Jaya Mandiri).
+  const availableBranchGroups = useMemo(() => {
+    if (!activePartner || availableBranches.length === 0) return [];
+    const byRegion = new Map();
+    masterData.forEach(i => {
+      if (i.partner_name !== activePartner || !availableBranches.includes(i.branch_name)) return;
+      if (!byRegion.has(i.region)) byRegion.set(i.region, new Set());
+      byRegion.get(i.region).add(i.branch_name);
+    });
+    return regions.filter(r => byRegion.has(r)).map(r => ({ region: r, branches: [...byRegion.get(r)] }));
+  }, [masterData, activePartner, availableBranches, regions]);
+
+  // Region2 tempat partner yg sedang aktif beroperasi - dipakai utk
+  // membatasi opsi dropdown Region begitu Partner terpilih (lihat
+  // FilterSelect Region di bawah) supaya Region TETAP bisa diganti, tapi
+  // cuma ke region lain milik partner yg sama (bukan clear partner).
+  const partnerRegions = useMemo(() => availableBranchGroups.map(g => g.region), [availableBranchGroups]);
+
+  // BARU (permintaan user - "disini bisa ada info berapa region dan
+  // berapa area yang dihandle partner tersebut? namun tetap rapi" + lanjutan
+  // "tapi disini nya tetap dibuat berapa region berapa areanya, hanya
+  // saja pas di klik cukup menampilkan nama partnernya"): dipakai cuma di
+  // DAFTAR PILIHAN dropdown Nama Partner (lihat `displayValue` di
+  // FilterSelect - kotak yg sudah kepilih tetap nama partner polos).
+  const partnerStats = useMemo(() => {
+    const map = new Map();
+    masterData.forEach(i => {
+      if (!i.partner_name) return;
+      if (!map.has(i.partner_name)) map.set(i.partner_name, { regions: new Set(), branches: new Set() });
+      const e = map.get(i.partner_name);
+      if (i.region) e.regions.add(i.region);
+      if (i.branch_name) e.branches.add(i.branch_name);
+    });
+    return map;
+  }, [masterData]);
+  const partnerOptionLabel = useCallback((p) => {
+    const st = partnerStats.get(p);
+    if (!st) return p;
+    const area = st.branches.size, reg = st.regions.size;
+    return reg > 1 ? `${p} — ${reg} region · ${area} area` : `${p} — ${area} area`;
+  }, [partnerStats]);
+
+  // BARU (permintaan user - "jika partner dan region belum ada dipilih,
+  // berarti bisa langsung pilih cabangnya dulu, nanti bagian partner dan
+  // region menyesuaikan"): kalau Partner BELUM dipilih, dropdown Cabang
+  // sebelumnya selalu disabled/kosong (availableBranches butuh
+  // activePartner). Sekarang begitu Partner belum ada, dropdown Cabang
+  // diisi daftar SEMUA kombinasi Partner+Cabang yg ada (ikut filter
+  // Region kalau sedang aktif), dikelompokkan per region, label tiap opsi
+  // "Nama Partner — Cabang" (karena nama Cabang bisa sama persis milik
+  // partner lain, jadi harus digabung sama nama partner spy unik) - pilih
+  // salah satu langsung setActivePartner + setActiveBranch sekaligus,
+  // Region menyesuaikan sendiri lewat effect yg sudah ada.
+  const BRANCH_PICKER_SEP = "\u241F"; // unit separator, aman dari nama partner/cabang asli
+  const branchPickerGroups = useMemo(() => {
+    if (activePartner) return [];
+    let list = masterData;
+    if (iohLockedRegion) list = list.filter(i => i.region === iohLockedRegion);
+    else if (activeRegion !== "SUMATERA") list = list.filter(i => i.region === activeRegion);
+    const seen = new Set();
+    const byRegion = new Map();
+    list.forEach(i => {
+      if (!i.partner_name || !i.branch_name || !i.region) return;
+      const key = `${i.partner_name}${BRANCH_PICKER_SEP}${i.branch_name}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      if (!byRegion.has(i.region)) byRegion.set(i.region, []);
+      byRegion.get(i.region).push({ partner_name: i.partner_name, branch_name: i.branch_name });
+    });
+    return regions.filter(r => byRegion.has(r)).map(r => ({
+      region: r,
+      items: byRegion.get(r).sort((a, b) => a.partner_name.localeCompare(b.partner_name) || a.branch_name.localeCompare(b.branch_name)),
+    }));
+  }, [masterData, activePartner, iohLockedRegion, activeRegion, regions]);
+  const handleBranchPickerChange = (v) => {
+    if (activePartner) { setActiveBranch(v); return; }
+    const sepIdx = v.lastIndexOf(BRANCH_PICKER_SEP);
+    if (sepIdx < 0) return;
+    const partnerName = v.slice(0, sepIdx), branchName = v.slice(sepIdx + BRANCH_PICKER_SEP.length);
+    if (!partnerName || !branchName) return;
+    setActivePartner(partnerName);
+    setActiveType("ALL");
+    setActiveBranch(branchName);
+  };
+
+
   useEffect(() => {
     if (availableTypes.length === 1) setActiveType(availableTypes[0]);
     else if (activeType !== "ALL" && !availableTypes.includes(activeType)) setActiveType("ALL");
@@ -962,6 +1129,32 @@ export default function DashboardPage() {
     if (availableBranches.length === 1) setActiveBranch(availableBranches[0]);
     else if (!availableBranches.includes(activeBranch)) setActiveBranch("");
   }, [availableBranches]);
+
+  // Auto-pilih Partner+Cabang pertama khusus di tab Pendapatan V2 /
+  // Pengeluaran V2 (lihat komentar PNL_V2_FORM_VIEWS di atas) - partner
+  // MPX scope-nya sudah pasti 1 (filteredPartners cuma berisi partner dia
+  // sendiri), SPM/Circle scope-nya ikut filter Region yang aktif
+  // (filteredPartners sudah menghormati iohLockedRegion/activeRegion).
+  // FIX (user - "bukannya ada partner yang memiliki area di lebih dari
+  // satu region?"): availableBranches TIDAK difilter per region (dia
+  // mengumpulkan semua cabang milik partner itu, lintas region) - utk
+  // partner yg beroperasi di >1 region (mis. PT TRIMINDO JAYA MANDIRI:
+  // CENTRAL + NORTH SUMATERA), auto-pick asal availableBranches[0] bisa
+  // kebetulan ambil cabang dari region yg BEDA dari region yg sedang
+  // terkunci/difilter (iohLockedRegion/activeRegion) - dibenarkan dgn
+  // mengutamakan cabang yg region-nya cocok dgn kuncian tsb, baru fallback
+  // ke availableBranches[0] kalau tidak ada kuncian region sama sekali.
+  useEffect(() => {
+    if (!PNL_V2_FORM_VIEWS.has(view)) return;
+    if (!activePartner) { if (filteredPartners.length > 0) setActivePartner(filteredPartners[0]); return; }
+    if (!activeBranch && availableBranches.length > 0) {
+      const wantRegion = iohLockedRegion || (activeRegion !== "SUMATERA" ? activeRegion : null);
+      const regionMatch = wantRegion
+        ? masterData.find(i => i.partner_name === activePartner && availableBranches.includes(i.branch_name) && i.region === wantRegion)
+        : null;
+      setActiveBranch(regionMatch?.branch_name || availableBranches[0]);
+    }
+  }, [view, activePartner, activeBranch, filteredPartners, availableBranches, iohLockedRegion, activeRegion, masterData]);
 
   useEffect(() => {
     if (!activePartner || !activeBranch) return;
@@ -1066,10 +1259,22 @@ export default function DashboardPage() {
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               {(isSPM || isIOHAny) && (
                 <FilterSelect label={iohLockedRegion ? "Region (terkunci)" : (isIOHAny ? "Region View" : "Region")} icon={<Globe size={12} />} value={activeRegion}
-                  onChange={v => { if (iohLockedRegion || activePartner) return; setActiveRegion(v); setActivePartner(""); setActiveBranch(""); }}
-                  t={t} d={d} disabled={!!iohLockedRegion || !!activePartner}>
-                  <option value="SUMATERA">Seluruh Sumatera</option>
-                  {regions.map(r => <option key={r} value={r}>{r}</option>)}
+                  onChange={v => {
+                    if (iohLockedRegion) return;
+                    // FIX (user - "harusnya tetap bisa dipilih regionnya
+                    // namun misal regionnya diganti saat region lain
+                    // terpilih tetap bisa otomatis akan pilih salah satu
+                    // area di region baru yang dipilih"): kalau partner
+                    // beroperasi di >1 region, Region TETAP bisa diganti
+                    // TANPA clear Partner - cuma clear Cabang, nanti
+                    // effect auto-pick di atas akan milih cabang lain yg
+                    // ada di region baru itu.
+                    if (activePartner) { setActiveRegion(v); setActiveBranch(""); return; }
+                    setActiveRegion(v); setActivePartner(""); setActiveBranch("");
+                  }}
+                  t={t} d={d} disabled={!!iohLockedRegion || (!!activePartner && partnerRegions.length <= 1)}>
+                  {!activePartner && <option value="SUMATERA">Seluruh Sumatera</option>}
+                  {(activePartner ? partnerRegions : regions).map(r => <option key={r} value={r}>{r}</option>)}
                 </FilterSelect>
               )}
               {iohLockedRegion && (
@@ -1077,10 +1282,10 @@ export default function DashboardPage() {
                   <Globe size={12} style={{ flexShrink: 0 }} />Akses dibatasi: {iohLockedRegion}
                 </div>
               )}
-              <FilterSelect label="Nama Partner" icon={<Building2 size={12} />} value={activePartner}
+              <FilterSelect label="Nama Partner" icon={<Building2 size={12} />} value={activePartner} displayValue={activePartner}
                 onChange={v => { setActivePartner(v); setActiveBranch(""); setActiveType("ALL"); }} t={t} d={d} disabled={isMPX}>
                 <option value="" disabled>Pilih Partner</option>
-                {filteredPartners.map(p => <option key={p} value={p}>{p}</option>)}
+                {filteredPartners.map(p => <option key={p} value={p} style={{ color: t.hi }}>{partnerOptionLabel(p)}</option>)}
               </FilterSelect>
               {activePartner && availableTypes.length > 1 && (
                 <FilterSelect label="Tipe (MPC / MP3)" icon={<SlidersHorizontal size={12} />} value={activeType}
@@ -1089,16 +1294,32 @@ export default function DashboardPage() {
                   {availableTypes.map(tp => <option key={tp} value={tp}>{tp}</option>)}
                 </FilterSelect>
               )}
-              <FilterSelect label={availableBranches.length > 1 ? "Cabang (pilih salah satu)" : "Branch"}
-                icon={<Store size={12} />} value={activeBranch} onChange={v => setActiveBranch(v)}
-                t={t} d={d} disabled={!activePartner}>
-                <option value="" disabled>Pilih Cabang</option>
-                {availableBranches.map(b => <option key={b} value={b}>{b}</option>)}
+              <FilterSelect label={activePartner ? (availableBranches.length > 1 ? "Area (pilih salah satu)" : "Area") : "Area (bisa pilih langsung)"}
+                icon={<Store size={12} />} value={activePartner ? activeBranch : ""} onChange={handleBranchPickerChange}
+                t={t} d={d} disabled={!activePartner && branchPickerGroups.length === 0}>
+                <option value="" disabled>Pilih Area</option>
+                {activePartner
+                  ? (availableBranchGroups.length > 1
+                      ? availableBranchGroups.map(g => (
+                          <optgroup key={g.region} label={g.region}>
+                            {g.branches.map(b => <option key={b} value={b}>{b}</option>)}
+                          </optgroup>
+                        ))
+                      : availableBranches.map(b => <option key={b} value={b}>{b}</option>))
+                  : branchPickerGroups.map(g => (
+                      <optgroup key={g.region} label={g.region}>
+                        {g.items.map(it => (
+                          <option key={`${it.partner_name}${BRANCH_PICKER_SEP}${it.branch_name}`} value={`${it.partner_name}${BRANCH_PICKER_SEP}${it.branch_name}`}>
+                            {it.partner_name} — {it.branch_name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
               </FilterSelect>
               {activePartner && (!activeBranch || (availableTypes.length > 1 && activeType === "ALL")) && (
                 <div style={{ padding: "8px 11px", borderRadius: 7, fontSize: 11, fontWeight: 500, background: t.yellowBg, border: `1px solid ${t.yellowBd}`, color: t.yellow, display: "flex", alignItems: "flex-start", gap: 7, lineHeight: 1.45 }}>
                   <AlertTriangle size={11} style={{ flexShrink: 0, marginTop: 1 }} />
-                  <span>{availableTypes.length > 1 && activeType === "ALL" ? "Pilih tipe MPC/MP3 untuk melanjutkan." : "Pilih cabang untuk membuka laporan."}</span>
+                  <span>{availableTypes.length > 1 && activeType === "ALL" ? "Pilih tipe MPC/MP3 untuk melanjutkan." : "Pilih area untuk membuka laporan."}</span>
                 </div>
               )}
             </div>
@@ -1150,7 +1371,7 @@ export default function DashboardPage() {
                       <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
                         <button onClick={() => navigate("pnl-mpx-v2")} className={`snav${(view === "pnl-mpx-v2" || PNL_MPX_V2_VIEWS.has(view)) ? " active" : ""}`} style={{ flex: 1 }}>
                           <span style={{ flexShrink: 0, display: "flex", opacity: (view === "pnl-mpx-v2" || PNL_MPX_V2_VIEWS.has(view)) ? 1 : 0.7 }}><PieChart size={14} /></span>
-                          <span style={{ flex: 1, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>MPX P&amp;L Report V2</span>
+                          <span style={{ flex: 1, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>MDI P&amp;L Report</span>
                         </button>
                         <button onClick={(e) => { e.stopPropagation(); setPnlV2GroupOpen(v => !v); }} title={pnlV2GroupOpen ? "Sembunyikan sub-menu" : "Tampilkan sub-menu"}
                           style={{ flexShrink: 0, width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", cursor: "pointer", color: t.lo, borderRadius: 6, fontFamily: "inherit" }}>
@@ -1164,12 +1385,20 @@ export default function DashboardPage() {
                           <SNavItem icon={<PieChart size={13} />} label="Laporan P&L"        active={PNL_VIEWS_V2.has(view)}        onClick={() => navigate("summary-v2")} />
                           {isSPM && <SNavItem icon={<Layers size={13} />} label="PNL Control Center" active={view === "control-center-v2"} onClick={() => navigate("control-center-v2")} />}
                           {isSPM && <SNavItem icon={<Table2 size={13} />} label="Pivot P&L Summary"  active={view === "pivot-summary-v2"}  onClick={() => navigate("pivot-summary-v2")} />}
+                          {/* BARU (permintaan user - "tambahkan satu Menu
+                              MDI Dashboard ... dipakai utk analisis"): slide
+                              per Partner per bulan (KPI score, leaderboard
+                              PNL/AR/produktivitas DSE per Area) - lihat
+                              MDI_Dashboard.jsx. SPM-only, sama scope-nya
+                              dgn Control Center/Pivot Summary di atas
+                              (data lintas semua Partner). */}
+                          {(isSPM || isAdminLevel) && <SNavItem icon={<Trophy size={13} />} label="MDI Dashboard" active={view === "mdi-dashboard"} onClick={() => navigate("mdi-dashboard")} />}
                           {isTrueSPM && <SNavItem icon={<Upload size={13} />} label="Upload Data Provided" active={view === DATA_PROVIDED_BULK_VIEW} onClick={() => navigate(DATA_PROVIDED_BULK_VIEW)} />}
                         </div>
                       )}
                     </>
                   )}
-                  {!isSDPMember && !isMPX && !isAdminArea && <SNavItem icon={<Wallet size={14} />}      label="Payout Tracker"       active={view === "payout-tracker"} maint={menuMaint("payout-tracker")} onClick={() => navigate("payout-tracker")} />}
+                  {!isSDPMember && !isMPX && (!isAdminArea || isAdminLevel) && <SNavItem icon={<Wallet size={14} />}      label="Payout Tracker"       active={view === "payout-tracker"} maint={menuMaint("payout-tracker")} onClick={() => navigate("payout-tracker")} />}
                   {canSdp       && <SNavItem icon={<Store size={14} />}       label="SDP Management"       active={view === "sdp2"}           onClick={() => navigate("sdp2")} />}
                   {/* UPDATE (permintaan user - "mapping admin mc itu
                       seharusnya didalam dse prod, bukan menjadi menu
@@ -1445,13 +1674,48 @@ export default function DashboardPage() {
                       jsx / PNL_FormPengeluaranV2.jsx). Audiens: SPM + Admin MC/
                       Area (beda dari V1 yg justru menyembunyikan dua role itu). */}
                   {(isSPM || isMPX || isAdminArea) && (
-                    <DashCard icon={<PieChart size={20} />} title="MPX P&L Report V2"
-                      desc="Versi disederhanakan — Form Pendapatan & Pengeluaran yang lebih ringkas."
+                    <DashCard icon={<PieChart size={20} />} title="MDI P&L Report"
+                      desc="Laporan Pendapatan & Pengeluaran per Partner MDI."
                       tag="Baru" active={true} onClick={() => navigate("pnl-mpx-v2")} t={t} d={d}
                       accent={{ color: "#2563EB", bg: d ? "rgba(37,99,235,0.14)" : "rgba(37,99,235,0.08)", bd: d ? "rgba(37,99,235,0.32)" : "rgba(37,99,235,0.20)", shadow: "rgba(37,99,235,0.20)" }} />
                   )}
 
-                  {!isSDPMember && !isMPX && !isAdminArea && (
+                  {/* BARU (permintaan user - "tambahkan satu Menu MDI
+                      Dashboard ... slide per Partner per bulan, KPI
+                      score + leaderboard PNL/AR/produktivitas DSE per
+                      Area, dipakai utk analisis"): lihat MDI_Dashboard.jsx.
+                      SPM-only - data lintas semua Partner, sama scope-nya
+                      dgn Control Center/Pivot Summary. */}
+                  {/* FIX (permintaan user - "dashboard mdi juga bisa diakses
+                      harusnya"): dibuka juga ke admin_partner/admin_region/
+                      admin_circle (isAdminLevel) - TETAP tidak ke admin_mc/
+                      admin_area (keduanya cuma dapat MDI P&L Report & Prod.
+                      & AR saja, konsisten dgn posisi mereka di hierarki).
+                      Data-nya di-scope per partner/region di dalam MDI_
+                      Dashboard.jsx sendiri (lihat prop profile/masterData
+                      di bawah) - admin_circle TETAP lihat semua (seluruh
+                      Sumatera), sejalan dgn 3 tingkat yg sama dipakai di
+                      Payout Tracker. */}
+                  {(isSPM || isAdminLevel) && (
+                    <DashCard icon={<Trophy size={20} />} title="MDI Dashboard"
+                      desc="Slide analisis per Partner per bulan — KPI score, leaderboard PNL, AR, dan produktivitas DSE per Area."
+                      tag="Baru" active={true} onClick={() => navigate("mdi-dashboard")} t={t} d={d}
+                      accent={{ color: d ? "#FFCB05" : "#C49A00", bg: d ? "rgba(255,203,5,0.13)" : "rgba(255,203,5,0.09)", bd: d ? "rgba(255,203,5,0.30)" : "rgba(255,203,5,0.22)", shadow: "rgba(255,203,5,0.20)" }} />
+                  )}
+
+                  {/* FIX (bug ditemukan user - "admin region ko ga dapat Payout
+                      Tracker, padahal udah SEHARUSNYA bisa"): akun multi-role
+                      (admin_region + admin_area sekaligus, lihat profile_extra_
+                      roles) tadinya SELALU kena blokir `!isAdminArea` di sini -
+                      exclusion itu ditujukan utk admin_area MURNI (domainnya
+                      cuma Prod & AR/HoA), tapi jadi ikut memblokir akun yg
+                      JUGA punya admin_partner/circle/region (yang SEHARUSNYA
+                      dapat Payout Tracker scoped, lihat ROLE_VIEWS di
+                      PayoutTracker.jsx). Sekarang exclusion admin_area
+                      dilonggarkan kalau akun itu JUGA isAdminLevel - sejalan
+                      dgn filosofi "hak akses teratas digabung" yg sudah
+                      dipakai di tempat lain (mis. getCategoryOptionsForRoles). */}
+                  {!isSDPMember && !isMPX && (!isAdminArea || isAdminLevel) && (
                     <DashCard icon={<Wallet size={20} />} title="Payout Tracker"
                       desc="Monitoring pembayaran Partner & Agency Prepaid — SLA, funnel, heatmap, dan raw data."
                       tag="Payout" active={true} onClick={() => navigate("payout-tracker")} t={t} d={d}
@@ -1636,7 +1900,7 @@ export default function DashboardPage() {
             {/* ── PNL Control Center V2 (data pnl_reports_v2) ── */}
             {view === "control-center-v2" && isSPM && (
               <motion.div key="cc2" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                <button className="back-btn" onClick={() => navigate("pnl-mpx-v2")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke MPX P&amp;L Report V2</button>
+                <button className="back-btn" onClick={() => navigate("pnl-mpx-v2")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke MDI P&amp;L Report</button>
                 <PNLControlCenter
                   variant="v2"
                   theme={theme} masterData={masterData} activeYear={activeYear} activeMonth={activeMonth}
@@ -1649,7 +1913,7 @@ export default function DashboardPage() {
             {/* ── Pivot P&L Summary V2 (data pnl_reports_v2) ── */}
             {view === "pivot-summary-v2" && isSPM && (
               <motion.div key="ps2" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                <button className="back-btn" onClick={() => navigate("pnl-mpx-v2")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke MPX P&amp;L Report V2</button>
+                <button className="back-btn" onClick={() => navigate("pnl-mpx-v2")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke MDI P&amp;L Report</button>
                 <PNLPivotSummary variant="v2" theme={theme} activeYear={activeYear} userRole={profile?.role} partnerName={null} />
               </motion.div>
             )}
@@ -1660,17 +1924,25 @@ export default function DashboardPage() {
                 bukan scoped ke 1 Partner+Branch spt alur Laporan P&L biasa. */}
             {view === DATA_PROVIDED_BULK_VIEW && isTrueSPM && (
               <motion.div key="dpbulk" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                <button className="back-btn" onClick={() => navigate("pnl-mpx-v2")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke MPX P&amp;L Report V2</button>
+                <button className="back-btn" onClick={() => navigate("pnl-mpx-v2")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke MDI P&amp;L Report</button>
                 <PNL_DataProvidedBulkUpload t={v2t} d={d} masterData={masterDataV2} dataProvidedRows={DATA_PROVIDED_ROWS} profile={profile}
                   onClose={() => navigate("pnl-mpx-v2")} />
               </motion.div>
             )}
 
             {/* ── Payout Tracker ── */}
-            {view === "payout-tracker" && !isSDPMember && !isMPX && !isAdminArea && !viewUnderMaint && (
+            {view === "payout-tracker" && !isSDPMember && !isMPX && (!isAdminArea || isAdminLevel) && !viewUnderMaint && (
               <motion.div key="pt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
-                <PayoutTracker theme={theme} profile={profile} regionFilter={iohRegionView} partnerName={isMPX ? (profile?.partner_name || null) : (activePartner || null)} filterType={activeType !== "ALL" ? activeType : null} readOnly={isReadOnly} masterData={masterData} />
+                <PayoutTracker theme={theme} profile={profile} regionFilter={isAdminRegionRole ? (profile?.partner_name || null) : iohRegionView} partnerName={isMPX ? (profile?.partner_name || null) : isAdminPartnerRole ? (profile?.partner_name || null) : (activePartner || null)} filterType={activeType !== "ALL" ? activeType : null} readOnly={isReadOnly || isAdminLevel} masterData={masterData} />
+              </motion.div>
+            )}
+
+            {/* ── MDI Dashboard — slide analisis per Partner per bulan ── */}
+            {view === "mdi-dashboard" && (isSPM || isAdminLevel) && !viewUnderMaint && (
+              <motion.div key="mdidash" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
+                <MDI_Dashboard theme={theme} profile={profile} masterData={masterData} />
               </motion.div>
             )}
 
@@ -1852,7 +2124,7 @@ export default function DashboardPage() {
               <motion.div key="pnl-mpx-v2" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
                   <div style={{ padding: "24px 28px" }}>
-                    <PNL_MPX_Menu theme={theme} title="MPX P&L Report V2" onExit={() => navigate("overview")} onSelect={(id) => navigate(id)}
+                    <PNL_MPX_Menu theme={theme} title="MDI P&L Report" onExit={() => navigate("overview")} onSelect={(id) => navigate(id)}
                       items={[
                         { id: "summary-v2", icon: PieChart, label: "Laporan P&L",
                           desc: "Summary, Form Pendapatan, dan Form Pengeluaran versi ringkas (V2).", tag: "Profit & Loss",
@@ -1861,7 +2133,7 @@ export default function DashboardPage() {
                           desc: "Monitoring progres pengisian laporan V2 seluruh branch di wilayah Sumatera.", tag: "Monitoring",
                           accent: { color: "#ED1C24", bg: d ? "rgba(237,28,36,0.10)" : "rgba(237,28,36,0.06)", bd: d ? "rgba(237,28,36,0.26)" : "rgba(237,28,36,0.16)" } },
                         isSPM && { id: "pivot-summary-v2", icon: Table2, label: "Pivot P&L Summary",
-                          desc: "Ringkasan REV, EXP, dan P/L V2 seluruh MPX per bulan dalam format pivot table.", tag: "Ringkasan",
+                          desc: "Ringkasan REV, EXP, dan P/L V2 seluruh MDI per bulan dalam format pivot table.", tag: "Ringkasan",
                           accent: { color: d ? "#C49A00" : "#9A7400", bg: d ? "rgba(255,203,5,0.11)" : "rgba(255,203,5,0.09)", bd: d ? "rgba(255,203,5,0.28)" : "rgba(255,203,5,0.20)" } },
                         isTrueSPM && { id: DATA_PROVIDED_BULK_VIEW, icon: Upload, label: "Upload Data Provided",
                           desc: "Bulk upload Data Provided (SLA Fee, TDS, dst) semua Branch semua Partner sekaligus, lewat template Excel.", tag: "Bulk Upload",
@@ -1932,6 +2204,7 @@ export default function DashboardPage() {
                 {!canPnl ? (
                   <PnlPickerPrompt t={t} d={d} isSPM={isSPM} isMPX={isMPX} isIOHAny={isIOHAny} iohLockedRegion={iohLockedRegion}
                     regions={regions} filteredPartners={filteredPartners} availableTypes={availableTypes} availableBranches={availableBranches}
+                    partnerOptionLabel={partnerOptionLabel}
                     activeRegion={activeRegion} setActiveRegion={setActiveRegion}
                     activePartner={activePartner} setActivePartner={setActivePartner}
                     activeType={activeType} setActiveType={setActiveType}
@@ -2000,7 +2273,7 @@ export default function DashboardPage() {
                 "Pengeluaran"), SPM mengisi "Data Provided Area Level". ── */}
             {PNL_VIEWS_V2.has(view) && !viewUnderMaint && (
               <motion.div key="fv2" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} style={{ maxWidth: 920, margin: "0 auto" }}>
-                <button className="back-btn" onClick={() => navigate("pnl-mpx-v2")} style={{ marginBottom: 20 }}><ChevronLeft size={15} /> Kembali ke MPX P&amp;L Report V2</button>
+                <button className="back-btn" onClick={() => navigate("pnl-mpx-v2")} style={{ marginBottom: 20 }}><ChevronLeft size={15} /> Kembali ke MDI P&amp;L Report</button>
                 {/* BARU (permintaan user - "secara default dia akan all
                     dulu, akumulasi dari semua sumatera semua partner dan
                     semua area, baru nanti kita bisa pilih filter yang
@@ -2013,6 +2286,7 @@ export default function DashboardPage() {
                 {(!canPnl && view !== "summary-v2") ? (
                   <PnlPickerPrompt t={t} d={d} isSPM={isSPM} isMPX={isMPX || isAdminArea} isIOHAny={isIOHAny} iohLockedRegion={iohLockedRegion}
                     regions={regions} filteredPartners={filteredPartners} availableTypes={availableTypes} availableBranches={availableBranches}
+                    partnerOptionLabel={partnerOptionLabel}
                     activeRegion={activeRegion} setActiveRegion={setActiveRegion}
                     activePartner={activePartner} setActivePartner={setActivePartner}
                     activeType={activeType} setActiveType={setActiveType}
@@ -2042,26 +2316,80 @@ export default function DashboardPage() {
                         filter Region + Nama Partner (+ Tipe kalau partner
                         punya >1 tipe MPC/MP3) dipindah dari sidebar ke
                         sini, baris horizontal persis di atas tab. */}
+                    {/* FIX (permintaan user - "rapikan row pertama"): 4 field
+                        (Nama Partner/Region/Area/Tipe) dulu punya
+                        min/maxWidth beda2 (320/260/260/220) jadi lebarnya
+                        timpang & kelihatan berantakan begitu wrap ke baris
+                        baru di layar sempit - disamain semua jadi
+                        min 200 / max 280 / basis 220px spy rapi sejajar. */}
                     <div style={{ display: "flex", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
-                      <div style={{ flex: "1 1 220px", minWidth: 200, maxWidth: 320 }}>
-                        <FilterSelect label="Nama Partner" icon={<Building2 size={12} />} value={activePartner}
+                      {/* FIX (permintaan user - "lebarkan bagian nama
+                          partner agar tidak ketutupan"): nama partner bisa
+                          panjang (co: "PT INDOCEN SYSTEM TELECOMUNICATION")
+                          & kepotong kalau samain lebar dgn Region/Area/Tipe
+                          - dikasih porsi lebih lega (flex-grow 2x, maxWidth
+                          lebih besar) drpd 3 field lainnya. */}
+                      <div style={{ flex: "2 1 280px", minWidth: 240, maxWidth: 440 }}>
+                        <FilterSelect label="Nama Partner" icon={<Building2 size={12} />} value={activePartner} displayValue={activePartner}
                           onChange={v => { setActivePartner(v); setActiveBranch(""); setActiveType("ALL"); }} t={t} d={d} disabled={isMPX}>
                           <option value="" disabled>Pilih Partner</option>
-                          {filteredPartners.map(p => <option key={p} value={p}>{p}</option>)}
+                          {filteredPartners.map(p => <option key={p} value={p} style={{ color: t.hi }}>{partnerOptionLabel(p)}</option>)}
                         </FilterSelect>
                       </div>
                       {(isSPM || isIOHAny) && (
-                        <div style={{ flex: "1 1 200px", minWidth: 180, maxWidth: 260 }}>
+                        <div style={{ flex: "1 1 220px", minWidth: 200, maxWidth: 280 }}>
                           <FilterSelect label={iohLockedRegion ? "Region (terkunci)" : (isIOHAny ? "Region View" : "Region")} icon={<Globe size={12} />} value={activeRegion}
-                            onChange={v => { if (iohLockedRegion || activePartner) return; setActiveRegion(v); setActivePartner(""); setActiveBranch(""); }}
-                            t={t} d={d} disabled={!!iohLockedRegion || !!activePartner}>
-                            <option value="SUMATERA">Seluruh Sumatera</option>
-                            {regions.map(r => <option key={r} value={r}>{r}</option>)}
+                            onChange={v => {
+                              if (iohLockedRegion) return;
+                              // FIX (user - "harusnya tetap bisa dipilih
+                              // regionnya ... tetap bisa otomatis akan
+                              // pilih salah satu area di region baru yang
+                              // dipilih"): partner multi-region - Region
+                              // tetap bisa diganti TANPA clear Partner,
+                              // cukup clear Cabang (auto-pick effect di
+                              // atas akan milih cabang lain di region baru).
+                              if (activePartner) { setActiveRegion(v); setActiveBranch(""); return; }
+                              setActiveRegion(v); setActivePartner(""); setActiveBranch("");
+                            }}
+                            t={t} d={d} disabled={!!iohLockedRegion || (!!activePartner && partnerRegions.length <= 1)}>
+                            {!activePartner && <option value="SUMATERA">Seluruh Sumatera</option>}
+                            {(activePartner ? partnerRegions : regions).map(r => <option key={r} value={r}>{r}</option>)}
                           </FilterSelect>
                         </div>
                       )}
+                      {/* BARU (permintaan user - "buat pemilihan area itu
+                          di kanan pemilihan region, agar period picker
+                          bisa tetap sebelah kanan row 2"): dropdown Area
+                          dipindah dari row 2 (dulu di tengah, antara tab &
+                          date picker) ke row 1, persis di kanan Region -
+                          row 2 jadi cuma tab (kiri) + date picker (kanan)
+                          lagi, rapi spt semula. */}
+                      <div style={{ flex: "1 1 220px", minWidth: 200, maxWidth: 280 }}>
+                        <FilterSelect label={activePartner ? (availableBranches.length > 1 ? "Area (pilih salah satu)" : "Area") : "Area (bisa pilih langsung)"}
+                          icon={<Store size={12} />} value={activePartner ? activeBranch : ""} onChange={handleBranchPickerChange}
+                          t={t} d={d} disabled={!activePartner && branchPickerGroups.length === 0}>
+                          <option value="" disabled>Pilih Area</option>
+                          {activePartner
+                            ? (availableBranchGroups.length > 1
+                                ? availableBranchGroups.map(g => (
+                                    <optgroup key={g.region} label={g.region}>
+                                      {g.branches.map(b => <option key={b} value={b}>{b}</option>)}
+                                    </optgroup>
+                                  ))
+                                : availableBranches.map(b => <option key={b} value={b}>{b}</option>))
+                            : branchPickerGroups.map(g => (
+                                <optgroup key={g.region} label={g.region}>
+                                  {g.items.map(it => (
+                                    <option key={`${it.partner_name}${BRANCH_PICKER_SEP}${it.branch_name}`} value={`${it.partner_name}${BRANCH_PICKER_SEP}${it.branch_name}`}>
+                                      {it.partner_name} — {it.branch_name}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              ))}
+                        </FilterSelect>
+                      </div>
                       {activePartner && availableTypes.length > 1 && (
-                        <div style={{ flex: "1 1 180px", minWidth: 160, maxWidth: 220 }}>
+                        <div style={{ flex: "1 1 220px", minWidth: 200, maxWidth: 280 }}>
                           <FilterSelect label="Tipe (MPC / MP3)" icon={<SlidersHorizontal size={12} />} value={activeType}
                             onChange={v => { setActiveType(v); setActiveBranch(""); }} t={t} d={d}>
                             <option value="ALL">Semua Tipe</option>
@@ -2083,24 +2411,13 @@ export default function DashboardPage() {
                           </button>
                         ))}
                       </div>
-                      {/* BARU (permintaan user - "pindahkan filter cabang yg
-                          ada di sidebar di tengah ini pengeluaran dan period
-                          picker"): dropdown Cabang dipindah dari sidebar ke
-                          sini - justifyContent:"space-between" pada parent
-                          otomatis menaruhnya persis di tengah, di antara tab
-                          Summary/Pendapatan/Pengeluaran di kiri dan date
-                          picker bulan/tahun di kanan. */}
-                      <div style={{ display: "flex", alignItems: "center", border: `1px solid ${t.inputBd}`, borderRadius: 8, background: t.inputBg, height: 36, overflow: "hidden", flexShrink: 0, minWidth: 0, opacity: activePartner ? 1 : 0.5 }}>
-                        <Store size={13} style={{ color: t.blue, marginLeft: 11, flexShrink: 0 }} />
-                        <div style={{ position: "relative", display: "flex", alignItems: "center", minWidth: 0 }}>
-                          <select value={activeBranch} onChange={e => setActiveBranch(e.target.value)} disabled={!activePartner}
-                            style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", background: "transparent", border: "none", fontSize: 13.5, fontWeight: 500, color: t.hi, cursor: activePartner ? "pointer" : "not-allowed", paddingLeft: 7, paddingRight: 24, height: 36, fontFamily: "inherit", minWidth: 0 }}>
-                            <option value="" disabled>Pilih Cabang</option>
-                            {availableBranches.map(b => <option key={b} value={b}>{b}</option>)}
-                          </select>
-                          <ChevronDown size={12} style={{ position: "absolute", right: 6, pointerEvents: "none", color: t.lo }} />
-                        </div>
-                      </div>
+                      {/* BARU (permintaan user - "buat pemilihan area itu
+                          di kanan pemilihan region, agar period picker
+                          bisa tetap sebelah kanan row 2"): dropdown Area
+                          pindah ke row 1 (lihat di atas, persis di kanan
+                          Region) - row 2 ini sekarang cuma tab (kiri) +
+                          date picker (kanan), justifyContent:"space-between"
+                          otomatis menaruh date picker rata kanan lagi. */}
                       <div style={{ display: "flex", alignItems: "center", border: `1px solid ${t.inputBd}`, borderRadius: 8, background: t.inputBg, height: 36, overflow: "hidden", flexShrink: 0, minWidth: 0 }}>
                         <div style={{ display: "flex", alignItems: "center", borderRight: `1px solid ${t.inputBd}`, height: "100%", position: "relative", minWidth: 0 }}>
                           <Calendar size={13} style={{ color: t.blue, marginLeft: 11, flexShrink: 0 }} />
@@ -2138,12 +2455,6 @@ export default function DashboardPage() {
                                 setIsFormDirty={isReadOnly ? undefined : setFormDirty}
                                 readOnly={isReadOnly}
                                 canEditPendapatan={isMPX || isAdminArea || isSPM}
-                                // permintaan user: "fitur upload hanya tersedia bagi role
-                                // spm_sumatera" (BUKAN role "circle" yg jg lolos isSPM) -
-                                // controls tombol "Bulk Upload" di section Data Provided,
-                                // bukan lagi bikin tabelnya bisa diketik manual (lihat
-                                // PNL_FormPendapatanV2.jsx: NumInput di situ SELALU readOnly).
-                                canEditDataProvided={isTrueSPM}
                                 activeContext={{ branch: activeBranch, month: activeMonth, year: activeYear, mpxName: activePartner, mpxType }}
                                 masterData={masterData}
                               />

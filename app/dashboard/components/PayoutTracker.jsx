@@ -368,31 +368,43 @@ function getPartnerNameFromRow(r) {
 function applySidebarFilter(rows, partnerName, filterMpxType, regionFilter, masterData, src) {
   let result = rows;
   if (partnerName && src !== "agency") {
-    const targetPartner = normalizeName(partnerName);
-    result = result.filter(r => normalizeName(getPartnerNameFromRow(r)) === targetPartner);
+    // FIX (role baru admin_partner - "Tambahkan Partner Level ... profiles.partner_name
+    // bisa diisi >1 mdi dipisah koma oleh mf_dse_admin_partner_login_apply"): dulu
+    // partnerName selalu dianggap 1 nilai tunggal (match exact) - sekarang dipecah
+    // per koma & dicocokkan ke SALAH SATU target (tetap aman utk nilai tunggal, mis.
+    // finance_mpx, karena split 1 nilai tanpa koma ya cuma balik jadi array isi 1).
+    const targetPartners = String(partnerName).split(",").map(p => normalizeName(p.trim())).filter(Boolean);
+    if (targetPartners.length) {
+      result = result.filter(r => targetPartners.includes(normalizeName(getPartnerNameFromRow(r))));
+    }
   }
   if (filterMpxType && src !== "agency") {
     const tp = filterMpxType.toUpperCase().trim();
     result = result.filter(r => getMpxTypeFromRow(r) === tp);
   }
   if (regionFilter) {
-    const targetRegion = regionFilter.toUpperCase().trim();
-    result = result.filter(r => {
-      const rowRegion = getRegionFromRow(r);
-      if (rowRegion) {
-        // Kolom Region bisa MULTI-region, dipisah titik koma (;) — mis.
-        // "NORTH SUMATERA; CENTRAL SUMATERA" → dapat diakses kedua region.
-        const parts = rowRegion.split(";").map(s => s.trim()).filter(Boolean);
-        if (parts.some(p => p === "ALL" || p === "SUMATERA" || p === "ALL SUMATERA")) return true;
-        return parts.includes(targetRegion);
-      }
-      // Fallback: turunkan region dari master partner bila kolom Region kosong.
-      if (masterData && masterData.length > 0) {
-        const match = masterData.find(m => normalizeName(m.partner_name) === normalizeName(getPartnerNameFromRow(r)));
-        if (match) return match.region?.toUpperCase().trim() === targetRegion;
-      }
-      return false;
-    });
+    // FIX (role baru admin_region - sama alasannya dgn partnerName di atas):
+    // regionFilter sekarang bisa berisi >1 region dipisah koma - dipecah & match
+    // ke SALAH SATU target (nilai tunggal, mis. iohRegionView, tetap jalan normal).
+    const targetRegions = String(regionFilter).split(",").map(r => r.toUpperCase().trim()).filter(Boolean);
+    if (targetRegions.length) {
+      result = result.filter(r => {
+        const rowRegion = getRegionFromRow(r);
+        if (rowRegion) {
+          // Kolom Region bisa MULTI-region, dipisah titik koma (;) — mis.
+          // "NORTH SUMATERA; CENTRAL SUMATERA" → dapat diakses kedua region.
+          const parts = rowRegion.split(";").map(s => s.trim()).filter(Boolean);
+          if (parts.some(p => p === "ALL" || p === "SUMATERA" || p === "ALL SUMATERA")) return true;
+          return parts.some(p => targetRegions.includes(p));
+        }
+        // Fallback: turunkan region dari master partner bila kolom Region kosong.
+        if (masterData && masterData.length > 0) {
+          const match = masterData.find(m => normalizeName(m.partner_name) === normalizeName(getPartnerNameFromRow(r)));
+          if (match) return targetRegions.includes(match.region?.toUpperCase().trim());
+        }
+        return false;
+      });
+    }
   }
   return result;
 }
@@ -1514,12 +1526,21 @@ const ROLE_VIEWS = {
   ioh:     { tabs:["dash","dc","raw","ytd","acc","fc"], agency:true,  upload:false }, // internal_ioh (seluruh Sumatera)
   region:  { tabs:["dash","acc"],                       agency:true,  upload:false }, // IOH / SFM regional (region terkunci)
   partner: { tabs:["out","dc","hist"],                  agency:false, upload:false }, // finance_mpx (hanya invoice sendiri)
+  // Partner Level / Region Level / Circle (permintaan user - "Dashboard, Distribution Fee
+  // & Champions, Raw Data = per partner" / "+YTD Summary = per region" / "+Forecast = all
+  // circle Sumatera") - read-only, scope data-nya dikunci dari profiles.partner_name
+  // (lihat partnerName/regionFilter props di page.jsx), TIDAK dapat Outstanding/Riwayat/
+  // Accrual/Upload (bukan domainnya, itu milik finance_mpx/spm_sumatera/internal_ioh).
+  admpartner: { tabs:["dash","dc","raw"],            agency:false, upload:false }, // admin_partner (Partner Level)
+  admregion:  { tabs:["dash","dc","raw","ytd"],      agency:false, upload:false }, // admin_region (Region Level)
+  admcircle:  { tabs:["dash","dc","raw","ytd","fc"], agency:false, upload:false }, // admin_circle (Circle - seluruh Sumatera)
   other:   { tabs:["dash","dc","raw","ytd","fc"],       agency:false, upload:false }, // role lain yang bisa membuka menu ini
 };
 const ROLE_KIND = {
   spm_sumatera:"admin", internal_ioh:"ioh", finance_mpx:"partner",
   ioh_north_sumatera:"region", ioh_central_sumatera:"region", ioh_south_sumatera:"region",
   region_sfm_north:"region", region_sfm_central:"region", region_sfm_south:"region",
+  admin_partner:"admpartner", admin_region:"admregion", admin_circle:"admcircle",
 };
 const roleView = (role) => ROLE_VIEWS[ROLE_KIND[role] || "other"];
 

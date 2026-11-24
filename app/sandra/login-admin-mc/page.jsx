@@ -175,7 +175,23 @@ function AdminMcLoginInner() {
       // pola dgn /sandra/login, lihat komentar di sana.
       // FIX (TypeError "...rpc(...).catch is not a function") - sama
       // persis penjelasan di /sandra/login.
+      // FIX (bug "sudah hapus akses Admin MC tapi role masih admin_mc" -
+      // endpoint /api/sandra/verify-admin-mc-otp SEKARANG juga menerima
+      // email Admin Area/Partner Level/Circle/Region Level (lihat
+      // komentar di route-nya), jadi halaman "Admin MC" ini pun bisa
+      // dipakai utk login role lain - tapi SEBELUMNYA di sini cuma
+      // menerapkan mf_dse_admin_mc_login_apply (no-op/applied:false kalau
+      // emailnya bukan admin_mc lagi), jadi profiles.role lama yg SUDAH
+      // tidak valid (mis. admin_mc yg mapping-nya sudah dihapus) TIDAK
+      // PERNAH ikut dikoreksi ke role barunya - macet selamanya di role
+      // basi. Sekarang terapkan SEMUA 5 role sekaligus best-effort (sama
+      // persis pola /sandra/login) - siapa pun yang benar2 match di DB
+      // yang menang, terlepas dari halaman mana yang dipakai utk login.
       try { await supabase.rpc("mf_dse_admin_mc_login_apply", { p_email: email }); } catch { /* best-effort */ }
+      try { await supabase.rpc("mf_dse_admin_area_login_apply", { p_email: email }); } catch { /* best-effort */ }
+      try { await supabase.rpc("mf_dse_admin_partner_login_apply", { p_email: email }); } catch { /* best-effort */ }
+      try { await supabase.rpc("mf_dse_admin_circle_login_apply", { p_email: email }); } catch { /* best-effort */ }
+      try { await supabase.rpc("mf_dse_admin_region_login_apply", { p_email: email }); } catch { /* best-effort */ }
       router.refresh();
       router.push("/dashboard");
     } catch (e) {

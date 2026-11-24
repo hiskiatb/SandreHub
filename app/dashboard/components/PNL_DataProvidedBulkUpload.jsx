@@ -49,6 +49,13 @@ function uniqueAreaRows(masterData) {
 }
 
 export default function PNL_DataProvidedBulkUpload({ t, d, masterData, dataProvidedRows, profile, onClose }) {
+  // BARU (permintaan user - KPI Score sekarang ikut di dataProvidedRows
+  // tapi formatnya PERSEN, bukan Rupiah spt SLA Fee/TDS/dll - kolom
+  // "Total Data Provided" di preview di bawah cuma boleh menjumlahkan
+  // komponen Rupiah, jadi KPI Score (isScore) dikecualikan dari situ.
+  // Tetap ikut normal di template download/upload & payload, karena
+  // dataProvidedRows asli (bukan moneyRows) yg dipakai di situ.
+  const moneyRows = useMemo(() => (dataProvidedRows || []).filter((r) => !r.isScore), [dataProvidedRows]);
   const [step, setStep] = useState("period"); // "period" | "upload"
   const [month, setMonth] = useState(MONTHS_ID[now.getMonth()]);
   const [year, setYear] = useState(String(now.getFullYear()));
@@ -274,7 +281,7 @@ export default function PNL_DataProvidedBulkUpload({ t, d, masterData, dataProvi
                       </thead>
                       <tbody>
                         {parsedRows.map((r, i) => {
-                          const total = dataProvidedRows.reduce((s, dr) => s + numOrZero(r.values[dr.id]), 0);
+                          const total = moneyRows.reduce((s, dr) => s + numOrZero(r.values[dr.id]), 0);
                           const ok = r.matched && !r.duplicate;
                           return (
                             <tr key={i} style={{ borderBottom: `1px solid ${t.lineH}` }}>

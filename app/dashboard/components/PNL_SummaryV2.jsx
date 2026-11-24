@@ -1,13 +1,23 @@
 "use client";
 // Summary V2 — ringkasan Laba/Rugi untuk MPX P&L Report V2 (permintaan
-// user: "style nya seperti P&L report v1, dan ada summarynya"). Hanya
-// MEMBACA 1 baris pnl_reports_v2 (partner+branch+tipe+bulan+tahun) lalu
-// menghitung:
+// user: "style nya seperti P&L report v1, dan ada summarynya"), lalu
+// diperluas (permintaan user - "lanjutin Phase 5"):
 //   Total Pendapatan  = Total Margin Penjualan (IM3 + 3ID) + Di Luar Template + Total Data Provided
+//     -> dibaca dari pnl_reports_v2 (belum dipindah - Form Pendapatan V2
+//        masih nulis ke sana, lihat PNL_FormPendapatanV2.jsx).
 //   Total Pengeluaran = OPEX + SDM (Sales + Non Sales) + Marketing Cost + Cost of Money
+//     -> SEKARANG dibaca dari pnl_pengeluaran_depo_v2 (OPEX+SDM, per Depo)
+//        + pnl_pengeluaran_mc_v2 (Marketing Cost+Cost of Money, per
+//        District/mc) - ini tabel yg SUNGGUHAN dipakai Form Pengeluaran
+//        V2 (lihat PNL_FormPengeluaranV2.jsx) sejak fitur Depo/District
+//        dibikin. pnl_reports_v2.pengeluaran_data SUDAH TIDAK dipakai lagi
+//        di sini (kolom lama itu beku, cuma masih ada di kolom DB).
 //   Laba / Rugi       = Total Pendapatan - Total Pengeluaran
 // Rumus pendapatan/pengeluaran diambil dari summarizePendapatan /
 // summarizePengeluaran di file form masing-masing supaya selalu sama.
+// Depo tidak nyimpen branch langsung - branch sebuah Depo/mc dipetakan
+// lewat mf_dse_database (mdi/branch/mc), konsisten dgn cara Form
+// Pengeluaran V2 & Kelola Depo nentuin Area.
 import { useEffect, useMemo, useState } from "react";
 import { LayoutGrid, ArrowUpRight, ArrowDownLeft, Info } from "lucide-react";
 import supabase from "../../../lib/supabase";
@@ -56,7 +66,7 @@ const THead = ({ t }) => (
 function mergeRows(rows) {
   if (!rows || rows.length === 0) return null;
   if (rows.length === 1) return rows[0];
-  const merged = { luar_template_amount: 0, pengeluaran_data: {} };
+  const merged = { luar_template_amount: 0 };
   MARGIN_ROWS.forEach((r) => { merged[`margin_${r.id}`] = 0; merged[`margin_${r.id}_3id`] = 0; });
   DATA_PROVIDED_ROWS.forEach((r) => { merged[r.id] = 0; });
   const notes = [];
@@ -68,13 +78,24 @@ function mergeRows(rows) {
     DATA_PROVIDED_ROWS.forEach((r) => { merged[r.id] += numOrZero(row?.[r.id]); });
     merged.luar_template_amount += numOrZero(row?.luar_template_amount);
     if (row?.luar_template_note) notes.push(`${row.partner_name || ""}/${row.branch || ""}: ${row.luar_template_note}`);
-    const peng = row?.pengeluaran_data || {};
-    PENGELUARAN_CATALOG.forEach((it) => {
-      const prev = numOrZero(merged.pengeluaran_data[it.id]?.total);
-      merged.pengeluaran_data[it.id] = { total: prev + numOrZero(peng[it.id]?.total) };
-    });
   });
   merged.luar_template_note = notes.join(" | ");
+  return merged;
+}
+
+// Gabung banyak baris pnl_pengeluaran_depo_v2/pnl_pengeluaran_mc_v2 jadi
+// 1 object pengeluaran_data dgn menjumlah tiap item.total - item id di
+// katalog OPEX/SDM (Depo) vs MARKETING COST/COST OF MONEY (District) TIDAK
+// pernah bentrok, jadi aman digabung additif begitu saja.
+function mergeExpRows(rows) {
+  const merged = {};
+  (rows || []).forEach((r) => {
+    const vals = r?.pengeluaran_data || {};
+    Object.keys(vals).forEach((id) => {
+      const prev = numOrZero(merged[id]?.total);
+      merged[id] = { total: prev + numOrZero(vals[id]?.total) };
+    });
+  });
   return merged;
 }
 
@@ -116,11 +137,70 @@ export default function PNL_SummaryV2({ theme, activeContext, partnerScope }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aggKey]);
 
+  // Pengeluaran (OPEX+SDM+Marketing+CoM) SEKARANG ada di 2 tabel baru,
+  // bukan lagi di pnl_reports_v2.pengeluaran_data (lihat komentar atas
+  // file). Cari dulu scope District (mc) sesuai filter Partner/Area yg
+  // sama dgn query Pendapatan di atas, lalu dari situ tarik:
+  //  - pnl_pengeluaran_mc_v2 langsung per mc (Marketing Cost+CoM)
+  //  - pnl_v2_depo/pnl_v2_depo_mc utk cari Depo yg mc-nya masuk scope,
+  //    lalu pnl_pengeluaran_depo_v2 per depo_id (OPEX+SDM)
+  const [expLoaded, setExpLoaded] = useState({ key: null, data: {} });
+  const expPeng = useMemo(() => (expLoaded.key === aggKey ? expLoaded.data : {}), [expLoaded, aggKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let mcQuery = supabase.from("mf_dse_database").select("mdi, branch, mc")
+        .eq("is_revoked", false).not("mc", "is", null);
+      if (activeContext?.mpxName) mcQuery = mcQuery.eq("mdi", activeContext.mpxName);
+      else if (partnerScope && partnerScope.length > 0) mcQuery = mcQuery.in("mdi", partnerScope);
+      if (activeContext?.branch) mcQuery = mcQuery.eq("branch", activeContext.branch);
+      const { data: mcRows, error: mcErr } = await mcQuery;
+      if (cancelled) return;
+      if (mcErr) { console.error("[PNL_SummaryV2] gagal load scope mc:", mcErr.message); setExpLoaded({ key: aggKey, data: {} }); return; }
+      const mcList = [...new Set((mcRows || []).map((r) => r.mc).filter(Boolean))];
+      if (mcList.length === 0) { setExpLoaded({ key: aggKey, data: {} }); return; }
+
+      const month = toMonthInt(activeContext?.month), year = toYearInt(activeContext?.year);
+      const partnerNames = activeContext?.mpxName ? [activeContext.mpxName] : (partnerScope || []);
+
+      let depoQuery = supabase.from("pnl_v2_depo").select("id, partner_name").eq("active", true);
+      if (partnerNames.length > 0) depoQuery = depoQuery.in("partner_name", partnerNames);
+      const [mcExpRes, depoRes] = await Promise.all([
+        supabase.from("pnl_pengeluaran_mc_v2").select("pengeluaran_data").in("mc", mcList).eq("month", month).eq("year", year),
+        depoQuery,
+      ]);
+      if (cancelled) return;
+      if (mcExpRes.error) console.error("[PNL_SummaryV2] gagal load pengeluaran_mc_v2:", mcExpRes.error.message);
+      if (depoRes.error) console.error("[PNL_SummaryV2] gagal load pnl_v2_depo:", depoRes.error.message);
+
+      const depoIds = (depoRes.data || []).map((d) => d.id);
+      let depoExpRows = [];
+      if (depoIds.length > 0) {
+        const { data: depoMcRows, error: depoMcErr } = await supabase.from("pnl_v2_depo_mc").select("depo_id, mc").in("depo_id", depoIds);
+        if (cancelled) return;
+        if (depoMcErr) console.error("[PNL_SummaryV2] gagal load pnl_v2_depo_mc:", depoMcErr.message);
+        const mcSet = new Set(mcList);
+        const matchedDepoIds = [...new Set((depoMcRows || []).filter((r) => mcSet.has(r.mc)).map((r) => r.depo_id))];
+        if (matchedDepoIds.length > 0) {
+          const { data: dExp, error: dExpErr } = await supabase.from("pnl_pengeluaran_depo_v2").select("pengeluaran_data").in("depo_id", matchedDepoIds).eq("month", month).eq("year", year);
+          if (cancelled) return;
+          if (dExpErr) console.error("[PNL_SummaryV2] gagal load pengeluaran_depo_v2:", dExpErr.message);
+          depoExpRows = dExp || [];
+        }
+      }
+      if (cancelled) return;
+      setExpLoaded({ key: aggKey, data: mergeExpRows([...(mcExpRes.data || []), ...depoExpRows]) });
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aggKey]);
+
   const inc = useMemo(() => summarizePendapatan(row), [row]);
-  const exp = useMemo(() => summarizePengeluaran(row?.pengeluaran_data), [row]);
+  const exp = useMemo(() => summarizePengeluaran(expPeng), [expPeng]);
   const net = inc.grandTotal - exp.grandTotal;
   const base = inc.grandTotal;
-  const peng = row?.pengeluaran_data || {};
+  const peng = expPeng;
   const itemTotal = (id) => numOrZero(peng[id]?.total);
   const stepItems = (step, group) => PENGELUARAN_CATALOG.filter((it) => it.step === step && !it.qtyOnly && (!group || it.salesGroup === group));
 
@@ -140,7 +220,7 @@ export default function PNL_SummaryV2({ theme, activeContext, partnerScope }) {
           {isAggregate && (
             <div style={{ display: "flex", alignItems: "flex-start", gap: 9, padding: "12px 16px", borderRadius: 10, border: `1px solid ${t.line}`, background: t.sub, color: t.mid, fontSize: 12, fontWeight: 600 }}>
               <Info size={14} style={{ flexShrink: 0, marginTop: 1, color: t.blue }} />
-              <span>Akumulasi dari {rowCount} laporan{!activeContext?.mpxName ? " (semua partner)" : ""}{!activeContext?.branch ? " (semua area)" : ""} sesuai filter Region/Partner/Cabang di atas. Pilih Partner &amp; Cabang di atas utk melihat 1 laporan spesifik.</span>
+              <span>Akumulasi dari {rowCount} laporan{!activeContext?.mpxName ? " (semua partner)" : ""}{!activeContext?.branch ? " (semua area)" : ""} sesuai filter Region/Partner/Area di atas. Pilih Partner &amp; Area di atas utk melihat 1 laporan spesifik.</span>
             </div>
           )}
           {!row && (
@@ -178,7 +258,7 @@ export default function PNL_SummaryV2({ theme, activeContext, partnerScope }) {
                   ))}
                   <TR label="Di Luar Template" amount={inc.luarTemplate} base={base} kind="sub" t={t} />
                   <TR label="Total Data Provided" amount={inc.totalDataProvided} base={base} kind="sub" t={t} />
-                  {DATA_PROVIDED_ROWS.map((r) => (
+                  {DATA_PROVIDED_ROWS.filter((r) => !r.isScore).map((r) => (
                     <TR key={r.id} label={r.label} amount={numOrZero(row?.[r.id])} base={base} indent={1} t={t} />
                   ))}
                   <TR label="Total Pendapatan" amount={inc.grandTotal} base={base} kind="total" t={t} />

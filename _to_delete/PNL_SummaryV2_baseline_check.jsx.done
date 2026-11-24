@@ -1,0 +1,301 @@
+"use client";
+// Summary V2 — ringkasan Laba/Rugi untuk MPX P&L Report V2 (permintaan
+// user: "style nya seperti P&L report v1, dan ada summarynya"), lalu
+// diperluas (permintaan user - "lanjutin Phase 5"):
+//   Total Pendapatan  = Total Margin Penjualan (IM3 + 3ID) + Di Luar Template + Total Data Provided
+//     -> dibaca dari pnl_reports_v2 (belum dipindah - Form Pendapatan V2
+//        masih nulis ke sana, lihat PNL_FormPendapatanV2.jsx).
+//   Total Pengeluaran = OPEX + SDM (Sales + Non Sales) + Marketing Cost + Cost of Money
+//     -> SEKARANG dibaca dari pnl_pengeluaran_depo_v2 (OPEX+SDM, per Depo)
+//        + pnl_pengeluaran_mc_v2 (Marketing Cost+Cost of Money, per
+//        District/mc) - ini tabel yg SUNGGUHAN dipakai Form Pengeluaran
+//        V2 (lihat PNL_FormPengeluaranV2.jsx) sejak fitur Depo/District
+//        dibikin. pnl_reports_v2.pengeluaran_data SUDAH TIDAK dipakai lagi
+//        di sini (kolom lama itu beku, cuma masih ada di kolom DB).
+//   Laba / Rugi       = Total Pendapatan - Total Pengeluaran
+// Rumus pendapatan/pengeluaran diambil dari summarizePendapatan /
+// summarizePengeluaran di file form masing-masing supaya selalu sama.
+// Depo tidak nyimpen branch langsung - branch sebuah Depo/mc dipetakan
+// lewat mf_dse_database (mdi/branch/mc), konsisten dgn cara Form
+// Pengeluaran V2 & Kelola Depo nentuin Area.
+import { useEffect, useMemo, useState } from "react";
+import { LayoutGrid, ArrowUpRight, ArrowDownLeft, Info } from "lucide-react";
+import supabase from "../../../lib/supabase";
+import { MARGIN_ROWS, DATA_PROVIDED_ROWS, summarizePendapatan } from "./PNL_FormPendapatanV2";
+import { PENGELUARAN_CATALOG, summarizePengeluaran } from "./PNL_FormPengeluaranV2";
+import {
+  FONT, GRAD, mk, V2Styles, Card, Body, SecLabel, FormHeader, LoadingBlock,
+  toMonthInt, toYearInt, numOrZero, fmtIDR, fmtPct, ctxKeyOf,
+} from "./PNL_V2Shared";
+
+const MetCard = ({ label, value, sub, color, t }) => (
+  <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.sm, padding: "16px 18px", minWidth: 0 }}>
+    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: t.mid }}>{label}</div>
+    <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.035em", color: color || t.hi, marginTop: 6, fontVariantNumeric: "tabular-nums", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</div>
+    {sub && <div style={{ fontSize: 11, color: t.lo, marginTop: 3 }}>{sub}</div>}
+  </div>
+);
+
+// 1 baris tabel P&L. kind: "data" (rincian) | "sub" (subtotal) | "total".
+const TR = ({ label, amount, base, kind = "data", indent = 0, t }) => {
+  const isTotal = kind === "total", isSub = kind === "sub";
+  return (
+    <tr className={isTotal ? undefined : "v2row"} style={{ borderBottom: `1px solid ${t.lineH}`, background: isTotal ? t.sub : "transparent" }}>
+      <td style={{ padding: "10px 10px", paddingLeft: 10 + indent * 18, fontSize: 13, fontWeight: isTotal ? 800 : isSub ? 700 : 500, color: isTotal || isSub ? t.hi : t.mid }}>{label}</td>
+      <td style={{ padding: "10px 10px", textAlign: "right", fontSize: 13, fontWeight: isTotal ? 800 : isSub ? 700 : 600, color: amount < 0 ? t.red : (isTotal || isSub ? t.hi : t.mid), fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{fmtIDR(amount)}</td>
+      <td style={{ padding: "10px 10px", textAlign: "right", fontSize: 12, color: t.lo, fontVariantNumeric: "tabular-nums", width: 80 }}>{base ? fmtPct((amount / base) * 100) : "—"}</td>
+    </tr>
+  );
+};
+
+const THead = ({ t }) => (
+  <thead>
+    <tr style={{ borderBottom: `1px solid ${t.line}` }}>
+      {["Komponen", "Nominal", "% Pendapatan"].map((h, i) => (
+        <th key={h} style={{ padding: "7px 10px", textAlign: i === 0 ? "left" : "right", fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: t.lo }}>{h}</th>
+      ))}
+    </tr>
+  </thead>
+);
+
+// Gabung banyak baris pnl_reports_v2 jadi 1 "baris semu" dgn menjumlah
+// semua kolom numerik yg dipakai summarizePendapatan/summarizePengeluaran
+// - dipakai utk mode "ALL" (akumulasi semua partner/area yg match filter
+// di atas) sesuai permintaan user: "secara default dia akan all dulu,
+// akumulasi dari semua sumatera semua partner dan semua area".
+function mergeRows(rows) {
+  if (!rows || rows.length === 0) return null;
+  if (rows.length === 1) return rows[0];
+  const merged = { luar_template_amount: 0 };
+  MARGIN_ROWS.forEach((r) => { merged[`margin_${r.id}`] = 0; merged[`margin_${r.id}_3id`] = 0; });
+  DATA_PROVIDED_ROWS.forEach((r) => { merged[r.id] = 0; });
+  const notes = [];
+  rows.forEach((row) => {
+    MARGIN_ROWS.forEach((r) => {
+      merged[`margin_${r.id}`] += numOrZero(row?.[`margin_${r.id}`]);
+      merged[`margin_${r.id}_3id`] += numOrZero(row?.[`margin_${r.id}_3id`]);
+    });
+    DATA_PROVIDED_ROWS.forEach((r) => { merged[r.id] += numOrZero(row?.[r.id]); });
+    merged.luar_template_amount += numOrZero(row?.luar_template_amount);
+    if (row?.luar_template_note) notes.push(`${row.partner_name || ""}/${row.branch || ""}: ${row.luar_template_note}`);
+  });
+  merged.luar_template_note = notes.join(" | ");
+  return merged;
+}
+
+// Gabung banyak baris pnl_pengeluaran_depo_v2/pnl_pengeluaran_mc_v2 jadi
+// 1 object pengeluaran_data dgn menjumlah tiap item.total - item id di
+// katalog OPEX/SDM (Depo) vs MARKETING COST/COST OF MONEY (District) TIDAK
+// pernah bentrok, jadi aman digabung additif begitu saja.
+function mergeExpRows(rows) {
+  const merged = {};
+  (rows || []).forEach((r) => {
+    const vals = r?.pengeluaran_data || {};
+    Object.keys(vals).forEach((id) => {
+      const prev = numOrZero(merged[id]?.total);
+      merged[id] = { total: prev + numOrZero(vals[id]?.total) };
+    });
+  });
+  return merged;
+}
+
+export default function PNL_SummaryV2({ theme, activeContext, partnerScope }) {
+  const d = theme === "dark";
+  const t = useMemo(() => mk(d), [d]);
+  const ctxKey = ctxKeyOf(activeContext);
+  // BARU: kalau filter belum lengkap (partner/branch belum dipilih),
+  // jangan block dgn PnlPickerPrompt - langsung tampilkan akumulasi
+  // "ALL" sesuai filter Region/Partner/Cabang yg sudah dipilih di atas.
+  const isAggregate = !ctxKey;
+  const aggKey = useMemo(() => JSON.stringify({
+    p: activeContext?.mpxName || "", b: activeContext?.branch || "",
+    ty: activeContext?.mpxType || "", m: toMonthInt(activeContext?.month), y: toYearInt(activeContext?.year),
+    scope: isAggregate ? (partnerScope || []) : [],
+  }), [activeContext?.mpxName, activeContext?.branch, activeContext?.mpxType, activeContext?.month, activeContext?.year, isAggregate, partnerScope]);
+  const [loaded, setLoaded] = useState({ key: null, row: null, count: 0 });
+  const loading = loaded.key !== aggKey;
+  const row = loaded.key === aggKey ? loaded.row : null;
+  const rowCount = loaded.key === aggKey ? loaded.count : 0;
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let query = supabase.from("pnl_reports_v2").select("*")
+        .eq("month", toMonthInt(activeContext?.month))
+        .eq("year", toYearInt(activeContext?.year));
+      if (activeContext?.mpxName) query = query.eq("partner_name", activeContext.mpxName);
+      else if (partnerScope && partnerScope.length > 0) query = query.in("partner_name", partnerScope);
+      if (activeContext?.branch) {
+        query = query.eq("branch", activeContext.branch).eq("mpc_mp3", activeContext.mpxType || "");
+      }
+      const { data, error } = await query;
+      if (cancelled) return;
+      if (error) console.error("[PNL_SummaryV2] gagal load:", error.message);
+      setLoaded({ key: aggKey, row: mergeRows(data || []), count: (data || []).length });
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aggKey]);
+
+  // Pengeluaran (OPEX+SDM+Marketing+CoM) SEKARANG ada di 2 tabel baru,
+  // bukan lagi di pnl_reports_v2.pengeluaran_data (lihat komentar atas
+  // file). Cari dulu scope District (mc) sesuai filter Partner/Area yg
+  // sama dgn query Pendapatan di atas, lalu dari situ tarik:
+  //  - pnl_pengeluaran_mc_v2 langsung per mc (Marketing Cost+CoM)
+  //  - pnl_v2_depo/pnl_v2_depo_mc utk cari Depo yg mc-nya masuk scope,
+  //    lalu pnl_pengeluaran_depo_v2 per depo_id (OPEX+SDM)
+  const [expLoaded, setExpLoaded] = useState({ key: null, data: {} });
+  const expPeng = useMemo(() => (expLoaded.key === aggKey ? expLoaded.data : {}), [expLoaded, aggKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let mcQuery = supabase.from("mf_dse_database").select("mdi, branch, mc")
+        .eq("is_revoked", false).not("mc", "is", null);
+      if (activeContext?.mpxName) mcQuery = mcQuery.eq("mdi", activeContext.mpxName);
+      else if (partnerScope && partnerScope.length > 0) mcQuery = mcQuery.in("mdi", partnerScope);
+      if (activeContext?.branch) mcQuery = mcQuery.eq("branch", activeContext.branch);
+      const { data: mcRows, error: mcErr } = await mcQuery;
+      if (cancelled) return;
+      if (mcErr) { console.error("[PNL_SummaryV2] gagal load scope mc:", mcErr.message); setExpLoaded({ key: aggKey, data: {} }); return; }
+      const mcList = [...new Set((mcRows || []).map((r) => r.mc).filter(Boolean))];
+      if (mcList.length === 0) { setExpLoaded({ key: aggKey, data: {} }); return; }
+
+      const month = toMonthInt(activeContext?.month), year = toYearInt(activeContext?.year);
+      const partnerNames = activeContext?.mpxName ? [activeContext.mpxName] : (partnerScope || []);
+
+      let depoQuery = supabase.from("pnl_v2_depo").select("id, partner_name").eq("active", true);
+      if (partnerNames.length > 0) depoQuery = depoQuery.in("partner_name", partnerNames);
+      const [mcExpRes, depoRes] = await Promise.all([
+        supabase.from("pnl_pengeluaran_mc_v2").select("pengeluaran_data").in("mc", mcList).eq("month", month).eq("year", year),
+        depoQuery,
+      ]);
+      if (cancelled) return;
+      if (mcExpRes.error) console.error("[PNL_SummaryV2] gagal load pengeluaran_mc_v2:", mcExpRes.error.message);
+      if (depoRes.error) console.error("[PNL_SummaryV2] gagal load pnl_v2_depo:", depoRes.error.message);
+
+      const depoIds = (depoRes.data || []).map((d) => d.id);
+      let depoExpRows = [];
+      if (depoIds.length > 0) {
+        const { data: depoMcRows, error: depoMcErr } = await supabase.from("pnl_v2_depo_mc").select("depo_id, mc").in("depo_id", depoIds);
+        if (cancelled) return;
+        if (depoMcErr) console.error("[PNL_SummaryV2] gagal load pnl_v2_depo_mc:", depoMcErr.message);
+        const mcSet = new Set(mcList);
+        const matchedDepoIds = [...new Set((depoMcRows || []).filter((r) => mcSet.has(r.mc)).map((r) => r.depo_id))];
+        if (matchedDepoIds.length > 0) {
+          const { data: dExp, error: dExpErr } = await supabase.from("pnl_pengeluaran_depo_v2").select("pengeluaran_data").in("depo_id", matchedDepoIds).eq("month", month).eq("year", year);
+          if (cancelled) return;
+          if (dExpErr) console.error("[PNL_SummaryV2] gagal load pengeluaran_depo_v2:", dExpErr.message);
+          depoExpRows = dExp || [];
+        }
+      }
+      if (cancelled) return;
+      setExpLoaded({ key: aggKey, data: mergeExpRows([...(mcExpRes.data || []), ...depoExpRows]) });
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aggKey]);
+
+  const inc = useMemo(() => summarizePendapatan(row), [row]);
+  const exp = useMemo(() => summarizePengeluaran(expPeng), [expPeng]);
+  const net = inc.grandTotal - exp.grandTotal;
+  const base = inc.grandTotal;
+  const peng = expPeng;
+  const itemTotal = (id) => numOrZero(peng[id]?.total);
+  const stepItems = (step, group) => PENGELUARAN_CATALOG.filter((it) => it.step === step && !it.qtyOnly && (!group || it.salesGroup === group));
+
+  // Label header utk mode akumulasi "ALL" - ga ubah FormHeader bareng
+  // (dipakai komponen lain), cukup override activeContext yg dikirim.
+  const headerContext = isAggregate
+    ? { ...activeContext, mpxName: activeContext?.mpxName || "Semua Partner", branch: activeContext?.branch || "Semua Area" }
+    : activeContext;
+
+  return (
+    <div style={{ width: "100%", margin: "0 auto", fontFamily: FONT, WebkitFontSmoothing: "antialiased", color: t.hi }}>
+      <V2Styles d={d} t={t} />
+      <FormHeader icon={LayoutGrid} title="Summary P&L" activeContext={headerContext} t={t} />
+
+      {loading ? <LoadingBlock label="Memuat Summary V2..." t={t} /> : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {isAggregate && (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 9, padding: "12px 16px", borderRadius: 10, border: `1px solid ${t.line}`, background: t.sub, color: t.mid, fontSize: 12, fontWeight: 600 }}>
+              <Info size={14} style={{ flexShrink: 0, marginTop: 1, color: t.blue }} />
+              <span>Akumulasi dari {rowCount} laporan{!activeContext?.mpxName ? " (semua partner)" : ""}{!activeContext?.branch ? " (semua area)" : ""} sesuai filter Region/Partner/Area di atas. Pilih Partner &amp; Area di atas utk melihat 1 laporan spesifik.</span>
+            </div>
+          )}
+          {!row && (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 9, padding: "12px 16px", borderRadius: 10, border: `1px solid ${t.amberBd}`, background: t.amberBg, color: t.amber, fontSize: 12, fontWeight: 600 }}>
+              <Info size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span>Belum ada data untuk periode ini. Isi Form Pendapatan dan Form Pengeluaran terlebih dahulu.</span>
+            </div>
+          )}
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+            <MetCard label="Total Pendapatan" value={fmtIDR(inc.grandTotal)} sub="Margin + Luar Template + Data Provided" t={t} />
+            <MetCard label="Total Pengeluaran" value={fmtIDR(exp.grandTotal)} sub={base ? `${fmtPct((exp.grandTotal / base) * 100)} dari pendapatan` : undefined} t={t} />
+            <MetCard label="Margin Laba" value={base ? fmtPct((net / base) * 100) : "—"} sub="Laba / Rugi ÷ Pendapatan" color={net < 0 ? t.red : undefined} t={t} />
+          </div>
+
+          <div style={{ padding: "18px 22px", borderRadius: 12, background: net < 0 ? (d ? "#3A1416" : "#B91C1C") : GRAD, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, boxShadow: "0 4px 20px rgba(237,28,36,0.28)" }}>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: "rgba(255,255,255,0.85)" }}>{net < 0 ? "Rugi Bersih" : "Laba Bersih"}</div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.75)", marginTop: 3 }}>Total Pendapatan − Total Pengeluaran</div>
+            </div>
+            <span style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.04em", color: "#fff", fontVariantNumeric: "tabular-nums" }}>{fmtIDR(net)}</span>
+          </div>
+
+          <Card t={t}><Body>
+            <SecLabel t={t} right={<ArrowUpRight size={14} style={{ color: t.green }} />}>Pendapatan</SecLabel>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 420 }}>
+                <THead t={t} />
+                <tbody>
+                  <TR label="Total Margin Penjualan" amount={inc.totalMargin} base={base} kind="sub" t={t} />
+                  <TR label="IM3" amount={inc.totalIm3} base={base} indent={1} t={t} />
+                  <TR label="3ID" amount={inc.total3id} base={base} indent={1} t={t} />
+                  {MARGIN_ROWS.map((r) => (
+                    <TR key={r.id} label={r.label.replace("Total Margin Penjualan ", "") + " (IM3 + 3ID)"} amount={numOrZero(row?.[`margin_${r.id}`]) + numOrZero(row?.[`margin_${r.id}_3id`])} base={base} indent={2} t={t} />
+                  ))}
+                  <TR label="Di Luar Template" amount={inc.luarTemplate} base={base} kind="sub" t={t} />
+                  <TR label="Total Data Provided" amount={inc.totalDataProvided} base={base} kind="sub" t={t} />
+                  {DATA_PROVIDED_ROWS.map((r) => (
+                    <TR key={r.id} label={r.label} amount={numOrZero(row?.[r.id])} base={base} indent={1} t={t} />
+                  ))}
+                  <TR label="Total Pendapatan" amount={inc.grandTotal} base={base} kind="total" t={t} />
+                </tbody>
+              </table>
+            </div>
+            {row?.luar_template_note && (
+              <div style={{ marginTop: 14, padding: "10px 14px", borderRadius: 9, border: `1px solid ${t.line}`, background: t.sub, fontSize: 12, color: t.mid }}>
+                <span style={{ fontWeight: 700, color: t.hi }}>Keterangan di luar template: </span>{row.luar_template_note}
+              </div>
+            )}
+          </Body></Card>
+
+          <Card t={t}><Body>
+            <SecLabel t={t} right={<ArrowDownLeft size={14} style={{ color: t.red }} />}>Pengeluaran</SecLabel>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 420 }}>
+                <THead t={t} />
+                <tbody>
+                  <TR label="Total OPEX" amount={exp.totalOpex} base={base} kind="sub" t={t} />
+                  {stepItems("OPEX").map((it) => <TR key={it.id} label={it.item} amount={itemTotal(it.id)} base={base} indent={1} t={t} />)}
+                  <TR label="Total SDM" amount={exp.totalSdm} base={base} kind="sub" t={t} />
+                  <TR label="HR Cost Sales" amount={exp.totalSdmSales} base={base} kind="sub" indent={1} t={t} />
+                  {stepItems("SDM", "sales").map((it) => <TR key={it.id} label={it.item} amount={itemTotal(it.id)} base={base} indent={2} t={t} />)}
+                  <TR label="HR Cost Non Sales" amount={exp.totalSdmNonSales} base={base} kind="sub" indent={1} t={t} />
+                  {stepItems("SDM", "non_sales").map((it) => <TR key={it.id} label={it.item} amount={itemTotal(it.id)} base={base} indent={2} t={t} />)}
+                  <TR label="Total Marketing Cost" amount={exp.totalMarketing} base={base} kind="sub" t={t} />
+                  {stepItems("MARKETING COST").map((it) => <TR key={it.id} label={it.item} amount={itemTotal(it.id)} base={base} indent={1} t={t} />)}
+                  <TR label="Total Cost of Money" amount={exp.totalCostOfMoney} base={base} kind="sub" t={t} />
+                  {stepItems("COST OF MONEY").map((it) => <TR key={it.id} label={it.item} amount={itemTotal(it.id)} base={base} indent={1} t={t} />)}
+                  <TR label="Total Pengeluaran" amount={exp.grandTotal} base={base} kind="total" t={t} />
+                </tbody>
+              </table>
+            </div>
+          </Body></Card>
+        </div>
+      )}
+    </div>
+  );
+}
