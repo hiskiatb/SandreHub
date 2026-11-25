@@ -90,12 +90,12 @@ async function importContacts(auth, body) {
   return Response.json({ ok: true, saved: rows.length });
 }
 
-async function recipients(auth, body) {
+async function recipients(auth, body, req) {
   const segment = seg(body.segment);
   const owners = [...new Set((body.owners || []).map((o) => String(o || "").trim()).filter(Boolean))].slice(0, 500);
   const keys = [...new Set(owners.map(partnerKey).filter(Boolean))];
   const ck = await auth.db.from(CONTACTS_TABLE).select("owner_key, emails_to, emails_cc, pic, updated_at").eq("segment", segment).in("owner_key", keys);
-  if (ck.error) return missingTable(ck.error) ? Response.json({ owners: {}, contactsReady: false, logReady: false }) : jsonError(ck.error.message, 500);
+  if (ck.error) return missingTable(ck.error) ? Response.json({ owners: {}, contactsReady: false, logReady: false, sender: senderInfo(auth, req) }) : jsonError(ck.error.message, 500);
   const contacts = Object.fromEntries((ck.data || []).map((r) => [r.owner_key, r]));
 
   let logReady = true;
@@ -114,7 +114,7 @@ async function recipients(auth, body) {
     const k = partnerKey(o), c = contacts[k];
     out[o] = { key: k, to: c?.emails_to || [], cc: c?.emails_cc || [], pic: c?.pic || "", last: last[k] || null, inv: inv[k] || {} };
   });
-  return Response.json({ owners: out, contactsReady: true, logReady });
+  return Response.json({ owners: out, contactsReady: true, logReady, sender: senderInfo(auth, req) });
 }
 
 // Pengirim: sama dengan Report Merge / Smart Mail (env SENDER_EMAIL + SENDER_NAME, default
@@ -125,6 +125,12 @@ function senderFrom() {
   const email = (process.env.SENDER_EMAIL || DEFAULT_SENDER_EMAIL).trim();
   if (email.includes("<")) return email;
   return `${(process.env.SENDER_NAME || DEFAULT_SENDER_NAME).trim()} <${email}>`;
+}
+
+// Info pengirim untuk preview di browser: nilai yang sama persis dengan yang dipakai send()
+function senderInfo(auth, req) {
+  const base = appUrl(req);
+  return { from: senderFrom(), name: auth.profile.full_name || "", link: base ? `${base}/dashboard` : "", replyTo: isEmail(auth.email) ? auth.email : "" };
 }
 
 async function send(auth, body, req) {
@@ -181,7 +187,7 @@ export async function POST(req) {
   if (auth.error) return jsonError(auth.error, auth.status);
   const body = await req.json().catch(() => ({}));
   if (body.action === "import") return importContacts(auth, body);
-  if (body.action === "recipients") return recipients(auth, body);
+  if (body.action === "recipients") return recipients(auth, body, req);
   if (body.action === "send") return send(auth, body, req);
   return jsonError("Unknown action.");
 }

@@ -2285,7 +2285,7 @@ function OutStepper({ x, isAg, t }) {
 
 function OutstandingTab({ ins, isAg, w, t, view, setView, sort, setSort, canRemind=false, showToast }) {
   const [grouped, setGrouped] = useState(false);
-  // Pengingat "Invoice belum disubmit" (admin SPM / internal Indosat): null = tertutup, [] = semua, [nama] = 1 pemilik
+  // Pengingat "Invoice belum disubmit" (admin SPM / internal Indosat): null = tertutup, [] = semua → tampilan review email
   const [remind, setRemind] = useState(null);
   const nsItems = useMemo(()=>ins.open.filter(x=>x.ns),[ins]);
   const nsOwners = useMemo(()=>new Set(nsItems.map(x=>x.name)).size,[nsItems]);
@@ -2373,7 +2373,7 @@ function OutstandingTab({ ins, isAg, w, t, view, setView, sort, setSort, canRemi
                     <td style={{...td(false),fontWeight:700,color:t.ink}} title={fmtRpFull(g.amt)}>{fmtRpWord(g.amt)}</td>
                     {!phone&&<td style={td(true)}/>}
                     <td style={td(false)}/>
-                    <td style={{...td(true),fontWeight:700,color:g.late?t.badDark:t.muted}}>{g.late?`${g.late} terlambat`:"—"}{canRemind&&g.items.some(x=>x.ns)&&<span style={{marginLeft:8}}><ReminderButton t={t} sm onClick={()=>setRemind([g.name])}>Ingatkan</ReminderButton></span>}</td>
+                    <td style={{...td(true),fontWeight:700,color:g.late?t.badDark:t.muted}}>{g.late?`${g.late} terlambat`:"—"}</td>
                   </tr>
                   {op && g.items.map((x,i)=>renderRow(x,i))}
                 </React.Fragment>
