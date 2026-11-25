@@ -2018,15 +2018,16 @@ function computeInsights(rows) {
     const remindNS = isRemindNS(r);
     // Pengingat invoice ikut aturan sendiri — baris yang statusnya PAID/sudah clearing tetap masuk bila memenuhi aturan
     if (paid || clrV) {
-      if (remindNS) { const mk = rowMonthKey(r); remind.push({ name, title:gstr(r,["project title"])||"—", prog:gstr(r,["program type"])||"—", inv:r._inv, invId:r._invId, amt, status:st, ns, remindNS, proc, period:mk?ymLabel(mk):"—" }); }
+      if (remindNS) { const mk = rowMonthKey(r); remind.push({ name, title:gstr(r,["project title"])||"—", prog:gstr(r,["program type"])||"—", inv:r._inv, invId:r._invId, amt, status:st, ns:remindNS, nsStatus:ns, remindNS, proc, period:mk?ymLabel(mk):"—" }); }
       return;
     }
     // Masih terbuka (belum dibayar & belum clearing)
     const sofar = invD ? workDaysBetween(invD, today) : null;              // Invoice → hari ini (hari kerja)
     const mk = rowMonthKey(r);
     const bastD = toDate(gcell(r,H_BAST_APP)) || toDate(gcell(r,H_BAST_RCV));
-    const item = { name, title:gstr(r,["project title"])||"—", prog:gstr(r,["program type"])||"—", inv:r._inv, invId:r._invId, amt, status:st, ns, remindNS, proc,
+    const item = { name, title:gstr(r,["project title"])||"—", prog:gstr(r,["program type"])||"—", inv:r._inv, invId:r._invId, amt, status:st, ns:remindNS, nsStatus:ns, remindNS, proc,
       invD, clvD, est, bastD, hasBast:!!(findCol(r,H_BAST_APP)||findCol(r,H_BAST_RCV)), cyc:sofar, period:mk?ymLabel(mk):"—" };
+    // Outstanding: "belum disubmit" (kotak, filter, label "Menunggu invoice disubmit") ikut aturan remindNS
     open.push(item);
     if (remindNS) remind.push(item);
     o.open++; o.openAmt += amt;
