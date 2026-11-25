@@ -1983,12 +1983,21 @@ const EmptyNote = ({ t, children }) => <div style={{textAlign:"center",color:t.m
 const fmtRpFull = (n) => "Rp "+Math.round(Number(n)||0).toLocaleString("id-ID");
 const pctClr = (p, t) => p>=80 ? { c:t.goodDark, bg:t.goodBg, bd:t.goodBd, dot:t.good } : p>=50 ? { c:t.warnDark, bg:t.warnBg, bd:t.warnBd, dot:t.warn } : { c:t.badDark, bg:t.badBg, bd:t.badBd, dot:t.bad };
 
+// Invoice reminder — "Invoice Not Submitted" versi pengingat (aturan Saila, tidak tergantung kolom Status):
+// Project Title terisi DAN Invoice ID kosong DAN Invoicing Date / Invoice Date kosong. Tanpa Project Title → tidak ikut.
+const H_REMIND_INV_DATE = ["=invoicing date","=invoice date","=tanggal invoice","=inv date"];
+const blankCell = (v) => v==null || /^(|0|-+|—|n\/?a)$/i.test(String(v).trim());
+const H_REMIND_INV_ID = ["=invoice id","=inv id","=id invoice","=invoice_id","=invoiceid"];
+const isRemindNS = (r) => !blankCell(gcell(r,["project title"],null))
+  && blankCell(r._invId ?? gcell(r,H_REMIND_INV_ID,null))
+  && blankCell(gcell(r,H_REMIND_INV_DATE,null));
+
 function computeInsights(rows) {
   const today = dayStart(new Date());
   const wk0 = new Date(today.getTime() - ((today.getDay()+6)%7)*DAY); // Senin minggu ini
   const wk1 = new Date(wk0.getTime()+7*DAY), wk2 = new Date(wk0.getTime()+14*DAY);
   const k = { total:0, n:rows.length, paid:0, paidN:0, out:0, outN:0, notSub:0, notSubAmt:0, cycSum:0, cycN:0 };
-  const open = [], owners = {}, allCyc = [];
+  const open = [], owners = {}, allCyc = [], remind = [];
   rows.forEach(r=>{
     const amt = gnum(r,["amount"]), st = rowStatus(r), name = ownerName(r) || "—";
     const invV = gcell(r,H_INV_COUPA,null) || gcell(r,H_INV), clrV = gcell(r,H_CLR);
@@ -2006,14 +2015,20 @@ function computeInsights(rows) {
     if (paid) o.paid += amt;
     if (cyc!=null) { o.cycSum += cyc; o.cycN++; if (paid) { o.cycs.push(cyc); allCyc.push(cyc); } }
     if (clrD && est) { o.onN++; if (dayStart(clrD) <= est) o.onT++; }
-    if (paid || clrV) return;
+    const remindNS = isRemindNS(r);
+    // Pengingat invoice ikut aturan sendiri — baris yang statusnya PAID/sudah clearing tetap masuk bila memenuhi aturan
+    if (paid || clrV) {
+      if (remindNS) { const mk = rowMonthKey(r); remind.push({ name, title:gstr(r,["project title"])||"—", prog:gstr(r,["program type"])||"—", inv:r._inv, invId:r._invId, amt, status:st, ns, remindNS, proc, period:mk?ymLabel(mk):"—" }); }
+      return;
+    }
     // Masih terbuka (belum dibayar & belum clearing)
     const sofar = invD ? workDaysBetween(invD, today) : null;              // Invoice → hari ini (hari kerja)
     const mk = rowMonthKey(r);
     const bastD = toDate(gcell(r,H_BAST_APP)) || toDate(gcell(r,H_BAST_RCV));
-    const item = { name, title:gstr(r,["project title"])||"—", prog:gstr(r,["program type"])||"—", inv:r._inv, invId:r._invId, amt, status:st, ns, proc,
+    const item = { name, title:gstr(r,["project title"])||"—", prog:gstr(r,["program type"])||"—", inv:r._inv, invId:r._invId, amt, status:st, ns, remindNS, proc,
       invD, clvD, est, bastD, hasBast:!!(findCol(r,H_BAST_APP)||findCol(r,H_BAST_RCV)), cyc:sofar, period:mk?ymLabel(mk):"—" };
     open.push(item);
+    if (remindNS) remind.push(item);
     o.open++; o.openAmt += amt;
     if (sofar!=null && (o.oldest==null || sofar>o.oldest)) o.oldest = sofar;
   });
@@ -2037,7 +2052,7 @@ function computeInsights(rows) {
   const mks = rows.map(rowMonthKey).filter(Boolean);
   const lo = mks.length ? Math.min(...mks) : 0, hi = mks.length ? Math.max(...mks) : 0;
   const monthSpan = lo ? (lo===hi ? ymLabel(lo) : `${ymLabel(lo)} – ${ymLabel(hi)}`) : "";
-  return { k, open, owners:Object.values(owners), wk0, wk1, wk2, today, monthSpan };
+  return { k, open, remind, owners:Object.values(owners), wk0, wk1, wk2, today, monthSpan };
 }
 
 /* ── KPI: 4 kartu (nominal besar + jumlah kecil) ── */
@@ -2140,7 +2155,7 @@ function DetailsTabs(props) {
   const tabs = [
     { id:"out",  label:"Outstanding", count:ins.open.length },
     { id:"own",  label:isAg?"Agencies":"Partners", count:ins.owners.length },
-    ...(canManageApprovals(props.profile) ? [{ id:"rem", label:"Invoice Reminder", count:new Set(ins.open.filter(x=>x.ns).map(x=>x.name)).size }] : []),
+    ...(canManageApprovals(props.profile) ? [{ id:"rem", label:"Invoice Reminder", count:new Set(ins.remind.filter(x=>x.name && x.name!=="—").map(x=>x.name)).size }] : []),
   ];
   const cur = tabs.some(x=>x.id===tab) ? tab : "out";
   return (
@@ -2287,7 +2302,8 @@ function OutstandingTab({ ins, isAg, w, t, view, setView, sort, setSort, canRemi
   const [grouped, setGrouped] = useState(false);
   // Pengingat "Invoice belum disubmit" (admin SPM / internal Indosat): null = tertutup, [] = semua → tampilan review email
   const [remind, setRemind] = useState(null);
-  const nsItems = useMemo(()=>ins.open.filter(x=>x.ns),[ins]);
+  // Pengingat invoice: aturan remindNS (Project Title ada, Invoice ID & Invoicing Date kosong), bukan kolom Status
+  const nsItems = useMemo(()=>ins.remind.filter(x=>x.name && x.name!=="—"),[ins]);
   const nsOwners = useMemo(()=>new Set(nsItems.map(x=>x.name)).size,[nsItems]);
   const allOwners = useMemo(()=>ins.owners.map(o=>o.name).filter(n=>n&&n!=="—"),[ins]);
   const [openG, setOpenG] = useState({});

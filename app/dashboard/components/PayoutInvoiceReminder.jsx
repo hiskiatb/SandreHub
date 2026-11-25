@@ -145,7 +145,7 @@ const DEFAULT_FROM = "Sales & Distribution Sumatera <snd@spmsumatera.site>";
  * Tampilan review: semua email dicek dulu sebelum dikirim (tombol kirim HANYA ada di sini).
  * Kiri: daftar partner terpilih (ikut dikirim / tidak). Kanan: email lengkap partner aktif
  * (From, To, Cc, Subjek, isi HTML) — dibuat dengan template, catatan & tautan yang sama dengan server.
- * @param items      baris Outstanding berstatus Invoice Not Submitted: {name,title,period,inv,invId,amt}
+ * @param items      baris ins.remind (Project Title ada, Invoice ID & Invoicing Date kosong): {name,title,period,inv,invId,amt}
  * @param owners     pemilik yang ditinjau ([] = semua pemilik di items)
  * @param allOwners  semua nama pemilik di data (untuk template sheet Email Partner)
  */
@@ -371,7 +371,7 @@ export function InvoiceReminderDashboard({ ins, isAg, w = 1200, t, showToast }) 
   const [now, setNow] = useState(() => Date.now());
   const own = isAg ? "agency" : "partner", Own = isAg ? "Agency" : "Partner";
   const segment = isAg ? "agency" : "partner";
-  const items = useMemo(() => ins.open.filter((x) => x.ns && x.name && x.name !== "—"), [ins]);
+  const items = useMemo(() => (ins.remind || []).filter((x) => x.name && x.name !== "—"), [ins]);
   const allOwners = useMemo(() => ins.owners.map((o) => o.name).filter((n) => n && n !== "—"), [ins]);
   const [info, setInfo] = useState(null);
   const [err, setErr] = useState("");
