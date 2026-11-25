@@ -170,7 +170,7 @@ async function send(auth, body, req) {
     if (logReady) {
       const { error: lErr } = await auth.db.from(LOG_TABLE).insert({
         segment, owner_key: key, owner_name: owner, recipients: [...to, ...cc], invoices, note: note || null,
-        invoice_count: invoices.length, total_amount: invoices.reduce((a, x) => a + x.amt, 0),
+        invoice_count: invoices.length, total_amount: invoices.reduce((a, x) => a + (x.amt || 0), 0),
         status: ok ? "sent" : "failed", error, resend_id: id,
         sent_by: auth.user.id, sent_email: auth.email, sent_by_name: senderName || null,
       });
