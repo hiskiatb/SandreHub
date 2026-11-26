@@ -6,7 +6,10 @@
 
 import React, { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import supabase from "../../../lib/supabase";
-import { invoiceReminderEmail, parseEmails, isEmail, invKey, cleanInvoiceItem, MAX_REMINDER_TO, MAX_REMINDER_ITEMS } from "../../../lib/payoutInvoiceReminderEmail";
+import {
+  invoiceReminderEmail, parseEmails, isEmail, invKey, cleanInvoiceItem, MAX_REMINDER_TO, MAX_REMINDER_ITEMS,
+  DEFAULT_REMINDER_TEMPLATE, REMINDER_PLACEHOLDERS, REMINDER_TPL_MAX, cleanReminderTemplate, isDefaultReminderTemplate,
+} from "../../../lib/payoutInvoiceReminderEmail";
 
 const API = "/api/payout-docs/invoice-reminders";
 export const CONTACTS_SHEET = "Master Mapping";
@@ -141,6 +144,63 @@ function AddrRow({ t, label, list, onRemove, onAdd, placeholder, max }) {
 
 const DEFAULT_FROM = "Sales & Distribution Sumatera <snd@spmsumatera.site>";
 
+/* ── Template teks email (bisa diedit) ──────────────────────────────────────────────────────
+   Disimpan di tabel payout_reminder_template (semua admin) + salinan di localStorage browser
+   (cadangan bila tabel belum dibuat). Urutan muat: database → browser → teks awal. */
+const TPL_LS = "payoutReminderTemplate.v1";
+const lsGet = () => { try { const v = JSON.parse(window.localStorage.getItem(TPL_LS) || "null"); return v && typeof v === "object" ? cleanReminderTemplate(v) : null; } catch { return null; } };
+const lsSet = (v) => { try { if (v) window.localStorage.setItem(TPL_LS, JSON.stringify(v)); else window.localStorage.removeItem(TPL_LS); } catch { /* browser tanpa storage */ } };
+const sameTpl = (a, b) => { const x = cleanReminderTemplate(a), y = cleanReminderTemplate(b); return Object.keys(x).every((k) => x[k] === y[k]); };
+const TPL_TEXT_FIELDS = [
+  ["subject", "Subjek", 1, 300],
+  ["opening", "Paragraf pembuka", 6, REMINDER_TPL_MAX],
+  ["terms", "Ketentuan upload", 10, REMINDER_TPL_MAX],
+  ["closing", "Penutup", 3, REMINDER_TPL_MAX],
+];
+const TPL_COLS = [["colTitle", "Kolom 1"], ["colPeriod", "Kolom 2"], ["colInv", "Kolom 3"], ["colAmount", "Kolom 4"]];
+
+function TemplateEditor({ t, tpl, setTpl, saved, status, onSave, onReset, busy }) {
+  const [open, setOpen] = useState(false);
+  const input = { fontFamily: "inherit", fontSize: 12.5, padding: "6px 9px", borderRadius: 8, border: `1px solid ${t.line2}`, background: t.surf, color: t.ink, width: "100%", boxSizing: "border-box" };
+  const set = (k) => (e) => setTpl((s) => ({ ...s, [k]: e.target.value }));
+  const dirty = !sameTpl(tpl, saved);
+  const custom = !isDefaultReminderTemplate(tpl);
+  return (
+    <div style={{ marginTop: 12, border: `1px solid ${open ? "#32BCAD" : t.line2}`, borderRadius: 11, overflow: "hidden" }}>
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
+        style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, fontFamily: "inherit", textAlign: "left", cursor: "pointer", border: 0, padding: "9px 11px", background: open ? "#32BCAD12" : t.surf2, color: t.ink }}>
+        <span style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>✎ Edit teks email</span>
+        {dirty ? <span style={{ fontSize: 11.5, color: t.warnDark, fontWeight: 600 }}>belum disimpan</span> : custom ? <span style={{ fontSize: 11.5, color: t.muted }}>teks custom</span> : null}
+        <span aria-hidden="true" style={{ color: t.muted }}>{open ? "▴" : "▾"}</span>
+      </button>
+      {open && (
+        <div style={{ padding: "10px 11px 12px" }}>
+          <div style={{ fontSize: 12, color: t.ink2, lineHeight: 1.55, padding: "7px 9px", borderRadius: 8, background: t.surf3, marginBottom: 10 }}>
+            Diisi otomatis per penerima: {REMINDER_PLACEHOLDERS.map(([k, d], i) => <span key={k}>{i ? " · " : ""}<code style={{ fontWeight: 700 }}>{k}</code> {d}</span>)}.
+            <div style={{ marginTop: 4 }}>Baris kosong = paragraf baru · <code>- </code> / <code>1. </code> = daftar · <code>**teks**</code> = tebal. Tabel invoice otomatis di bawah paragraf pembuka.</div>
+          </div>
+          {TPL_TEXT_FIELDS.map(([k, label, rows, max]) => (
+            <label key={k} style={{ display: "block", marginBottom: 9 }}>
+              <span style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: t.ink2, marginBottom: 3 }}>{label}</span>
+              {rows === 1 ? <input value={tpl[k]} onChange={set(k)} maxLength={max} style={input} />
+                : <textarea value={tpl[k]} onChange={set(k)} rows={rows} maxLength={max} style={{ ...input, resize: "vertical", lineHeight: 1.45 }} />}
+            </label>
+          ))}
+          <div style={{ fontSize: 12.5, fontWeight: 600, color: t.ink2, marginBottom: 3 }}>Judul kolom tabel</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 10 }}>
+            {TPL_COLS.map(([k, l]) => <input key={k} aria-label={`Judul ${l}`} value={tpl[k]} onChange={set(k)} maxLength={60} style={input} />)}
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <Button t={t} sm primary disabled={busy || !dirty} onClick={onSave}>{busy ? "Menyimpan…" : "Simpan sebagai template default"}</Button>
+            <Button t={t} sm disabled={busy || (!custom && isDefaultReminderTemplate(saved))} onClick={onReset}>Kembalikan ke teks awal</Button>
+          </div>
+          {status && <div style={{ fontSize: 12, color: t.muted, marginTop: 7, lineHeight: 1.45 }}>{status}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * Tampilan review: semua email dicek dulu sebelum dikirim (tombol kirim HANYA ada di sini).
  * Kiri: daftar partner terpilih (ikut dikirim / tidak). Kanan: email lengkap partner aktif
@@ -164,6 +224,10 @@ export function InvoiceReminderModal({ items, owners: initial, allOwners = [], i
   const [sel, setSel] = useState(() => new Set(list.map((x) => x.name)));   // ikut dikirim
   const [rcpt, setRcpt] = useState({});           // pemilik → {to, cc} hasil edit (sekali kirim, tidak disimpan)
   const [note, setNote] = useState("");
+  const [tpl, setTplRaw] = useState(() => ({ ...DEFAULT_REMINDER_TEMPLATE }));   // teks email (live di preview)
+  const [savedTpl, setSavedTpl] = useState(() => ({ ...DEFAULT_REMINDER_TEMPLATE }));
+  const [tplInfo, setTplInfo] = useState(null);   // {tableReady, updatedBy, updatedAt, local}
+  const [tplBusy, setTplBusy] = useState(false);
   const [ai, setAi] = useState(0);                // indeks partner aktif di panel kanan
   const [confirm, setConfirm] = useState(false);
   const [sending, setSending] = useState(false);
@@ -179,6 +243,48 @@ export function InvoiceReminderModal({ items, owners: initial, allOwners = [], i
       .catch((e) => alive && setLoadErr(e.message));
     return () => { alive = false; };
   }, [list, ownersKey, segment]);
+
+  // Template default: database → salinan browser → teks awal
+  useEffect(() => {
+    let alive = true;
+    const local = lsGet();
+    call({ action: "template", op: "get" })
+      .then((r) => {
+        if (!alive) return;
+        const use = r.tableReady && r.template ? r.template : local;
+        if (use) { setTplRaw({ ...use }); setSavedTpl({ ...use }); }
+        setTplInfo({ tableReady: !!r.tableReady, updatedBy: r.updatedBy, updatedAt: r.updatedAt, local: !(r.tableReady && r.template) && !!local });
+      })
+      .catch(() => { if (alive && local) { setTplRaw({ ...local }); setSavedTpl({ ...local }); setTplInfo({ tableReady: false, local: true }); } });
+    return () => { alive = false; };
+  }, []);
+  const setTpl = (fn) => { setConfirm(false); setTplRaw(fn); };
+  const tplClean = useMemo(() => cleanReminderTemplate(tpl), [tpl]);
+  const saveTpl = async () => {
+    const v = cleanReminderTemplate(tpl);
+    setTplBusy(true); lsSet(v);
+    try {
+      const r = await call({ action: "template", op: "save", template: v });
+      setSavedTpl(v);
+      if (r.tableReady) { setTplInfo({ tableReady: true, updatedBy: info?.sender?.name || "", updatedAt: new Date().toISOString(), local: false }); showToast?.("Template email tersimpan untuk semua admin", "success"); }
+      else { setTplInfo({ tableReady: false, local: true }); showToast?.(`Template disimpan di browser ini saja — tabel payout_reminder_template belum dibuat (SQL ${r.sql || "20261126_payout_reminder_template.sql"}).`, "error"); }
+    } catch (e) { showToast?.("Template belum tersimpan: " + e.message, "error"); }
+    setTplBusy(false);
+  };
+  const resetTpl = async () => {
+    const d = { ...DEFAULT_REMINDER_TEMPLATE };
+    setTpl(() => d); lsSet(null); setTplBusy(true);
+    try {
+      const r = await call({ action: "template", op: "reset" });
+      setSavedTpl(d); setTplInfo({ tableReady: !!r.tableReady, local: false });
+      showToast?.("Teks email kembali ke teks awal", "success");
+    } catch (e) { showToast?.("Template default belum dihapus: " + e.message, "error"); }
+    setTplBusy(false);
+  };
+  const tplStatus = !tplInfo ? "Memuat template…"
+    : !tplInfo.tableReady ? `Tabel template belum dibuat di database (SQL 20261126_payout_reminder_template.sql). Perubahan tetap dipakai untuk kiriman ini${tplInfo.local ? "; template tersimpan di browser ini" : ""}.`
+    : tplInfo.updatedAt ? `Template default terakhir disimpan ${fmtWhen(tplInfo.updatedAt)}${tplInfo.updatedBy ? ` oleh ${tplInfo.updatedBy}` : ""}. Berlaku untuk semua admin.`
+    : "Memakai teks awal. Simpan agar teks baru dipakai semua admin.";
 
   useEffect(() => { const k = (e) => e.key === "Escape" && !sending && onClose(); window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [onClose, sending]);
 
@@ -201,7 +307,7 @@ export function InvoiceReminderModal({ items, owners: initial, allOwners = [], i
     setSending(true);
     const skip = skipped.map((g) => g.name);
     try {
-      const r = await call({ action: "send", segment, note, items: ready.map((g) => ({
+      const r = await call({ action: "send", segment, note, template: tplClean, items: ready.map((g) => ({
         owner: g.name, to: toOf(g.name), cc: ccOf(g.name),
         invoices: g.items.map((x) => ({ title: x.title, period: x.period, inv: x.inv, invId: x.invId, prog: x.prog, amt: x.amt })),
       })) });
@@ -216,7 +322,7 @@ export function InvoiceReminderModal({ items, owners: initial, allOwners = [], i
   const act = list[Math.min(ai, list.length - 1)] || null;
   const actOn = act && sel.has(act.name);
   const mail = act && invoiceReminderEmail({ segment, owner: act.name.trim().slice(0, 200), note: note.trim().slice(0, 2000),
-    items: act.items.slice(0, MAX_REMINDER_ITEMS).map(cleanInvoiceItem), senderName: info?.sender?.name || "", link: info?.sender?.link || "" });
+    items: act.items.slice(0, MAX_REMINDER_ITEMS).map(cleanInvoiceItem), senderName: info?.sender?.name || "", link: info?.sender?.link || "", template: tplClean });
   const from = info?.sender?.from || DEFAULT_FROM;
   const missing = info?.contactsReady ? list.filter((g) => !baseTo(g.name).length).length : 0;
 
@@ -296,6 +402,7 @@ export function InvoiceReminderModal({ items, owners: initial, allOwners = [], i
                 <textarea value={note} onChange={(e) => { setNote(e.target.value); setConfirm(false); }} rows={3} maxLength={2000} style={{ ...input, resize: "vertical" }}
                   placeholder="Contoh: Mohon invoice disubmit paling lambat 28 November 2026." />
               </div>
+              <TemplateEditor t={t} tpl={tpl} setTpl={setTpl} saved={savedTpl} status={tplStatus} onSave={saveTpl} onReset={resetTpl} busy={tplBusy} />
             </div>
 
             {/* Kanan: email lengkap partner aktif */}

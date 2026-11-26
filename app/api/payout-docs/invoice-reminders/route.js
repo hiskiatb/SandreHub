@@ -9,19 +9,24 @@
 //   "import"     { segments:["partner","agency"], contacts:[{segment, owner, to:[], cc:[], pic}] }
 //                → ganti seluruh kontak untuk segment yang ada di file
 //   "recipients" { segment, owners:[nama] } → kontak + pengingat terakhir per pemilik
-//   "send"       { segment, note, items:[{owner, to:[], cc:[], invoices:[...]}] } → 1 email per pemilik
+//   "send"       { segment, note, template, items:[{owner, to:[], cc:[], invoices:[...]}] } → 1 email per pemilik
+//                (template = teks email hasil edit; dibersihkan & di-escape lagi di server)
+//   "template"   { op:"get" } | { op:"save", template } | { op:"reset" } → template teks default (dipakai semua admin)
 //
 // Tabel: supabase/migrations/20261120_payout_invoice_reminders.sql
+//        supabase/migrations/20261126_payout_reminder_template.sql (template; bila belum ada → fallback ke teks awal)
 // Sengaja TIDAK memakai lib/resend.js (modul itu log API key & throw saat import).
 import { createClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
 import { partnerKey, APPROVAL_ADMIN_ROLES } from "../../../../lib/payoutPartnerDocs";
 import {
-  invoiceReminderEmail, cleanInvoiceItem, invKey, isEmail, normEmail, MAX_REMINDER_ITEMS, MAX_REMINDER_TO,
+  invoiceReminderEmail, cleanInvoiceItem, cleanReminderTemplate, invKey, isEmail, normEmail, MAX_REMINDER_ITEMS, MAX_REMINDER_TO,
 } from "../../../../lib/payoutInvoiceReminderEmail";
 
 const CONTACTS_TABLE = "payout_partner_contacts";
 const LOG_TABLE = "payout_invoice_reminders";
+const TEMPLATE_TABLE = "payout_reminder_template";
+const TEMPLATE_SQL = "20261126_payout_reminder_template.sql";
 const MAX_OWNERS = 60;
 const MAX_CONTACTS = 2000;
 const SQL_HINT = "Tabel email partner belum dibuat di database (SQL 20261120_payout_invoice_reminders.sql).";
@@ -137,6 +142,7 @@ async function send(auth, body, req) {
   if (!process.env.RESEND_API_KEY) return jsonError("Email service is not configured (RESEND_API_KEY).", 500);
   const segment = seg(body.segment);
   const note = String(body.note || "").trim().slice(0, 2000);
+  const template = cleanReminderTemplate(body.template);
   const items = (Array.isArray(body.items) ? body.items : []).slice(0, MAX_OWNERS);
   if (!items.length) return jsonError("Pilih minimal satu partner/agency.");
   const from = senderFrom();
@@ -157,7 +163,7 @@ async function send(auth, body, req) {
       results.push({ owner, ok: false, error: !to.length ? "Tidak ada email penerima." : "Tidak ada invoice." });
       continue;
     }
-    const mail = invoiceReminderEmail({ segment, owner, items: invoices, note, senderName, link });
+    const mail = invoiceReminderEmail({ segment, owner, items: invoices, note, senderName, link, template });
     let ok = true, error = null, id = null;
     try {
       const r = await resend.emails.send({
@@ -181,6 +187,28 @@ async function send(auth, body, req) {
   return Response.json({ results, sent, failed: results.length - sent, logReady });
 }
 
+// Template teks email default (1 baris, id 'default'). Tabel belum ada → tableReady:false (bukan error),
+// client tetap bisa mengedit per kiriman & menyimpan salinan di browser.
+async function templateAction(auth, body) {
+  const op = body.op === "save" ? "save" : body.op === "reset" ? "reset" : "get";
+  const notReady = (e) => (missingTable(e) ? Response.json({ ok: false, tableReady: false, sql: TEMPLATE_SQL }) : jsonError(e.message, 500));
+  if (op === "get") {
+    const { data, error } = await auth.db.from(TEMPLATE_TABLE).select("template, updated_email, updated_at").eq("id", "default").maybeSingle();
+    if (error) return notReady(error);
+    return Response.json({ ok: true, tableReady: true, template: data?.template ? cleanReminderTemplate(data.template) : null,
+      updatedBy: data?.updated_email || null, updatedAt: data?.updated_at || null });
+  }
+  if (op === "reset") {
+    const { error } = await auth.db.from(TEMPLATE_TABLE).delete().eq("id", "default");
+    if (error) return notReady(error);
+    return Response.json({ ok: true, tableReady: true, template: null });
+  }
+  const template = cleanReminderTemplate(body.template);
+  const { error } = await auth.db.from(TEMPLATE_TABLE).upsert({ id: "default", template, updated_by: auth.user.id, updated_email: auth.email, updated_at: new Date().toISOString() }, { onConflict: "id" });
+  if (error) return notReady(error);
+  return Response.json({ ok: true, tableReady: true, template });
+}
+
 export async function POST(req) {
   const auth = await requireReminderAdmin(req);
   if (auth.error) return jsonError(auth.error, auth.status);
@@ -188,5 +216,6 @@ export async function POST(req) {
   if (body.action === "import") return importContacts(auth, body);
   if (body.action === "recipients") return recipients(auth, body, req);
   if (body.action === "send") return send(auth, body, req);
+  if (body.action === "template") return templateAction(auth, body);
   return jsonError("Unknown action.");
 }
