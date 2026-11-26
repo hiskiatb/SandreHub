@@ -311,7 +311,6 @@ export function InvoiceReminderModal({ items, owners: initial, allOwners = [], i
               {act && mail ? (
                 <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, padding: "4px 16px 14px" }}>
                   {meta("From", from)}
-                  {info?.sender?.replyTo && meta("Reply-To", info.sender.replyTo)}
                   {info ? <AddrRow key={`${act.name}|to`} t={t} label="To" list={toAll(act.name)} max={MAX_REMINDER_TO} onAdd={add(act.name, "to")} onRemove={del(act.name, "to")} placeholder="+ email tambahan (pisahkan koma)" />
                     : meta("To", "Memuat penerima…")}
                   {info && <AddrRow key={`${act.name}|cc`} t={t} label="Cc" list={ccOf(act.name)} onAdd={add(act.name, "cc")} onRemove={del(act.name, "cc")} placeholder="+ email Cc" />}

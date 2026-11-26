@@ -130,7 +130,7 @@ function senderFrom() {
 // Info pengirim untuk preview di browser: nilai yang sama persis dengan yang dipakai send()
 function senderInfo(auth, req) {
   const base = appUrl(req);
-  return { from: senderFrom(), name: auth.profile.full_name || "", link: base ? `${base}/dashboard` : "", replyTo: isEmail(auth.email) ? auth.email : "" };
+  return { from: senderFrom(), name: auth.profile.full_name || "", link: base ? `${base}/dashboard` : "" };
 }
 
 async function send(auth, body, req) {
@@ -162,7 +162,6 @@ async function send(auth, body, req) {
     try {
       const r = await resend.emails.send({
         from, to, ...(cc.length ? { cc } : {}), subject: mail.subject, html: mail.html, text: mail.text,
-        ...(isEmail(auth.email) ? { replyTo: auth.email } : {}),
       });
       if (r?.error) { ok = false; error = r.error.message || "Email gagal dikirim."; } else id = r?.data?.id || null;
     } catch (e) { ok = false; error = e.message || "Email gagal dikirim."; }
