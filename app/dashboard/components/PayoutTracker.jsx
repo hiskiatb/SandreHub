@@ -3416,6 +3416,27 @@ function computeChecklist(rows, year) {
   return { months, list, missing, last };
 }
 
+// Catatan penjelasan Accrual. Isi bagian "How this tab calculates it" harus mengikuti
+// computeChecklist / computeAccrual di bawah; ubah teks ini bila logikanya diubah.
+function AccrualNote({ t }) {
+  const li = { marginBottom:4 };
+  return (
+    <div style={{border:`1px solid ${t.line}`,borderLeft:`3px solid ${C.yellow}`,background:t.surf2,borderRadius:10,padding:"12px 14px",marginBottom:16,fontSize:12.5,lineHeight:1.6,color:t.ink2,maxWidth:"110ch"}}>
+      <div style={{fontWeight:700,fontSize:13,color:t.ink,marginBottom:4}}>What is Accrual?</div>
+      <div style={{marginBottom:8}}>
+        An <strong>accrual</strong> is a cost that is already an obligation (BAST received/approved) but whose invoice is not yet final or paid, so the amount may still be an estimate. <strong>Actual</strong> = paid (Bank Clearing).
+      </div>
+      <div style={{fontWeight:700,fontSize:13,color:t.ink,marginBottom:4}}>How this tab calculates it</div>
+      <ul style={{margin:0,paddingLeft:18}}>
+        <li style={li}><strong>Rows:</strong> every Agency row (PO + MDI) in the selected year and region. Dashboard filters don&rsquo;t apply, and <strong>status is not filtered</strong>: rows count whether or not they have reached Bank Clearing.</li>
+        <li style={li}><strong>Columns used:</strong> Agency Name, Program Type, Amount, and the month from Program Date (or Month / Bulan / Periode if Program Date is empty). Rows without an agency name or a readable month are skipped.</li>
+        <li style={li}><strong>Submission checklist:</strong> ✓ when the agency has at least one row for that program in that month, up to the last completed month.</li>
+        <li style={li}><strong>Accrual estimate:</strong> a filled month = total Amount of that agency &times; program &times; month (all statuses, so it is the recorded amount, not only paid). An empty month = the average of that agency-program&rsquo;s filled months, shown in <em>italic</em>. SALARYUUCK, THR and INCENTIVE MEUGANG are never estimated; ADHITAMA MITRA NUSANTARA is excluded.</li>
+      </ul>
+    </div>
+  );
+}
+
 function AccrualTab({ rows, region, w, t, showToast }) {
   const years = useMemo(()=>yearsOf(rows),[rows]);
   const [year, setYear] = useYear(years);
@@ -3438,6 +3459,7 @@ function AccrualTab({ rows, region, w, t, showToast }) {
   const mark = { ok:{ c:t.goodDark, bg:t.goodBg, s:"✓" }, miss:{ c:t.bad, bg:t.badBg, s:"✗" }, na:{ c:t.muted2, bg:"transparent", s:"–" } };
   return (
     <div style={{padding:18}}>
+      <AccrualNote t={t}/>
       <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:10}}>
         <span style={{fontWeight:700,fontSize:14,color:t.ink}}>Submission checklist</span>
         <YearSelect years={years} value={year} onChange={setYear} t={t}/>
