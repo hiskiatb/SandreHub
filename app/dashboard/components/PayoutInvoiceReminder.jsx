@@ -255,7 +255,7 @@ export function InvoiceReminderModal({ items, owners: initial, allOwners = [], i
         if (use) { setTplRaw({ ...use }); setSavedTpl({ ...use }); }
         setTplInfo({ tableReady: !!r.tableReady, updatedBy: r.updatedBy, updatedAt: r.updatedAt, local: !(r.tableReady && r.template) && !!local });
       })
-      .catch(() => { if (alive && local) { setTplRaw({ ...local }); setSavedTpl({ ...local }); setTplInfo({ tableReady: false, local: true }); } });
+      .catch(() => { if (!alive) return; if (local) { setTplRaw({ ...local }); setSavedTpl({ ...local }); } setTplInfo({ tableReady: false, local: !!local }); });
     return () => { alive = false; };
   }, []);
   const setTpl = (fn) => { setConfirm(false); setTplRaw(fn); };
@@ -283,6 +283,7 @@ export function InvoiceReminderModal({ items, owners: initial, allOwners = [], i
   };
   const tplStatus = !tplInfo ? "Memuat template…"
     : !tplInfo.tableReady ? `Tabel template belum dibuat di database (SQL 20261126_payout_reminder_template.sql). Perubahan tetap dipakai untuk kiriman ini${tplInfo.local ? "; template tersimpan di browser ini" : ""}.`
+    : tplInfo.local ? "Memakai teks yang tersimpan di browser ini saja. Klik Simpan agar teks ini dipakai semua admin."
     : tplInfo.updatedAt ? `Template default terakhir disimpan ${fmtWhen(tplInfo.updatedAt)}${tplInfo.updatedBy ? ` oleh ${tplInfo.updatedBy}` : ""}. Berlaku untuk semua admin.`
     : "Memakai teks awal. Simpan agar teks baru dipakai semua admin.";
 
@@ -445,10 +446,10 @@ export function InvoiceReminderModal({ items, owners: initial, allOwners = [], i
             ) : (
               <>
                 <span style={{ fontSize: 12.5, color: t.ink2, flex: "1 1 220px" }}>
-                  <strong style={{ color: t.ink }}>{ready.length} email siap dikirim</strong>{skipped.length ? ` · ${skipped.length} ${own} tanpa email dilewati` : ""}{list.length - sel.size > 0 ? ` · ${list.length - sel.size} tidak ikut` : ""}
+                  {!info || !tplInfo ? <span>{!info ? "Memuat penerima…" : "Memuat template email…"}</span> : <><strong style={{ color: t.ink }}>{ready.length} email siap dikirim</strong>{skipped.length ? ` · ${skipped.length} ${own} tanpa email dilewati` : ""}{list.length - sel.size > 0 ? ` · ${list.length - sel.size} tidak ikut` : ""}</>}
                 </span>
                 <Button t={t} onClick={onClose}>Batal</Button>
-                <Button t={t} primary onClick={() => setConfirm(true)} disabled={!info || !ready.length}>✉ Kirim {ready.length} email</Button>
+                <Button t={t} primary onClick={() => setConfirm(true)} disabled={!info || !tplInfo || !ready.length}>✉ Kirim {ready.length} email</Button>
               </>
             )}
           </div>
@@ -479,7 +480,7 @@ export function InvoiceReminderDashboard({ ins, isAg, w = 1200, t, showToast }) 
   const segment = isAg ? "agency" : "partner";
   const items = useMemo(() => (ins.remind || []).filter((x) => x.name && x.name !== "—"), [ins]);
   const allOwners = useMemo(() => ins.owners.map((o) => o.name).filter((n) => n && n !== "—"), [ins]);
-  const [info, setInfo] = useState(null);
+  const [infoRaw, setInfo] = useState(null);
   const [err, setErr] = useState("");
   const [reload, setReload] = useState(0);
   const [review, setReview] = useState(null);         // null | [nama pemilik] → tampilan review email
@@ -487,11 +488,16 @@ export function InvoiceReminderDashboard({ ins, isAg, w = 1200, t, showToast }) 
   const [prog, setProg] = useState("");
   const [fil, setFil] = useState("all");               // all | never | done | noemail
   const ownersKey = [...new Set(items.map((x) => x.name))].join("\u0001");
+  // Data penerima hanya dipakai bila cocok dengan permintaan terakhir (segment + pemilik) —
+  // saat ganti Partner/Agency atau filter, tampil "memuat" dulu, bukan status lama / "tanpa email".
+  const reqKey = `${segment}\u0002${ownersKey}`;
+  const info = infoRaw?._k === reqKey ? infoRaw : null;
+  const loading = !info && !err;
 
   useEffect(() => {
     let alive = true;
     call({ action: "recipients", segment, owners: ownersKey.split("\u0001").filter(Boolean) })
-      .then((r) => { if (alive) { setInfo(r); setErr(""); setNow(Date.now()); } })
+      .then((r) => { if (alive) { setInfo({ ...r, _k: `${segment}\u0002${ownersKey}` }); setErr(""); setNow(Date.now()); } })
       .catch((e) => alive && setErr(e.message));
     return () => { alive = false; };
   }, [ownersKey, segment, reload]);
@@ -519,9 +525,9 @@ export function InvoiceReminderDashboard({ ins, isAg, w = 1200, t, showToast }) 
       const c = info?.owners?.[o.name];
       const last = c?.last || null, emails = (c?.to || []).length;
       const age = last ? Math.floor((now - new Date(last.at).getTime()) / DAY_MS) : null;
-      const st = !emails ? "noemail" : !last ? "never" : age > 7 ? "stale" : "recent";
+      const st = !info ? "loading" : !emails ? "noemail" : !last ? "never" : age > 7 ? "stale" : "recent";
       return { ...o, progs: [...o.progs].sort(), last, emails, age, st };
-    }).sort((a, b) => ({ never: 0, stale: 1, noemail: 2, recent: 3 }[a.st] - { never: 0, stale: 1, noemail: 2, recent: 3 }[b.st]) || b.amt - a.amt);
+    }).sort((a, b) => ({ loading: 0, never: 0, stale: 1, noemail: 2, recent: 3 }[a.st] - { loading: 0, never: 0, stale: 1, noemail: 2, recent: 3 }[b.st]) || b.amt - a.amt);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scoped, info]);
 
@@ -531,7 +537,7 @@ export function InvoiceReminderDashboard({ ins, isAg, w = 1200, t, showToast }) 
   const cnt = (s) => owners.filter((o) => o.st === s).length;
   const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
   const phone = w < 640;
-  const tone = { never: [t.badBg, t.badBd, t.badDark, "Belum diingatkan"], stale: [t.warnBg, t.warnBd, t.warnDark, "Diingatkan > 7 hari lalu"], recent: [t.goodBg || t.surf3, t.goodBd || t.line2, t.goodDark, "Sudah diingatkan"], noemail: [t.surf3, t.line2, t.muted, "Email belum ada"] };
+  const tone = { never: [t.badBg, t.badBd, t.badDark, "Belum diingatkan"], stale: [t.warnBg, t.warnBd, t.warnDark, "Diingatkan > 7 hari lalu"], recent: [t.goodBg || t.surf3, t.goodBd || t.line2, t.goodDark, "Sudah diingatkan"], noemail: [t.surf3, t.line2, t.muted, "Email belum ada"], loading: [t.surf3, t.line2, t.muted, "Memuat…"] };
   const togglePick = (n) => setPick((s) => { const x = new Set(s); x.has(n) ? x.delete(n) : x.add(n); return x; });
   // Ringkasan pilihan (semua program milik pemilik terpilih = yang nanti ada di email)
   const picked = useMemo(() => {
@@ -546,7 +552,7 @@ export function InvoiceReminderDashboard({ ins, isAg, w = 1200, t, showToast }) 
   const td = { padding: "8px 8px", fontSize: 12.5, color: t.ink2, borderBottom: `1px solid ${t.line}`, verticalAlign: "middle" };
   const fchip = (k, l, n) => (
     <button key={k} type="button" onClick={() => setFil(k)} aria-pressed={fil === k}
-      style={{ fontFamily: "inherit", fontSize: 12.5, fontWeight: 600, padding: "4px 11px", borderRadius: 99, cursor: "pointer", border: `1px solid ${fil === k ? "#32BCAD" : t.line2}`, background: fil === k ? "#32BCAD1f" : t.surf, color: fil === k ? t.ink : t.ink2 }}>{l} · {n}</button>
+      style={{ fontFamily: "inherit", fontSize: 12.5, fontWeight: 600, padding: "4px 11px", borderRadius: 99, cursor: "pointer", border: `1px solid ${fil === k ? "#32BCAD" : t.line2}`, background: fil === k ? "#32BCAD1f" : t.surf, color: fil === k ? t.ink : t.ink2 }}>{l} · {loading && k !== "all" ? "…" : n}</button>
   );
 
   return (
@@ -556,9 +562,9 @@ export function InvoiceReminderDashboard({ ins, isAg, w = 1200, t, showToast }) 
 
       <div style={{ display: "grid", gridTemplateColumns: w >= 900 ? "repeat(4,minmax(0,1fr))" : w >= 520 ? "repeat(2,minmax(0,1fr))" : "1fr", gap: 10, marginBottom: 14 }}>
         <Kpi t={t} label="Invoice belum disubmit" c={t.bad} value={tot.n} sub={`${rpWord(tot.amt)} · ${owners.length} ${own}`} />
-        <Kpi t={t} label="Sudah diingatkan" c={t.good} value={`${pct(tot.remN, tot.n)}%`} sub={`${tot.remN} invoice · ${rpWord(tot.remAmt)}`} />
-        <Kpi t={t} label={`${Own} belum diingatkan`} c={t.warn} value={cnt("never") + cnt("stale")} sub={`${cnt("never")} belum pernah · ${cnt("stale")} lebih dari 7 hari`} />
-        <Kpi t={t} label={`${Own} tanpa email`} c={t.muted} value={cnt("noemail")} sub={`isi di sheet ${CONTACTS_SHEET}`} />
+        <Kpi t={t} label="Sudah diingatkan" c={t.good} value={loading ? "…" : `${pct(tot.remN, tot.n)}%`} sub={loading ? "memuat riwayat pengingat…" : `${tot.remN} invoice · ${rpWord(tot.remAmt)}`} />
+        <Kpi t={t} label={`${Own} belum diingatkan`} c={t.warn} value={loading ? "…" : cnt("never") + cnt("stale")} sub={loading ? "memuat…" : `${cnt("never")} belum pernah · ${cnt("stale")} lebih dari 7 hari`} />
+        <Kpi t={t} label={`${Own} tanpa email`} c={t.muted} value={loading ? "…" : cnt("noemail")} sub={`isi di sheet ${CONTACTS_SHEET}`} />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: w >= 1100 ? "minmax(0,5fr) minmax(0,7fr)" : "1fr", gap: 14, alignItems: "start" }}>
@@ -581,11 +587,11 @@ export function InvoiceReminderDashboard({ ins, isAg, w = 1200, t, showToast }) 
                 style={{ display: "block", width: "100%", textAlign: "left", fontFamily: "inherit", background: prog === r.k ? t.surf3 : "transparent", border: 0, borderRadius: 8, padding: "6px 6px", cursor: "pointer", color: t.ink }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12.5 }}>
                   <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.k}</span>
-                  <span style={{ color: t.ink2, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{rpWord(r.amt)} · {r.remN}/{r.n}</span>
+                  <span style={{ color: t.ink2, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{rpWord(r.amt)} · {loading ? "…" : r.remN}/{r.n}</span>
                 </div>
                 <div style={{ display: "flex", height: 10, marginTop: 4, borderRadius: 99, background: t.surf3, overflow: "hidden" }}>
                   <div style={{ width: `${(r.remAmt / max) * 100}%`, background: t.good }} />
-                  <div style={{ width: `${((r.amt - r.remAmt) / max) * 100}%`, background: t.bad, marginLeft: r.remAmt && r.amt - r.remAmt ? 2 : 0 }} />
+                  <div style={{ width: `${((r.amt - r.remAmt) / max) * 100}%`, background: loading ? t.line2 : t.bad, marginLeft: r.remAmt && r.amt - r.remAmt ? 2 : 0 }} />
                 </div>
               </button>
             ));
@@ -612,7 +618,7 @@ export function InvoiceReminderDashboard({ ins, isAg, w = 1200, t, showToast }) 
                   {shown.map((o) => { const [bg, bd, c, l] = tone[o.st]; return (
                     <tr key={o.name}>
                       <td style={td}><input type="checkbox" checked={pick.has(o.name)} onChange={() => togglePick(o.name)} aria-label={`Pilih ${o.name}`} /></td>
-                      <td style={{ ...td, color: t.ink, fontWeight: 600, maxWidth: 240 }}>{o.name}<div style={{ fontWeight: 400, fontSize: 12, color: t.muted }}>{o.emails ? `${o.emails} email` : "belum ada email"}</div></td>
+                      <td style={{ ...td, color: t.ink, fontWeight: 600, maxWidth: 240 }}>{o.name}<div style={{ fontWeight: 400, fontSize: 12, color: t.muted }}>{!info ? "…" : o.emails ? `${o.emails} email` : "belum ada email"}</div></td>
                       {!phone && <td style={{ ...td, maxWidth: 220 }}>{o.progs.join(", ")}</td>}
                       <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}><div style={{ color: t.ink, fontWeight: 600 }}>{rpWord(o.amt)}</div><div style={{ fontSize: 12, color: t.muted }}>{o.n} invoice{o.remN ? ` · ${o.remN} diingatkan` : ""}</div></td>
                       <td style={td}>
