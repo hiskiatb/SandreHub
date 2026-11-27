@@ -376,45 +376,112 @@
     return out;
   }
 
-  /* ======================= HTML email ======================= */
+  /* ======================= HTML email (tema SandraHub) ======================= */
+  // Semua gaya inline + tabel (klien email seperti Outlook membuang <style>, flex, dan gradient).
   var F = 'font-family:Arial,Helvetica,sans-serif;';
-  function mP(txt) { return '<p style="' + F + 'font-size:13.5px;color:#4D4D4F;line-height:1.65;margin:0 0 14px 0;">' + txt + '</p>'; }
-  function mH(txt) { return '<p style="' + F + 'font-size:14px;font-weight:bold;color:#1E8C80;margin:22px 0 8px 0;">' + txt + '</p>'; }
+  var C = { ink: '#1F1F24', body: '#4D4D4F', muted: '#6B6B78', line: '#E6E6EC', bg: '#F4F4F7', card: '#FFFFFF', dark: '#16161B', teal: '#32BCAD', tealDk: '#1E8C80', magenta: '#C6168D', yellow: '#FFCB05', red: '#ED1C24' };
+  // Warna status standar laporan performa (RAG): isi solid hijau / kuning-amber / merah.
+  var BAR = { g: '#00A651', y: '#FFC000', r: '#E3000F', na: '#D5D5DD' };
+  var PILL = { g: ['#00A651', '#FFFFFF'], y: ['#FFC000', '#3B2C00'], r: ['#E3000F', '#FFFFFF'], na: ['#E6E6EC', '#6B6B78'] };
+  var INK = { g: '#00843D', y: '#A87400', r: '#C8000D', na: '#6B6B78' };
+  function mP(txt) { return '<p style="' + F + 'font-size:14px;color:' + C.body + ';line-height:1.65;margin:0 0 14px 0;">' + txt + '</p>'; }
   function mText(raw) { return String(raw || '').split(/\n\s*\n/).filter(function (b) { return b.trim(); }).map(function (b) { return mP(esc(b).replace(/\n/g, '<br>')); }).join(''); }
-  function mBullets(list) {
-    return '<ul style="margin:0 0 14px 0;padding-left:20px;">' + list.map(function (t) { return '<li style="' + F + 'font-size:13.5px;color:#4D4D4F;line-height:1.6;margin:0 0 4px 0;">' + esc(t) + '</li>'; }).join('') + '</ul>';
+  function mH(txt) { return '<p style="' + F + 'font-size:13px;font-weight:bold;color:' + C.ink + ';text-transform:uppercase;letter-spacing:.6px;margin:22px 0 10px 0;">' + txt + '</p>'; }
+  function mSec(no, txt, sub) {
+    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:30px 0 6px 0;"><tr>'
+      + '<td width="34" style="' + F + 'width:34px;height:34px;background:' + C.magenta + ';color:#fff;font-size:15px;font-weight:bold;text-align:center;border-radius:9px;">' + esc(no) + '</td>'
+      + '<td style="' + F + 'padding-left:12px;"><div style="font-size:18px;font-weight:bold;color:' + C.ink + ';">' + esc(txt) + '</div>'
+      + (sub ? '<div style="font-size:12.5px;color:' + C.muted + ';margin-top:2px;">' + esc(sub) + '</div>' : '') + '</td></tr></table>'
+      + '<div style="height:2px;line-height:2px;background:' + C.line + ';margin:10px 0 4px 0;">&nbsp;</div>';
+  }
+  function pill(v) { var p = PILL[band(v)]; return '<span style="' + F + 'display:inline-block;background:' + p[0] + ';color:' + p[1] + ';font-weight:bold;font-size:12px;padding:3px 9px;border-radius:999px;white-space:nowrap;">' + pct(v) + '</span>'; }
+  // Bar progres: lebar penuh = 130%, garis target di 83%.
+  function mBar(v, h) {
+    h = h || 8;
+    var w = v == null ? 0 : Math.max(1, Math.round(Math.min(v, 1.3) / 1.3 * 100));
+    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>'
+      + (w ? '<td width="' + w + '%" style="height:' + h + 'px;line-height:' + h + 'px;font-size:1px;background:' + BAR[band(v)] + ';border-radius:' + h + 'px 0 0 ' + h + 'px;">&nbsp;</td>' : '')
+      + (w < 100 ? '<td style="height:' + h + 'px;line-height:' + h + 'px;font-size:1px;background:#EDEDF2;border-radius:0 ' + h + 'px ' + h + 'px 0;">&nbsp;</td>' : '')
+      + '</tr></table>';
   }
   function mTiles(o, compare) {
-    var cells = [{ lbl: 'Score', v: o.score, cmp: compare && compare.score }].concat(KPIS.map(function (k) { return { lbl: k.short, v: o[k.id] && o[k.id].ach, cmp: compare && compare[k.id] && compare[k.id].ach }; }));
-    return '<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:separate;border-spacing:6px 0;margin:0 -6px 14px -6px;"><tr>' + cells.map(function (c) {
-      var b = MAIL[band(c.v)];
-      return '<td style="' + F + 'background:' + b[0] + ';border-radius:10px;padding:10px 14px;min-width:96px;vertical-align:top;">'
-        + '<div style="font-size:11px;color:#6B6B78;text-transform:uppercase;letter-spacing:.4px;">' + esc(c.lbl) + '</div>'
-        + '<div style="font-size:20px;font-weight:bold;color:' + b[1] + ';margin-top:2px;">' + pct(c.v) + '</div>'
-        + (c.cmp != null ? '<div style="font-size:11px;color:#6B6B78;margin-top:2px;">Sumatera ' + pct(c.cmp) + '</div>' : '')
+    var cells = [{ lbl: 'Score', v: o.score, cmp: compare && compare.score, big: true }].concat(KPIS.map(function (k) { return { lbl: k.label, v: o[k.id] && o[k.id].ach, cmp: compare && compare[k.id] && compare[k.id].ach }; }));
+    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;border-spacing:8px 0;margin:0 -8px 6px -8px;"><tr>' + cells.map(function (c) {
+      var pc = PILL[band(c.v)], STAT = { g: 'TERCAPAI', y: 'WASPADA', r: 'DI BAWAH TARGET', na: '' }[band(c.v)];
+      return '<td width="25%" style="' + F + 'background:' + pc[0] + ';border-radius:12px;padding:12px 14px;vertical-align:top;">'
+        + '<div style="font-size:10.5px;color:' + pc[1] + ';text-transform:uppercase;letter-spacing:.5px;font-weight:bold;min-height:26px;">' + esc(c.lbl) + '</div>'
+        + '<div style="font-size:' + (c.big ? 28 : 24) + 'px;font-weight:bold;color:' + pc[1] + ';margin:4px 0 4px 0;">' + pct(c.v) + '</div>'
+        + '<div style="font-size:10.5px;font-weight:bold;letter-spacing:.6px;color:' + pc[1] + ';">' + STAT + '</div>'
+        + (c.cmp != null ? '<div style="font-size:11px;color:' + pc[1] + ';margin-top:6px;">Sumatera <b>' + pct(c.cmp) + '</b></div>' : '')
         + '</td>';
     }).join('') + '</tr></table>';
   }
+  function mInsight(list, judul) {
+    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:14px 0 6px 0;"><tr>'
+      + '<td width="4" style="width:4px;background:' + C.teal + ';border-radius:4px;">&nbsp;</td>'
+      + '<td style="' + F + 'background:#EEF9F7;padding:14px 18px;border-radius:0 12px 12px 0;">'
+      + '<div style="font-size:12px;font-weight:bold;color:' + C.tealDk + ';text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">' + esc(judul || 'Insight') + '</div>'
+      + list.map(function (t) { return '<div style="font-size:13.5px;color:' + C.body + ';line-height:1.55;margin:0 0 6px 0;">•&nbsp; ' + esc(t) + '</div>'; }).join('')
+      + '</td></tr></table>';
+  }
+  // Grafik batang horizontal: [{nama, v, sub}]
+  function mBars(items) {
+    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">' + items.map(function (it) {
+      return '<tr><td style="' + F + 'font-size:12.5px;color:' + C.ink + ';padding:5px 10px 5px 0;white-space:nowrap;width:150px;">' + esc(it.nama) + (it.sub ? '<div style="font-size:10.5px;color:' + C.muted + ';">' + esc(it.sub) + '</div>' : '') + '</td>'
+        + '<td style="padding:5px 0;">' + mBar(it.v, 10) + '</td>'
+        + '<td style="' + F + 'text-align:right;padding:5px 0 5px 10px;width:64px;white-space:nowrap;">' + pill(it.v) + '</td></tr>';
+    }).join('') + '</table>';
+  }
+  // Batang bertumpuk sebaran hijau/kuning/merah: [{nama, g, y, r, n}]
+  function mStack(items) {
+    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">' + items.map(function (it) {
+      var seg = function (k, n) { return n ? '<td width="' + Math.max(1, Math.round(n / it.n * 100)) + '%" style="height:12px;font-size:1px;line-height:12px;background:' + BAR[k] + ';">&nbsp;</td>' : ''; };
+      return '<tr><td style="' + F + 'font-size:12.5px;color:' + C.ink + ';padding:5px 10px 5px 0;white-space:nowrap;width:150px;">' + esc(it.nama) + '</td>'
+        + '<td style="padding:5px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>' + seg('g', it.g) + seg('y', it.y) + seg('r', it.r) + '</tr></table></td>'
+        + '<td style="' + F + 'font-size:11.5px;color:' + C.muted + ';text-align:right;padding:5px 0 5px 10px;width:92px;white-space:nowrap;"><b style="color:' + INK.g + ';">' + it.g + '</b> · <b style="color:' + INK.y + ';">' + it.y + '</b> · <b style="color:' + INK.r + ';">' + it.r + '</b></td></tr>';
+    }).join('') + '</table>';
+  }
   // cols: [{label, get(row) -> value, kind: 'pct'|'num'|'text'}]
   function mTable(cols, rows) {
-    var th = 'style="' + F + 'background:#32BCAD;color:#fff;font-size:12px;font-weight:bold;padding:7px 10px;text-align:left;border:1px solid #2AA69A;white-space:nowrap;"';
-    var html = '<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:0 0 6px 0;"><tr>' + cols.map(function (c) { return '<th ' + th + '>' + esc(c.label) + '</th>'; }).join('') + '</tr>';
+    var th = F + 'background:' + C.bg + ';color:' + C.muted + ';font-size:10.5px;font-weight:bold;text-transform:uppercase;letter-spacing:.4px;padding:9px 10px;text-align:left;border-bottom:1px solid ' + C.line + ';white-space:nowrap;';
+    var html = '<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:separate;border-spacing:0;border:1px solid ' + C.line + ';border-radius:12px;overflow:hidden;margin:0 0 6px 0;min-width:60%;"><tr>'
+      + cols.map(function (c) { return '<th style="' + th + (c.kind && c.kind !== 'text' ? 'text-align:right;' : '') + '">' + esc(c.label) + '</th>'; }).join('') + '</tr>';
     rows.forEach(function (r, i) {
+      var last = i === rows.length - 1;
       html += '<tr>' + cols.map(function (c) {
-        var v = c.get(r), st = F + 'font-size:12.5px;padding:6px 10px;border:1px solid #D8E3E0;white-space:nowrap;';
-        var txt;
-        if (c.kind === 'pct') { var b = MAIL[band(v)]; st += 'background:' + b[0] + ';color:' + b[1] + ';font-weight:bold;text-align:right;'; txt = pct(v); }
-        else if (c.kind === 'num') { st += 'text-align:right;color:#4D4D4F;' + (i % 2 ? 'background:#F7FAF9;' : ''); txt = fmt(v); }
-        else { st += 'color:#4D4D4F;' + (i % 2 ? 'background:#F7FAF9;' : ''); txt = esc(v); }
-        return '<td style="' + st + '">' + txt + '</td>';
+        var v = c.get(r), st = F + 'font-size:12.5px;padding:7px 10px;white-space:nowrap;color:' + C.body + ';' + (last ? '' : 'border-bottom:1px solid #F0F0F4;') + (i % 2 ? 'background:#FAFAFC;' : 'background:#fff;');
+        if (c.kind === 'pct') return '<td style="' + st + 'text-align:right;">' + pill(v) + '</td>';
+        if (c.kind === 'num') return '<td style="' + st + 'text-align:right;">' + fmt(v) + '</td>';
+        return '<td style="' + st + (c.bold ? 'font-weight:bold;color:' + C.ink + ';' : '') + '">' + esc(v) + '</td>';
       }).join('') + '</tr>';
     });
     return html + '</table>';
   }
-  var achCols = function () { return KPIS.map(function (k) { return { label: k.short + ' Ach', kind: 'pct', get: function (r) { return r[k.id] && r[k.id].ach; } }; }).concat([{ label: 'Score', kind: 'pct', get: function (r) { return r.score; } }]); };
-  function mLegend() { return '<p style="' + F + 'font-size:11.5px;color:#6B6B78;margin:4px 0 14px 0;">Warna: <span style="color:#1D8078;font-weight:bold;">hijau ' + esc(LBL.g) + '</span> · <span style="color:#8A6A00;font-weight:bold;">kuning ' + esc(LBL.y) + '</span> · <span style="color:#B3121A;font-weight:bold;">merah ' + esc(LBL.r) + '</span></p>'; }
-  function mSec(txt) { return '<div style="' + F + 'margin:26px 0 4px 0;padding:8px 12px;background:#32BCAD;color:#fff;font-size:15px;font-weight:bold;border-radius:8px;">' + esc(txt) + '</div>'; }
-  function wrap(inner) { return '<div style="' + F + 'max-width:900px;">' + inner + '</div>'; }
+  var achCols = function () { return KPIS.map(function (k) { return { label: k.short, kind: 'pct', get: function (r) { return r[k.id] && r[k.id].ach; } }; }).concat([{ label: 'Score', kind: 'pct', get: function (r) { return r.score; } }]); };
+  function mLegend() {
+    var chip = function (k, t) { return '<span style="display:inline-block;background:' + PILL[k][0] + ';color:' + PILL[k][1] + ';font-weight:bold;font-size:11px;padding:3px 10px;border-radius:999px;margin-left:6px;">' + esc(t) + '</span>'; };
+    return '<p style="' + F + 'font-size:11.5px;color:' + C.muted + ';margin:10px 0 0 0;">Status:' + chip('g', 'Hijau ' + LBL.g) + chip('y', 'Kuning ' + LBL.y) + chip('r', 'Merah ' + LBL.r) + '</p>';
+  }
+  // Kerangka email: header gelap ala SandraHub + kartu putih + footer.
+  function wrap(inner, head) {
+    head = head || {};
+    var stripe = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>'
+      + '<td width="34%" style="height:4px;font-size:1px;line-height:4px;background:' + C.teal + ';">&nbsp;</td>'
+      + '<td width="33%" style="height:4px;font-size:1px;line-height:4px;background:' + C.yellow + ';">&nbsp;</td>'
+      + '<td width="33%" style="height:4px;font-size:1px;line-height:4px;background:' + C.magenta + ';">&nbsp;</td></tr></table>';
+    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;background:' + C.bg + ';"><tr><td align="center" style="padding:24px 12px;">'
+      + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;max-width:820px;background:#fff;border:1px solid ' + C.line + ';border-radius:16px;overflow:hidden;">'
+      + '<tr><td style="padding:0;">' + stripe + '</td></tr>'
+      + '<tr><td style="' + F + 'background:' + C.dark + ';padding:22px 28px;">'
+      + '<div style="font-size:11px;font-weight:bold;letter-spacing:1.2px;text-transform:uppercase;color:' + C.teal + ';">SandraHub · Smart Mail Sumatera</div>'
+      + '<div style="font-size:24px;font-weight:bold;color:#fff;margin-top:6px;">' + esc(head.title || 'Performance Report') + '</div>'
+      + (head.sub ? '<div style="font-size:13px;color:#B9B9C6;margin-top:4px;">' + esc(head.sub) + '</div>' : '')
+      + '</td></tr>'
+      + '<tr><td style="' + F + 'padding:26px 28px 10px 28px;">' + inner + '</td></tr>'
+      + '<tr><td style="' + F + 'padding:16px 28px 22px 28px;border-top:1px solid ' + C.line + ';font-size:11.5px;color:' + C.muted + ';line-height:1.6;">'
+      + 'Email ini dikirim otomatis dari SandraHub (Smart Mail Sumatera) — Sales &amp; Distribution, Indosat Circle Sumatera.</td></tr>'
+      + '</table></td></tr></table>';
+  }
 
   /* ======================= Bentuk penerima ======================= */
   var tanggalTxt = function () { return P.data.tanggal ? P.data.tanggal.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : '-'; };
@@ -423,10 +490,12 @@
     return (ta && ta.value.trim() ? ta.value : defaultTxt).replace(/\{nama\}/g, group.name).replace(/\{periode\}/g, P.periode).replace(/\{tanggal\}/g, tanggalTxt());
   }
   function closingTxt() { var ta = document.getElementById('perfClosing'); return ta ? ta.value : ''; }
+  var INTRO_DEF = 'Yth. Bapak/Ibu {nama},\n\nBerikut kami sampaikan Performance Report periode {periode} (data per {tanggal}).';
 
   function buildGroups() {
     var d = P.data, groups = [];
     P.periode = (document.getElementById('perfPeriode').value || '').trim() || tanggalTxt();
+    var subHead = function (x) { return x + ' · Periode ' + P.periode + ' · Data per ' + tanggalTxt(); };
     if (P.jenis === 'hoa') {
       d.regionNames.forEach(function (region) {
         var p = regionPack(region);
@@ -436,40 +505,50 @@
         to.forEach(function (e) { ccSet.delete(e.toLowerCase()); });
         var name = (h && h.nama ? h.nama + ' — ' : '') + title(region);
         var ins = insightRegion(p);
+        var people = (d.people || []).filter(function (x) { return norm(x.REGION) === norm(region); });
         var html = wrap(
           mText(introFor({ name: h && h.nama ? h.nama : 'Head of Area' }, 'Yth. Bapak/Ibu {nama},\n\nBerikut kami sampaikan Performance Report ' + title(region) + ' periode {periode} (data per {tanggal}).'))
-          + mH('Ringkasan & Insight ' + esc(title(region))) + (p.reg ? mTiles(p.reg, d.circle) : '') + mLegend() + mBullets(ins)
-          + mSec('1. Internal Sales') + (p.areas.length ? mH('Performa per Area') + mTable([
-            { label: 'Area', get: function (r) { return title(r.nama); } },
+          + mH('Ringkasan ' + esc(title(region))) + (p.reg ? mTiles(p.reg, d.circle) : '') + mLegend()
+          + mInsight(ins, 'Insight ' + title(region))
+          + mSec('1', 'Internal Sales', p.areas.length + ' area' + (people.length ? ' · ' + people.length + ' sales' : ''))
+          + (p.areas.length ? mH('Score per Area') + mBars(p.areas.map(function (a) { return { nama: title(a.nama), v: a.score }; })) : '')
+          + (p.areas.length ? mH('Detail per Area') + mTable([
+            { label: 'Area', bold: true, get: function (r) { return title(r.nama); } },
             { label: 'Trad Target', kind: 'num', get: function (r) { return r.trad.t; } },
             { label: 'Trad Actual', kind: 'num', get: function (r) { return r.trad.a; } },
-          ].concat(achCols().slice(0, 1)).concat([
-            { label: 'DSE Skor', kind: 'num', get: function (r) { return r.dse.t; } },
-            { label: '#DSE', kind: 'num', get: function (r) { return r.dse.a; } },
-          ]).concat(achCols().slice(1, 2)).concat([
-            { label: 'FWA Target', kind: 'num', get: function (r) { return r.fwa.t; } },
-            { label: 'FWA Actual', kind: 'num', get: function (r) { return r.fwa.a; } },
-          ]).concat(achCols().slice(2)), p.areas) : '')
-          + mSec('2. MDI') + (p.mdi.length ? mH('Partner MDI (' + p.mdi.length + ')') + mTable([
-            { label: 'Area', get: function (r) { return title(r.area); } },
-            { label: 'Partner', get: function (r) { return r.partner; } },
-          ].concat(achCols()), p.mdi) : '')
-          + mSec('3. SDP') + (p.sdpByArea.length ? mH('Rekap SDP per Area') + mTable([
-            { label: 'Area', get: function (r) { return title(r.area); } },
-            { label: 'Jumlah SDP', kind: 'num', get: function (r) { return r.n; } },
-            { label: 'Rata-rata Score', kind: 'pct', get: function (r) { return r.avg; } },
-            { label: LBL.g, kind: 'num', get: function (r) { return r.g; } },
-            { label: LBL.y, kind: 'num', get: function (r) { return r.y; } },
-            { label: LBL.r, kind: 'num', get: function (r) { return r.r; } },
-          ], p.sdpByArea) : '')
+          ].concat(achCols()), p.areas) : '')
+          + (people.length ? mH('10 Sales dengan Score Terendah') + mTable([
+            { label: 'Nama', bold: true, get: function (r) { return title(r.nama); } },
+            { label: 'Cluster', get: function (r) { return r.CLUSTER; } },
+            { label: 'Area', get: function (r) { return title(r.AREA); } },
+          ].concat(achCols()), people.slice().sort(byScoreDesc).reverse().slice(0, 10)) : '')
+          + mSec('2', 'MDI', p.mdi.length + ' partner-area')
+          + (p.mdi.length ? mH('Score per Partner') + mBars(p.mdi.map(function (r) { return { nama: title(r.area), sub: title(r.partner), v: r.score }; }))
+            + mH('Detail Partner') + mTable([
+              { label: 'Area', bold: true, get: function (r) { return title(r.area); } },
+              { label: 'Partner', get: function (r) { return r.partner; } },
+            ].concat(achCols()), p.mdi) : '')
+          + mSec('3', 'SDP', p.sdpRows.length + ' SDP · rata-rata score ' + pct(avg(p.sdpRows.map(function (x) { return x.score; }))))
+          + (p.sdpByArea.length ? mH('Sebaran Score SDP per Area (hijau · kuning · merah)') + mStack(p.sdpByArea.map(function (x) { return { nama: title(x.area), g: x.g, y: x.y, r: x.r, n: x.n }; }))
+            + mH('Rekap per Area') + mTable([
+              { label: 'Area', bold: true, get: function (r) { return title(r.area); } },
+              { label: 'SDP', kind: 'num', get: function (r) { return r.n; } },
+              { label: 'Rata-rata', kind: 'pct', get: function (r) { return r.avg; } },
+              { label: 'Hijau', kind: 'num', get: function (r) { return r.g; } },
+              { label: 'Kuning', kind: 'num', get: function (r) { return r.y; } },
+              { label: 'Merah', kind: 'num', get: function (r) { return r.r; } },
+            ], p.sdpByArea) : '')
           + (p.sdpRows.length ? mH('10 SDP dengan Score Terendah') + mTable([
-            { label: 'ID MIM3', get: function (r) { return r.idMim3; } },
-            { label: 'Nama', get: function (r) { return r.namaMim3; } },
+            { label: 'Nama', bold: true, get: function (r) { return r.namaMim3; } },
             { label: 'Area', get: function (r) { return title(r.area); } },
           ].concat(achCols()), p.sdpRows.slice().sort(byScoreDesc).reverse().slice(0, 10)) : '')
-          + '<div style="height:10px;"></div>' + mP('Rincian lengkap Internal Sales (area & cluster), MDI, dan seluruh SDP ' + esc(title(region)) + ' ada di lampiran Excel (3 sheet).')
-          + mText(closingTxt())
+          + '<div style="height:18px;"></div>' + mP('Rincian lengkap Internal Sales (area, cluster' + (people.length ? ', per sales' : '') + '), MDI, dan seluruh SDP ' + esc(title(region)) + ' ada di lampiran Excel (3 sheet).')
+          + mText(closingTxt()),
+          { title: 'Performance Report ' + title(region), sub: subHead('Head of Area') }
         );
+        var isRows = p.areas.map(function (r) { return Object.assign({ Level: 'Area' }, flatIsRow(r)); })
+          .concat(p.clusters.map(function (r) { return Object.assign({ Level: 'Cluster' }, flatIsRow(r)); }))
+          .concat(people.map(function (r) { return Object.assign({ Level: 'Sales', Cluster: r.CLUSTER || '' }, flatIsRow(r)); }));
         groups.push({
           key: 'hoa|' + norm(region), name: name, emails: to, ccs: Array.from(ccSet),
           rows: p.areas.map(flatRow), unmatched: !to.length,
@@ -478,11 +557,7 @@
             subject: 'Performance Report ' + title(region) + ' — ' + P.periode,
             html: html, insight: ins.join('\n'),
             attName: 'Performance Report ' + title(region) + ' ' + P.periode,
-            sheets: [
-              ['Internal Sales', p.areas.map(function (r) { return Object.assign({ Level: 'Area' }, flatIsRow(r)); }).concat(p.clusters.map(function (r) { return Object.assign({ Level: 'Cluster' }, flatIsRow(r)); }))],
-              ['MDI', p.mdi.map(flatRow)],
-              ['SDP', p.sdpRows.map(flatSdpRow)],
-            ],
+            sheets: [['Internal Sales', isRows], ['MDI', p.mdi.map(flatRow)], ['SDP', p.sdpRows.map(flatSdpRow)]],
           },
         });
       });
@@ -497,11 +572,12 @@
           unmatchedWhy: 'Partner "' + r.partner + '" area ' + r.area + ' belum ada di Master_Mapping (TYPE MDI).',
           perf: {
             subject: 'Performance Report MDI ' + title(r.partner) + ' ' + title(r.area) + ' — ' + P.periode,
-            html: wrap(mText(introFor({ name: r.partner }, 'Yth. Bapak/Ibu {nama},\n\nBerikut kami sampaikan Performance Report periode {periode} (data per {tanggal}).'))
+            html: wrap(mText(introFor({ name: r.partner }, INTRO_DEF))
               + mH('Pencapaian ' + esc(title(r.area))) + mTiles(r, null) + mLegend()
-              + mH('Insight') + mBullets(ins)
-              + mTable([{ label: 'Area', get: function (x) { return title(x.area); } }, { label: 'Partner', get: function (x) { return x.partner; } }].concat(achCols()), [r])
-              + '<div style="height:10px;"></div>' + mText(closingTxt())),
+              + mInsight(ins)
+              + mH('Detail') + mTable([{ label: 'Area', bold: true, get: function (x) { return title(x.area); } }, { label: 'Partner', get: function (x) { return x.partner; } }].concat(achCols()), [r])
+              + '<div style="height:14px;"></div>' + mText(closingTxt()),
+              { title: title(r.partner), sub: subHead('MDI ' + title(r.area)) }),
             insight: ins.join('\n'),
             attName: 'Performance Report ' + title(r.partner) + ' ' + title(r.area),
             sheets: [['MDI', [flatRow(r)]]],
@@ -518,11 +594,12 @@
           unmatchedWhy: 'ID ' + e.id + ' belum ada di Master_Mapping.',
           perf: {
             subject: 'Performance Report ' + e.nama + ' — ' + P.periode,
-            html: wrap(mText(introFor({ name: e.nama }, 'Yth. Bapak/Ibu {nama},\n\nBerikut kami sampaikan Performance Report periode {periode} (data per {tanggal}).'))
-              + mH('Pencapaian ' + esc(e.nama)) + mTiles(r, null) + mLegend()
-              + mH('Insight') + mBullets(ins)
-              + mTable([{ label: 'ID', get: function () { return e.id; } }, { label: 'Nama', get: function () { return e.nama; } }, { label: 'Area', get: function (x) { return title(x.area); } }, { label: 'Microcluster', get: function (x) { return x.mc; } }].concat(achCols()), [r])
-              + '<div style="height:10px;"></div>' + mText(closingTxt())),
+            html: wrap(mText(introFor({ name: e.nama }, INTRO_DEF))
+              + mH('Pencapaian') + mTiles(r, null) + mLegend()
+              + mInsight(ins)
+              + mH('Detail') + mTable([{ label: 'ID', bold: true, get: function () { return e.id; } }, { label: 'Area', get: function (x) { return title(x.area); } }, { label: 'Microcluster', get: function (x) { return x.mc; } }].concat(achCols()), [r])
+              + '<div style="height:14px;"></div>' + mText(closingTxt()),
+              { title: e.nama, sub: subHead('SDP ' + e.id + ' · ' + title(r.area)) }),
             insight: ins.join('\n'),
             attName: 'Performance Report ' + e.id,
             sheets: [['SDP', [flatSdpRow(r)]]],
@@ -561,21 +638,24 @@
     '.pf-card .l{ font-size:11px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }',
     '.pf-card .v{ font-size:26px; font-weight:800; margin-top:4px; font-family:var(--font-brand); }',
     '.pf-card .s{ font-size:12px; color:var(--muted); margin-top:2px; }',
-    '.pf-g{ color:var(--good-ink); } .pf-y{ color:var(--warn-ink); } .pf-r{ color:var(--bad-ink); } .pf-na{ color:var(--muted); }',
-    '.pf-bg-g{ background:var(--good-bg); color:var(--good-ink); } .pf-bg-y{ background:var(--warn-bg); color:var(--warn-ink); } .pf-bg-r{ background:var(--bad-bg); color:var(--bad-ink); } .pf-bg-na{ color:var(--muted); }',
+    '.pf-g{ color:#00A651; } .pf-y{ color:#E0A800; } .pf-r{ color:#FF3B3B; } .pf-na{ color:var(--muted); }',
+    '.pf-bg-g{ background:#00A651 !important; color:#fff !important; } .pf-bg-y{ background:#FFC000 !important; color:#3B2C00 !important; } .pf-bg-r{ background:#E3000F !important; color:#fff !important; } .pf-bg-na{ color:var(--muted); }',
+    '.pf-card.pf-bg-g .l, .pf-card.pf-bg-r .l, .pf-card.pf-bg-g .s, .pf-card.pf-bg-r .s{ color:rgba(255,255,255,.88); } .pf-card.pf-bg-y .l, .pf-card.pf-bg-y .s{ color:rgba(59,44,0,.85); } .pf-card[class*=pf-bg-]{ border:0; }',
+    '.pf-tbl td.c{ border:2px solid var(--surf) !important; }',
     '.pf-grid2{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }',
     '.pf-box{ border:1px solid var(--line); border-radius:14px; padding:14px 16px; background:var(--surf); min-width:0; }',
     '.pf-box h4{ margin:0 0 10px; font-size:13.5px; }',
     '.pf-bars{ display:flex; flex-direction:column; gap:7px; }',
-    '.pf-bar{ display:grid; grid-template-columns:minmax(90px,170px) 1fr 58px; gap:8px; align-items:center; font-size:12.5px; }',
+    '.pf-bar{ display:grid; grid-template-columns:minmax(90px,170px) 1fr 68px; gap:8px; align-items:center; font-size:12.5px; }',
     '.pf-bar .n{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink2); }',
     '.pf-bar .t{ height:12px; border-radius:6px; background:var(--surf2); position:relative; overflow:hidden; }',
     '.pf-bar .t i{ position:absolute; left:0; top:0; bottom:0; border-radius:6px; }',
     '.pf-bar .t b{ position:absolute; top:-2px; bottom:-2px; width:2px; background:var(--ink2); opacity:.45; }',
     '.pf-bar .p{ text-align:right; font-weight:700; font-variant-numeric:tabular-nums; }',
-    '.pf-i-g{ background:var(--ioh-teal); } .pf-i-y{ background:var(--ioh-yellow); } .pf-i-r{ background:var(--ioh-red); } .pf-i-na{ background:var(--line); }',
+    '.pf-i-g{ background:#00A651; } .pf-i-y{ background:#FFC000; } .pf-i-r{ background:#E3000F; } .pf-i-na{ background:var(--line); }',
     '.pf-reg{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }',
-    '.pf-reg .pf-bar{ grid-template-columns:78px 1fr 54px; }',
+    '.pf-reg .pf-bar{ grid-template-columns:78px 1fr 64px; }',
+    '.pf-pill{ display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700; }',
     '.pf-tbl{ width:100%; border-collapse:collapse; font-size:12.5px; }',
     '.pf-tbl th{ text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); padding:6px 8px; border-bottom:1px solid var(--line); cursor:pointer; white-space:nowrap; }',
     '.pf-tbl td{ padding:5px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }',
@@ -584,7 +664,8 @@
     '.pf-stack{ display:flex; height:12px; border-radius:6px; overflow:hidden; background:var(--surf2); }',
     '.pf-legend{ display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:var(--muted); }',
     '.pf-legend span::before{ content:""; display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:-1px; }',
-    '.pf-legend .g::before{ background:var(--ioh-teal); } .pf-legend .y::before{ background:var(--ioh-yellow); } .pf-legend .r::before{ background:var(--ioh-red); }',
+    '.pf-legend span{ padding:3px 10px; border-radius:999px; font-weight:700; } .pf-legend span::before{ display:none; }',
+    '.pf-legend .g{ background:#00A651; color:#fff; } .pf-legend .y{ background:#FFC000; color:#3B2C00; } .pf-legend .r{ background:#E3000F; color:#fff; }',
     '.pf-toolbar{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; }',
     '.pf-toolbar select{ width:auto; min-width:200px; }',
     '.pf-jenis{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }',
@@ -602,11 +683,11 @@
 
   /* ======================= Visualisasi (Tahap 2) ======================= */
   function card(lbl, v, sub) {
-    return '<div class="pf-card"><div class="l">' + esc(lbl) + '</div><div class="v pf-' + band(v) + '">' + pct(v) + '</div>' + (sub ? '<div class="s">' + sub + '</div>' : '') + '</div>';
+    return '<div class="pf-card pf-bg-' + band(v) + '"><div class="l">' + esc(lbl) + '</div><div class="v">' + pct(v) + '</div>' + (sub ? '<div class="s">' + sub + '</div>' : '') + '</div>';
   }
   function bar(name, v, title2) {
     var w = v == null ? 0 : Math.min(v, 1.3) / 1.3 * 100;
-    return '<div class="pf-bar" title="' + esc(title2 || name) + '"><div class="n">' + esc(name) + '</div><div class="t"><i class="pf-i-' + band(v) + '" style="width:' + w.toFixed(1) + '%"></i><b style="left:' + (100 / 1.3).toFixed(1) + '%"></b></div><div class="p pf-' + band(v) + '">' + pct(v) + '</div></div>';
+    return '<div class="pf-bar" title="' + esc(title2 || name) + '"><div class="n">' + esc(name) + '</div><div class="t"><i class="pf-i-' + band(v) + '" style="width:' + w.toFixed(1) + '%"></i><b style="left:' + (100 / 1.3).toFixed(1) + '%"></b></div><div class="p"><span class="pf-pill pf-bg-' + band(v) + '">' + pct(v) + '</span></div></div>';
   }
   var inRegion = function (r) { return !P.region || norm(r) === norm(P.region); };
 
@@ -629,7 +710,7 @@
     // Perbandingan region
     if (d.regions.length) {
       html += '<div class="pf-sec"><div class="field-group-label">Perbandingan Region</div><div class="pf-reg">' + d.regions.map(function (r) {
-        return '<div class="pf-box"><h4>' + esc(title(r.nama)) + ' <span class="pf-' + band(r.score) + '" style="float:right;">' + pct(r.score) + '</span></h4><div class="pf-bars">'
+        return '<div class="pf-box"><h4>' + esc(title(r.nama)) + ' <span class="pf-pill pf-bg-' + band(r.score) + '" style="float:right;">' + pct(r.score) + '</span></h4><div class="pf-bars">'
           + KPIS.map(function (k) { return bar(k.short, r[k.id].ach, k.label); }).join('') + bar('Score', r.score) + '</div></div>';
       }).join('') + '</div></div>';
     }
