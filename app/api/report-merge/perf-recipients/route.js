@@ -9,7 +9,7 @@ import { NextResponse } from "next/server";
 import { requireReportMergeAccess } from "../../../../lib/reportMerge/auth";
 import { getSetting, setSetting } from "../../../../lib/reportMerge/settings";
 
-const KATEGORI = ["internal_sales", "mdi", "sdp", "hoa"]; // hoa = Head of Area per region (kunci = nama region)
+const KATEGORI = ["internal_sales", "mdi", "sdp", "hor", "hoa"]; // hor = Head of Region (kunci = region), hoa = Head of Area (kunci = area)
 const EMAIL_RE = /^[^\s@;,]+@[^\s@;,]+\.[^\s@;,]+$/;
 
 const normKunci = (s) => String(s == null ? "" : s).trim().replace(/\s+/g, " ").toLowerCase();

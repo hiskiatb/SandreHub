@@ -505,10 +505,10 @@
     } else if (P.jenis === 'hor') {
       d.regionNames.forEach(function (region) {
         var p = regionPack(region);
-        var hm = d.hor[norm(region)];
-        var h = hm ? { nama: title(hm.PARTNER_NAME) } : null;
-        var to = hm ? splitEmails(hm.EMAIL_TO) : [];
-        var ccSet = new Set(regionCc(region).concat(hm ? splitEmails(hm.EMAIL_CC) : []).map(function (e) { return e.toLowerCase(); }));
+        var L = leaderRow('hor', region);
+        var h = L.nama ? { nama: L.nama } : null;
+        var to = splitEmails(L.to);
+        var ccSet = new Set(splitEmails(L.cc).map(function (e) { return e.toLowerCase(); }));
         to.forEach(function (e) { ccSet.delete(e.toLowerCase()); });
         var name = (h && h.nama ? h.nama + ' — ' : '') + title(region);
         var ins = insightRegion(p);
@@ -559,7 +559,7 @@
         groups.push({
           key: 'hor|' + norm(region), name: name, emails: to, ccs: Array.from(ccSet),
           rows: p.areas.map(flatRow), unmatched: !to.length,
-          unmatchedWhy: 'HOR untuk ' + title(region) + ' belum ada di Master_Mapping (TYPE INTERNAL SALES, ROLE HOR).',
+          unmatchedWhy: 'Alamat To HOR untuk ' + title(region) + ' kosong. Isi di Tahap 2 (daftar Head of Region) atau di kolom To di atas.',
           perf: {
             subject: 'Performance Report ' + title(region) + ' — ' + P.periode,
             html: html, insight: insPlain(ins),
@@ -626,12 +626,10 @@
       var clusters = d.clusters.filter(function (x) { return norm(x.AREA) === A; }).sort(byScoreDesc);
       var mdi = d.mdi.filter(function (x) { return norm(x.area) === A; }).sort(byScoreDesc);
       var sdp = d.sdpRows.filter(function (x) { return norm(x.area) === A; }).sort(byScoreDesc);
-      var hm = d.hoaMap[A];
-      var to = hm ? splitEmails(hm.EMAIL_TO) : [];
-      var hor = d.hor[norm(area.REGION)];
-      // Cc = Cc baris HOA (kalau ada) + HOR region-nya.
-      var cc = Array.from(new Set((hm ? splitEmails(hm.EMAIL_CC) : []).concat(hor ? splitEmails(hor.EMAIL_TO) : []).map(function (e) { return e.toLowerCase(); }))).filter(function (e) { return to.map(function (x) { return x.toLowerCase(); }).indexOf(e) < 0; });
-      var nmHoa = hm ? title(hm.PARTNER_NAME) : 'Head of Area';
+      var L = leaderRow('hoa', area.nama);
+      var to = splitEmails(L.to);
+      var cc = splitEmails(L.cc).filter(function (e) { return to.map(function (x) { return x.toLowerCase(); }).indexOf(e.toLowerCase()) < 0; });
+      var nmHoa = L.nama || 'Head of Area';
       var ins = insightArea(area, reg, people, mdi, sdp);
       var mcAvg = {};
       sdp.forEach(function (x) { (mcAvg[x.mc] = mcAvg[x.mc] || []).push(x); });
@@ -666,7 +664,7 @@
       groups.push({
         key: 'hoa|' + A, name: nmHoa + ' — ' + title(area.nama), emails: to, ccs: cc,
         rows: [flatRow(area)], unmatched: !to.length,
-        unmatchedWhy: 'HOA untuk area ' + title(area.nama) + ' belum ada di Master_Mapping (TYPE INTERNAL SALES, ROLE HOA, BRANCH = nama area).',
+        unmatchedWhy: 'Alamat To HOA area ' + title(area.nama) + ' kosong. Isi di Tahap 2 (daftar Head of Area) atau di kolom To di atas.',
         perf: {
           subject: 'Performance Report Area ' + title(area.nama) + ' — ' + P.periode,
           html: html, insight: insPlain(ins),
@@ -861,62 +859,120 @@
       bad = miss.length;
       var missPair = d.sdpRows.filter(function (r) { return !d.mapById[normKey(r.idMim3)] || !d.mapById[normKey(r.id3k)]; });
       txt = (d.sdpRows.length - missPair.length) + ' dari ' + d.sdpRows.length + ' SDP (pasangan ID MIM3 / ID 3KIOSK) cocok dengan Master_Mapping → ' + (d.sdp.length - bad) + ' email (1 per ID).' + (missPair.length ? ' Belum ada: ' + missPair.slice(0, 6).map(sdpPairTxt).join(', ') + (missPair.length > 6 ? ', dan lainnya' : '') + '. Tidak akan dikirim.' : '');
-    } else if (P.jenis === 'hor') {
-      var noHor = d.regionNames.filter(function (r) { var m = d.hor[norm(r)]; return !m || !splitEmails(m.EMAIL_TO).length; });
-      bad = noHor.length;
-      txt = d.regionNames.length + ' email Head of Region (HOR dari Master_Mapping): ' + d.regionNames.map(function (r) { var m = d.hor[norm(r)]; return title(r) + ' → ' + (m ? title(m.PARTNER_NAME) : 'BELUM ADA'); }).join('; ') + '. Cc = alamat Cc yang ada di semua baris MDI/SDP region tersebut.';
     } else {
-      var noHoa = d.areas.filter(function (a) { var m = d.hoaMap[norm(a.nama)]; return !m || !splitEmails(m.EMAIL_TO).length; });
-      bad = noHoa.length;
-      txt = (d.areas.length - bad) + ' dari ' + d.areas.length + ' area punya HOA di Master_Mapping (ROLE HOA, BRANCH = area). 1 email per area, isinya khusus area tersebut.' + (bad ? ' Belum ada: ' + noHoa.map(function (a) { return title(a.nama); }).join(', ') + '.' : '');
+      var rows = leaderRows(P.jenis);
+      var kosong = rows.filter(function (r) { return !splitEmails(r.to).length; });
+      bad = kosong.length;
+      var tersimpan = rows.filter(function (r) { return r.sumber === 'tersimpan'; }).length;
+      txt = rows.length + ' email ' + (P.jenis === 'hor' ? 'Head of Region (1 per region)' : 'Head of Area (1 per area, isi khusus area tersebut)') + '. Penerima diambil dari Master_Mapping' + (tersimpan ? ', ' + tersimpan + ' di antaranya memakai alamat yang sudah kamu simpan' : '') + '. Ubah To/Cc di daftar bawah lalu klik Simpan.' + (bad ? ' To masih kosong untuk: ' + kosong.map(function (r) { return title(r.kunci); }).join(', ') + '.' : '');
     }
     box.className = 'pf-match ' + (bad ? 'pf-bg-r' : 'pf-bg-g');
     box.textContent = txt;
   }
 
+  // Daftar penerima Head of Region / Head of Area: bawaan dari Master_Mapping, bisa diedit
+  // dan disimpan di SandraHub (rm_app_settings key perf_recipients_hor / perf_recipients_hoa).
+  // Alamat yang tersimpan dipakai terus sampai diubah lagi atau dikembalikan ke Master_Mapping.
+  P.saved = { hor: [], hoa: [] };
+  P.edit = { hor: null, hoa: null };
+  function leaderDefault(kind, key) {
+    var d = P.data;
+    if (kind === 'hor') {
+      var m = d.hor[norm(key)];
+      var to = m ? splitEmails(m.EMAIL_TO) : [];
+      var cc = regionCc(key).concat(m ? splitEmails(m.EMAIL_CC) : []).filter(function (e) { return to.map(function (x) { return x.toLowerCase(); }).indexOf(e.toLowerCase()) < 0; });
+      return { kunci: key, nama: m ? title(m.PARTNER_NAME) : '', to: to.join('; '), cc: Array.from(new Set(cc)).join('; '), sumber: 'mapping' };
+    }
+    var area = d.areas.filter(function (a) { return norm(a.nama) === norm(key); })[0];
+    var hm = d.hoaMap[norm(key)], hor = area ? leaderRowRaw('hor', area.REGION) : null;
+    var cc2 = (hm ? splitEmails(hm.EMAIL_CC) : []).concat(hor ? splitEmails(hor.to) : []);
+    return { kunci: key, nama: hm ? title(hm.PARTNER_NAME) : '', to: hm ? splitEmails(hm.EMAIL_TO).join('; ') : '', cc: Array.from(new Set(cc2)).join('; '), sumber: 'mapping' };
+  }
+  function leaderRowRaw(kind, key) {
+    var sv = (P.saved[kind] || []).filter(function (r) { return norm(r.kunci) === norm(key); })[0];
+    return sv ? { kunci: key, nama: sv.nama || '', to: sv.to || '', cc: sv.cc || '', sumber: 'tersimpan' } : leaderDefault(kind, key);
+  }
+  function leaderKeys(kind) { return kind === 'hor' ? P.data.regionNames.slice() : P.data.areas.slice().sort(function (a, b) { return norm(a.REGION).localeCompare(norm(b.REGION)) || a.nama.localeCompare(b.nama); }).map(function (a) { return a.nama; }); }
+  function leaderRows(kind) {
+    if (!P.edit[kind]) P.edit[kind] = leaderKeys(kind).map(function (k) { return leaderRowRaw(kind, k); });
+    return P.edit[kind];
+  }
+  function leaderRow(kind, key) { return leaderRows(kind).filter(function (r) { return norm(r.kunci) === norm(key); })[0] || leaderDefault(kind, key); }
+
   function renderHoaEditor() {
     var host = document.getElementById('pfHoa');
     if (!host) return;
-    // Penerima HOR/HOA sekarang dari Master_Mapping; editor manual tidak dipakai lagi.
-    host.style.display = 'none';
-    return;
-    var regions = P.data ? P.data.regionNames : DEFAULT_HOA.map(function (x) { return x.kunci; });
-    regions.forEach(function (r) { if (!P.hoa.some(function (x) { return norm(x.kunci) === norm(r); })) P.hoa.push({ kunci: r, nama: '', to: '', cc: '' }); });
-    var rows = P.hoa.filter(function (x) { return regions.some(function (r) { return norm(r) === norm(x.kunci); }); });
-    host.innerHTML = '<div class="field-group-label">Head of Area</div><div class="group-box pf-hoa"><table class="pf-tbl"><thead><tr><th>Region</th><th>Nama</th><th>To</th><th>Cc tambahan (opsional)</th></tr></thead><tbody>'
-      + rows.map(function (h) {
-        var i = P.hoa.indexOf(h);
-        return '<tr data-i="' + i + '"><td>' + esc(title(h.kunci)) + '</td><td><input data-f="nama" value="' + esc(h.nama) + '"></td><td><input data-f="to" value="' + esc(h.to) + '"></td><td><input data-f="cc" value="' + esc(h.cc) + '" placeholder="pisahkan dengan ;"></td></tr>';
-      }).join('') + '</tbody></table>'
-      + '<div class="actions" style="justify-content:space-between;margin-top:10px;"><span class="token-hint" id="pfHoaNote" style="margin:0;">Tersimpan di SandraHub, dipakai lagi bulan berikutnya. Cc dari Master_Mapping tetap ikut otomatis.</span><button class="btn btn-secondary" type="button" id="pfHoaSave">💾 Simpan Head of Area</button></div></div>';
+    var kind = P.jenis;
+    if (!P.data || (kind !== 'hor' && kind !== 'hoa')) { host.style.display = 'none'; return; }
+    host.style.display = '';
+    var rows = leaderRows(kind);
+    var area = kind === 'hoa';
+    host.innerHTML = '<div class="field-group-label">' + (area ? 'Penerima Head of Area (per area)' : 'Penerima Head of Region (per region)') + '</div><div class="group-box pf-hoa"><div class="pf-scroll" style="max-height:360px;"><table class="pf-tbl"><thead><tr><th>' + (area ? 'Area' : 'Region') + '</th><th>Nama</th><th>To</th><th>Cc</th><th>Sumber</th></tr></thead><tbody>'
+      + rows.map(function (h, i) {
+        return '<tr data-i="' + i + '"><td>' + esc(title(h.kunci)) + '</td><td><input data-f="nama" value="' + esc(h.nama) + '"></td><td><input data-f="to" value="' + esc(h.to) + '"></td><td><input data-f="cc" value="' + esc(h.cc) + '" placeholder="pisahkan dengan ;"></td><td class="hint" style="margin:0;">' + (h.sumber === 'tersimpan' ? 'Tersimpan' : h.sumber === 'diubah' ? '<b style="color:var(--warn-ink);">Diubah (belum disimpan)</b>' : 'Master_Mapping') + '</td></tr>';
+      }).join('') + '</tbody></table></div>'
+      + '<div class="actions" style="justify-content:space-between;margin-top:10px;flex-wrap:wrap;gap:8px;"><span class="token-hint" style="margin:0;">Alamat yang disimpan tersimpan di SandraHub dan dipakai lagi di kiriman berikutnya, menggantikan Master_Mapping untuk ' + (area ? 'area' : 'region') + ' tersebut.</span>'
+      + '<span style="display:flex;gap:8px;"><button class="btn btn-secondary" type="button" id="pfLeadReset">↺ Kembalikan ke Master_Mapping</button><button class="btn btn-primary" type="button" id="pfLeadSave">💾 Simpan</button></span></div></div>';
     host.querySelectorAll('input').forEach(function (inp) {
-      inp.oninput = function () { P.hoa[+inp.closest('tr').dataset.i][inp.dataset.f] = inp.value; renderMatchInfo(); };
+      inp.oninput = function () {
+        var r = rows[+inp.closest('tr').dataset.i];
+        r[inp.dataset.f] = inp.value;
+        r.sumber = 'diubah';
+        var cell = inp.closest('tr').lastElementChild;
+        cell.innerHTML = '<b style="color:var(--warn-ink);">Diubah (belum disimpan)</b>';
+        renderMatchInfo();
+      };
     });
-    document.getElementById('pfHoaSave').onclick = saveHoa;
+    document.getElementById('pfLeadSave').onclick = function () { saveLeaders(kind); };
+    document.getElementById('pfLeadReset').onclick = function () { resetLeaders(kind); };
   }
 
-  async function loadHoa() {
+  async function loadSavedLeaders() {
     try {
       var res = await fetch('/api/perf-recipients');
       var data = await res.json();
-      if (data.ok && data.recipients && Array.isArray(data.recipients.hoa) && data.recipients.hoa.length) P.hoa = data.recipients.hoa;
-      P.hoaLoaded = true;
-    } catch (e) { /* tetap pakai default */ }
+      if (data.ok && data.recipients) {
+        P.saved.hor = data.recipients.hor || [];
+        P.saved.hoa = data.recipients.hoa || [];
+        P.edit = { hor: null, hoa: null };
+      }
+    } catch (e) { /* tetap pakai Master_Mapping */ }
     renderHoaEditor();
     renderMatchInfo();
   }
-  async function saveHoa() {
-    var btn = document.getElementById('pfHoaSave');
+  async function putLeaders(kind, rows) {
+    var res = await fetch('/api/perf-recipients', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kategori: kind, rows: rows }) });
+    var data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'gagal menyimpan');
+    return data.rows;
+  }
+  async function saveLeaders(kind) {
+    var btn = document.getElementById('pfLeadSave');
     btn.disabled = true;
     try {
-      var res = await fetch('/api/perf-recipients', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kategori: 'hoa', rows: P.hoa }) });
-      var data = await res.json();
-      if (!data.ok) throw new Error(data.error || 'gagal menyimpan');
-      P.hoa = data.rows;
-      toast('Daftar Head of Area tersimpan.');
+      // Simpan hanya baris yang berbeda dari Master_Mapping (atau yang memang sudah tersimpan).
+      var rows = leaderRows(kind).filter(function (r) {
+        var def = leaderDefault(kind, r.kunci);
+        return r.sumber === 'tersimpan' || def.to !== r.to || def.cc !== r.cc || def.nama !== r.nama;
+      }).map(function (r) { return { kunci: r.kunci, nama: r.nama, to: r.to, cc: r.cc }; });
+      P.saved[kind] = await putLeaders(kind, rows);
+      P.edit[kind] = null;
+      toast('Penerima ' + (kind === 'hor' ? 'Head of Region' : 'Head of Area') + ' tersimpan (' + rows.length + ' diubah dari Master_Mapping).');
     } catch (e) {
-      toast('Gagal menyimpan Head of Area: ' + e.message);
+      toast('Gagal menyimpan: ' + e.message);
     } finally { btn.disabled = false; }
+    renderHoaEditor();
+    renderMatchInfo();
+  }
+  async function resetLeaders(kind) {
+    if (!confirm('Kembalikan semua alamat ' + (kind === 'hor' ? 'Head of Region' : 'Head of Area') + ' ke Master_Mapping? Alamat yang tersimpan akan dihapus.')) return;
+    try {
+      P.saved[kind] = await putLeaders(kind, []);
+      P.edit[kind] = null;
+      toast('Alamat dikembalikan ke Master_Mapping.');
+    } catch (e) { toast('Gagal: ' + e.message); }
+    renderHoaEditor();
+    renderMatchInfo();
   }
 
   function setJenis(j) {
@@ -994,6 +1050,7 @@
         var t = d.tanggal || new Date();
         document.getElementById('perfPeriode').value = t.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
         renderDashboard();
+        P.edit = { hor: null, hoa: null };
         renderHoaEditor();
         renderMatchInfo();
         goStep(2);
@@ -1170,6 +1227,7 @@
     buildStep1();
     buildStep2();
     renderStepsNav();
+    loadSavedLeaders();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
