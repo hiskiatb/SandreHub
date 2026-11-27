@@ -11,7 +11,8 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from "react"
 import supabase from "../../../lib/supabase";
 import { DocsCell, PoDocsTab, usePartnerDocStats } from "./PayoutPartnerDocs";
 import { PartnerLettersTab } from "./PayoutPartnerLetters";
-import { DOC_REF_COLUMN, refKey, statKey, doneCount, DOC_TYPES } from "../../../lib/payoutPartnerDocs";
+import { InvoiceReminderModal, InvoiceReminderDashboard, ReminderButton, readContactsSheet, saveContacts, CONTACTS_SHEET } from "./PayoutInvoiceReminder";
+import { DOC_REF_COLUMN, refKey, statKey, doneCount, DOC_TYPES, canManageApprovals } from "../../../lib/payoutPartnerDocs";
 
 let _xlsx = null;
 async function getXLSX() {
@@ -519,7 +520,7 @@ async function readWorkbook(file) {
     const dup = di.filter(r=>{ const k=key(r); return k && baseKeys.has(k); }).length;
     return { sheet:[found[src],mdi].filter(Boolean).join(" + "), rows, dup };
   };
-  return { partner:side("partner"), agency:side("agency") };
+  return { partner:side("partner"), agency:side("agency"), contacts:readContactsSheet(XLSX, wb) };
 }
 
 const LIGHT = {
@@ -919,19 +920,22 @@ export default function PayoutTracker({
     if (!file) return;
     try {
       const res = await readWorkbook(file);
+      // File yang hanya berisi sheet "Email Partner" → langsung simpan email partner
+      if (!res.partner && !res.agency && res.contacts) { await saveContacts(res.contacts, showToast); return; }
       if (!res.partner && !res.agency) { showToast('No "Partner Prepaid" or "Agency Prepaid" sheet with data found in this file',"error"); return; }
       // Sisi yang tidak ada di file ini tetap dari upload sebelumnya → dua file terpisah tetap bisa
       setUpload(u=>({
         partner: res.partner ? { ...res.partner, file:file.name } : u.partner,
         agency:  res.agency  ? { ...res.agency,  file:file.name } : u.agency,
+        contacts: res.contacts || u.contacts || null,
       }));
       const lbl = [res.partner&&`Partner ${res.partner.rows.length.toLocaleString()}`, res.agency&&`Agency ${res.agency.rows.length.toLocaleString()}`].filter(Boolean).join(" · ");
-      showToast(`File read: ${lbl} rows`,"success");
+      showToast(`File read: ${lbl} rows${res.contacts?.rows?.length ? ` · ${CONTACTS_SHEET}: ${res.contacts.owners} partner/agency` : ""}`,"success");
     } catch(e) { showToast("Failed to read file: "+e.message,"error"); }
   }
 
   async function publish() {
-    const { partner, agency } = upload;
+    const { partner, agency, contacts } = upload;
     if (!partner && !agency) { showToast("Please upload a file first","error"); return; }
     startLoad("Uploading to cloud…");
     // Semua data tersimpan di SATU baris payout_data, dan dbSave mengganti baris itu.
@@ -952,6 +956,7 @@ export default function PayoutTracker({
     stopLoad();
     if (res.ok) { const meta={fileName:fnames,rowCount:merged.length,publishedAt:ts}; setPubMeta(meta); setCache({...meta,rows:merged}); setAllRaw(merged); showToast("✓ Published — all viewers auto-updated","success"); }
     else showToast("Unable to save to cloud: "+(res.error||"unknown error"),"error");
+    if (res.ok && contacts) await saveContacts(contacts, showToast);
   }
 
   async function viewDash() {
@@ -1287,6 +1292,7 @@ function AdminScreen({ t, pubMeta, upload, setUpload, handleFile, publish, viewD
         </div>
         <h1 style={{fontWeight:800,fontSize:"clamp(1.8rem,4vw,2.8rem)",letterSpacing:"-0.03em",color:t.ink,margin:"0 0 8px",lineHeight:1.05}}>Upload &amp; Publish Data</h1>
         <p style={{color:t.muted,fontSize:14,maxWidth:"60ch",lineHeight:1.65,margin:0}}>Upload one workbook. The &ldquo;Partner Prepaid&rdquo; and &ldquo;Agency Prepaid&rdquo; sheets are read together; other sheets are ignored. All viewers update automatically after you publish.</p>
+        <p style={{color:t.muted,fontSize:13,maxWidth:"70ch",lineHeight:1.6,margin:"8px 0 0"}}>Optional: add a sheet <strong style={{color:t.ink2}}>&ldquo;{CONTACTS_SHEET}&rdquo;</strong> (Tipe · Nama Partner / Agency · Email To · Email CC · PIC) to save partner emails for invoice reminders. It replaces the saved email list when you publish.{upload.contacts?.rows?.length ? <strong style={{color:t.goodDark}}> Ready: {upload.contacts.owners} partner/agency emails.</strong> : upload.contacts?.error ? <strong style={{color:t.badDark}}> {upload.contacts.error}</strong> : null}</p>
         <div style={{display:"flex",gap:8,marginTop:14,flexWrap:"wrap"}}>
           {[{l:`Partner SLA ${slaText(false)} working days (Reva → Surat → Invoice → CLV → Bank)`},{l:`Agency SLA ${slaText(true)} working days (BAST received → BAST approved → Invoice submission → CLV → Bank)`}].map((b,i)=>(
             <span key={i} style={{display:"inline-flex",alignItems:"center",padding:"4px 11px",borderRadius:99,background:t.surf2,color:t.ink2,border:`1px solid ${t.line}`,fontSize:12,fontWeight:600}}>{b.l}</span>
@@ -1977,12 +1983,21 @@ const EmptyNote = ({ t, children }) => <div style={{textAlign:"center",color:t.m
 const fmtRpFull = (n) => "Rp "+Math.round(Number(n)||0).toLocaleString("id-ID");
 const pctClr = (p, t) => p>=80 ? { c:t.goodDark, bg:t.goodBg, bd:t.goodBd, dot:t.good } : p>=50 ? { c:t.warnDark, bg:t.warnBg, bd:t.warnBd, dot:t.warn } : { c:t.badDark, bg:t.badBg, bd:t.badBd, dot:t.bad };
 
+// Invoice reminder — "Invoice Not Submitted" versi pengingat (aturan Saila, tidak tergantung kolom Status):
+// Project Title terisi DAN Invoice ID kosong DAN Invoicing Date / Invoice Date kosong. Tanpa Project Title → tidak ikut.
+const H_REMIND_INV_DATE = ["=invoicing date","=invoice date","=tanggal invoice","=inv date"];
+const blankCell = (v) => v==null || /^(|0|-+|—|n\/?a)$/i.test(String(v).trim());
+const H_REMIND_INV_ID = ["=invoice id","=inv id","=id invoice","=invoice_id","=invoiceid"];
+const isRemindNS = (r) => !blankCell(gcell(r,["project title"],null))
+  && blankCell(r._invId ?? gcell(r,H_REMIND_INV_ID,null))
+  && blankCell(gcell(r,H_REMIND_INV_DATE,null));
+
 function computeInsights(rows) {
   const today = dayStart(new Date());
   const wk0 = new Date(today.getTime() - ((today.getDay()+6)%7)*DAY); // Senin minggu ini
   const wk1 = new Date(wk0.getTime()+7*DAY), wk2 = new Date(wk0.getTime()+14*DAY);
   const k = { total:0, n:rows.length, paid:0, paidN:0, out:0, outN:0, notSub:0, notSubAmt:0, cycSum:0, cycN:0 };
-  const open = [], owners = {}, allCyc = [];
+  const open = [], owners = {}, allCyc = [], remind = [];
   rows.forEach(r=>{
     const amt = gnum(r,["amount"]), st = rowStatus(r), name = ownerName(r) || "—";
     const invV = gcell(r,H_INV_COUPA,null) || gcell(r,H_INV), clrV = gcell(r,H_CLR);
@@ -2000,14 +2015,21 @@ function computeInsights(rows) {
     if (paid) o.paid += amt;
     if (cyc!=null) { o.cycSum += cyc; o.cycN++; if (paid) { o.cycs.push(cyc); allCyc.push(cyc); } }
     if (clrD && est) { o.onN++; if (dayStart(clrD) <= est) o.onT++; }
-    if (paid || clrV) return;
+    const remindNS = isRemindNS(r);
+    // Pengingat invoice ikut aturan sendiri — baris yang statusnya PAID/sudah clearing tetap masuk bila memenuhi aturan
+    if (paid || clrV) {
+      if (remindNS) { const mk = rowMonthKey(r); remind.push({ name, title:gstr(r,["project title"])||"—", prog:gstr(r,["program type"])||"—", inv:r._inv, invId:r._invId, amt, status:st, ns:remindNS, nsStatus:ns, remindNS, proc, period:mk?ymLabel(mk):"—" }); }
+      return;
+    }
     // Masih terbuka (belum dibayar & belum clearing)
     const sofar = invD ? workDaysBetween(invD, today) : null;              // Invoice → hari ini (hari kerja)
     const mk = rowMonthKey(r);
     const bastD = toDate(gcell(r,H_BAST_APP)) || toDate(gcell(r,H_BAST_RCV));
-    const item = { name, title:gstr(r,["project title"])||"—", inv:r._inv, invId:r._invId, amt, status:st, ns, proc,
+    const item = { name, title:gstr(r,["project title"])||"—", prog:gstr(r,["program type"])||"—", inv:r._inv, invId:r._invId, amt, status:st, ns:remindNS, nsStatus:ns, remindNS, proc,
       invD, clvD, est, bastD, hasBast:!!(findCol(r,H_BAST_APP)||findCol(r,H_BAST_RCV)), cyc:sofar, period:mk?ymLabel(mk):"—" };
+    // Outstanding: "belum disubmit" (kotak, filter, label "Menunggu invoice disubmit") ikut aturan remindNS
     open.push(item);
+    if (remindNS) remind.push(item);
     o.open++; o.openAmt += amt;
     if (sofar!=null && (o.oldest==null || sofar>o.oldest)) o.oldest = sofar;
   });
@@ -2031,7 +2053,7 @@ function computeInsights(rows) {
   const mks = rows.map(rowMonthKey).filter(Boolean);
   const lo = mks.length ? Math.min(...mks) : 0, hi = mks.length ? Math.max(...mks) : 0;
   const monthSpan = lo ? (lo===hi ? ymLabel(lo) : `${ymLabel(lo)} – ${ymLabel(hi)}`) : "";
-  return { k, open, owners:Object.values(owners), wk0, wk1, wk2, today, monthSpan };
+  return { k, open, remind, owners:Object.values(owners), wk0, wk1, wk2, today, monthSpan };
 }
 
 /* ── KPI: 4 kartu (nominal besar + jumlah kecil) ── */
@@ -2134,6 +2156,7 @@ function DetailsTabs(props) {
   const tabs = [
     { id:"out",  label:"Outstanding", count:ins.open.length },
     { id:"own",  label:isAg?"Agencies":"Partners", count:ins.owners.length },
+    ...(canManageApprovals(props.profile) ? [{ id:"rem", label:"Invoice Reminder", count:new Set(ins.remind.filter(x=>x.name && x.name!=="—").map(x=>x.name)).size }] : []),
   ];
   const cur = tabs.some(x=>x.id===tab) ? tab : "out";
   return (
@@ -2141,7 +2164,7 @@ function DetailsTabs(props) {
       <div style={{display:"flex",gap:22,padding:"0 20px",borderBottom:`1px solid ${t.line}`,background:t.surf2,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"none"}} role="tablist">
         {tabs.map(x=><TabBtn key={x.id} label={x.label} count={x.count} active={cur===x.id} onClick={()=>setTab(x.id)} t={t}/>)}
         {/* Satu tombol ekspor: Outstanding → daftar tagihan (semua tanggal); tab lain → ringkasan bulanan */}
-        {cur==="out" ? <div style={{marginLeft:"auto",display:"flex",alignItems:"center",flexShrink:0,padding:"8px 0"}}>
+        {cur==="rem" ? null : cur==="out" ? <div style={{marginLeft:"auto",display:"flex",alignItems:"center",flexShrink:0,padding:"8px 0"}}>
           <Btn t={t} variant="primary" sm onClick={()=>exportOutstanding(outRows(ins,view,sort), isAg, view, props.showToast)}>Export Excel</Btn>
         </div> : <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8,flexShrink:0,padding:"8px 0"}}>
           <span style={{fontSize:12.5,color:t.muted,whiteSpace:"nowrap"}}>Export summary</span>
@@ -2149,8 +2172,9 @@ function DetailsTabs(props) {
           <Btn t={t} variant="primary" sm onClick={()=>exportSummary("xlsx")} title="Filtered monthly summary as Excel">Excel</Btn>
         </div>}
       </div>
-      {cur==="out"  && <OutstandingTab ins={ins} isAg={isAg} w={w} t={t} view={view} setView={setView} sort={sort} setSort={setSort}/>}
+      {cur==="out"  && <OutstandingTab ins={ins} isAg={isAg} w={w} t={t} view={view} setView={setView} sort={sort} setSort={setSort} canRemind={canManageApprovals(props.profile)} showToast={props.showToast}/>}
       {cur==="own"  && <PartnersTab ins={ins} isAg={isAg} w={w} t={t}/>}
+      {cur==="rem"  && <InvoiceReminderDashboard ins={ins} isAg={isAg} w={w} t={t} showToast={props.showToast}/>}
     </Card>
   );
 }
@@ -2275,8 +2299,14 @@ function OutStepper({ x, isAg, t }) {
   );
 }
 
-function OutstandingTab({ ins, isAg, w, t, view, setView, sort, setSort }) {
+function OutstandingTab({ ins, isAg, w, t, view, setView, sort, setSort, canRemind=false, showToast }) {
   const [grouped, setGrouped] = useState(false);
+  // Pengingat "Invoice belum disubmit" (admin SPM / internal Indosat): null = tertutup, [] = semua → tampilan review email
+  const [remind, setRemind] = useState(null);
+  // Pengingat invoice: aturan remindNS (Project Title ada, Invoice ID & Invoicing Date kosong), bukan kolom Status
+  const nsItems = useMemo(()=>ins.remind.filter(x=>x.name && x.name!=="—"),[ins]);
+  const nsOwners = useMemo(()=>new Set(nsItems.map(x=>x.name)).size,[nsItems]);
+  const allOwners = useMemo(()=>ins.owners.map(o=>o.name).filter(n=>n&&n!=="—"),[ins]);
   const [openG, setOpenG] = useState({});
   const rows = useMemo(()=>outRows(ins, view, sort),[ins,view,sort]);
   const groups = useMemo(()=>{
@@ -2337,6 +2367,7 @@ function OutstandingTab({ ins, isAg, w, t, view, setView, sort, setSort }) {
         <Chip t={t} active={view==="all"} onClick={()=>setView("all")}>Semua · {ins.open.length}</Chip>
         <span style={{fontSize:12.5,color:t.ink2}}>Total belum dibayar <strong style={{color:t.ink}} title={fmtRpFull(totAmt)}>{fmtRpWord(totAmt)}</strong>{view!=="all"&&<> · ditampilkan {rows.length}</>}</span>
         <span style={{flex:"1 1 0"}}/>
+        {canRemind&&nsItems.length>0&&<ReminderButton t={t} sm onClick={()=>setRemind([])}>Kirim pengingat invoice · {nsOwners} {own}</ReminderButton>}
         <label style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12.5,color:t.ink2,cursor:"pointer"}}><input type="checkbox" checked={grouped} onChange={e=>{ setGrouped(e.target.checked); setOpenG({}); }}/>Kelompokkan per {own}</label>
       </div>
       {rows.length===0 ? <EmptyNote t={t}>{view==="late"?"Tidak ada yang terlambat":view==="ns"?"Semua invoice sudah disubmit":view==="soon"?"Tidak ada pembayaran minggu ini / minggu depan":"Tidak ada tagihan yang belum dibayar"}</EmptyNote> : (
@@ -2369,6 +2400,7 @@ function OutstandingTab({ ins, isAg, w, t, view, setView, sort, setSort }) {
         </div>
       )}
       {!grouped&&rows.length>300&&<div style={{fontSize:12,color:t.muted,marginTop:6}}>Menampilkan 300 dari {rows.length.toLocaleString()} — gunakan Export Excel untuk semuanya.</div>}
+      {remind&&<InvoiceReminderModal items={nsItems} owners={remind} allOwners={allOwners} isAg={isAg} t={t} showToast={showToast} onClose={()=>setRemind(null)}/>}
       <div style={{fontSize:12,color:t.muted,marginTop:8,lineHeight:1.6}}>
         Semua hitungan memakai <strong style={{color:t.ink2}}>hari kerja</strong> (Senin–Jumat). <strong style={{color:t.ink2}}>Terlambat</strong> = sudah lewat Estimasi bayar.
         Estimasi bertanda <em>± (miring)</em> adalah <strong style={{color:t.ink2}}>perkiraan</strong> karena belum ada Estimation Date: tanggal invoice + median lama Invoice→Clearing dari invoice yang sudah dibayar ({own} yang sama bila ada ≥3 data, selain itu semua {own}). Arahkan kursor ke Progress untuk melihat tanggal tiap tahap.
