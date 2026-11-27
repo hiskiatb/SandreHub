@@ -92,7 +92,8 @@
       var h = rows[i], s = rows[i + 1];
       if (!h.some(function (c) { return /TRAD/.test(norm(c)); })) continue;
       if (!s.some(function (c) { return norm(c) === 'ACH'; })) continue;
-      var level = norm(h[0]);
+      var h0 = norm(h[0]) || norm(h[1]);
+      var level = /CLUSTER|^MC\b/.test(h0) ? 'CLUSTER' : /AREA|BRANCH/.test(h0) ? 'AREA' : /REGION/.test(h0) ? 'REGION' : /CIRCLE/.test(h0) ? 'CIRCLE' : h0;
       var dims = [], cols = { score: null };
       KPIS.forEach(function (k) { cols[k.id] = {}; });
       var cur = null;
@@ -111,9 +112,19 @@
         }
       }
       var list = [];
+      var kosong = 0;
       for (var r = i + 2; r < rows.length; r++) {
         var row = rows[r];
-        if (!String(row[0]).trim()) break;
+        if (!String(row[0]).trim()) {
+          // Baris kosong: lewati 1 baris kosong di awal/tengah, berhenti kalau sudah 2 berturut-turut
+          // atau ketemu header blok berikutnya.
+          if (row.some(function (c) { return /TRAD/.test(norm(c)); })) break;
+          if (++kosong >= 2 && list.length) break;
+          if (kosong >= 3) break;
+          continue;
+        }
+        if (row.some(function (c) { return /TRAD/.test(norm(c)); })) break;
+        kosong = 0;
         var o = { nama: String(row[0]).trim(), level: level };
         dims.forEach(function (d) { o[d.name] = String(row[d.c]).trim(); });
         KPIS.forEach(function (k) {
@@ -123,8 +134,8 @@
         o.score = cols.score != null ? num(row[cols.score]) : null;
         list.push(o);
       }
-      blocks[level] = list;
-      i += 1 + list.length;
+      if (!blocks[level] || !blocks[level].length) blocks[level] = list;
+      i += 1;
     }
     return blocks;
   }
@@ -581,10 +592,11 @@
     // Heatmap Area x KPI + ranking area
     var areas = d.areas.filter(function (a) { return inRegion(a.REGION); }).sort(byScoreDesc);
     html += '<div class="pf-sec pf-grid2">';
+    var hmKosong = !areas.length ? '<tr><td colspan="5" class="hint" style="white-space:normal;padding:14px 8px;">' + (d.areas.length ? 'Tidak ada area untuk region ini.' : 'Blok AREA tidak ditemukan di sheet Internal Sales (blok yang terbaca: ' + esc(Object.keys(d.is).join(', ') || '-') + '). Pastikan ada tabel dengan header kolom pertama "AREA" dan baris sub-header TARGET / ACTUAL / ACH.') + '</td></tr>' : '';
     html += '<div class="pf-box"><h4>Heatmap Area × KPI</h4><div class="pf-scroll"><table class="pf-tbl"><thead><tr><th>Area</th>' + KPIS.map(function (k) { return '<th>' + esc(k.short) + '</th>'; }).join('') + '<th>Score</th></tr></thead><tbody>'
       + areas.map(function (a) {
         return '<tr><td title="' + esc(title(a.REGION)) + '">' + esc(title(a.nama)) + '</td>' + KPIS.map(function (k) { return '<td class="c pf-bg-' + band(a[k.id].ach) + '">' + pct(a[k.id].ach) + '</td>'; }).join('') + '<td class="c pf-bg-' + band(a.score) + '">' + pct(a.score) + '</td></tr>';
-      }).join('') + '</tbody></table></div></div>';
+      }).join('') + hmKosong + '</tbody></table></div></div>';
     var mdi = d.mdi.filter(function (r) { return inRegion(r.region); }).sort(byScoreDesc);
     html += '<div class="pf-box"><h4>Ranking MDI (Score)</h4><div class="pf-scroll"><div class="pf-bars">' + mdi.map(function (r) {
       return bar(title(r.area) + ' · ' + title(r.partner).replace(/,? PT$/, ''), r.score, r.partner + ' — ' + r.area + (r.map ? '' : ' (belum ada di Master_Mapping)'));
