@@ -686,7 +686,7 @@
         });
       });
     } else if (P.jenis === 'is') {
-      (d.people || []).forEach(function (r) {
+      (d.people || []).filter(function (r) { return !/VACANT/.test(norm(r.nama)); }).forEach(function (r) {
         var m = r.map, ins = insightPerson(r);
         var area = d.areas.filter(function (a) { return norm(a.nama) === norm(r.AREA); })[0] || null;
         groups.push({
@@ -994,10 +994,11 @@
     if (!box || !P.data) return;
     var d = P.data, txt, bad = 0;
     if (P.jenis === 'is') {
-      var ppl = d.people || [];
+      var vac = (d.people || []).filter(function (r) { return /VACANT/.test(norm(r.nama)); }).length;
+      var ppl = (d.people || []).filter(function (r) { return !/VACANT/.test(norm(r.nama)); });
       var noIs = ppl.filter(function (r) { return !r.map || !splitEmails(r.map.EMAIL_TO).length; });
       bad = ppl.length ? noIs.length : 1;
-      txt = ppl.length ? (ppl.length - noIs.length) + ' dari ' + ppl.length + ' sales punya email di Master_Mapping (TYPE INTERNAL SALES, dicocokkan lewat nama). 1 email per sales.' + (noIs.length ? ' Belum ada: ' + noIs.slice(0, 8).map(function (r) { return title(r.nama); }).join(', ') + (noIs.length > 8 ? ', dan lainnya' : '') + '.' : '') : 'Sheet Internal Sales di file ini bukan format per orang (kolom NAME), jadi tidak bisa dikirim per sales.';
+      txt = ppl.length ? (ppl.length - noIs.length) + ' dari ' + ppl.length + ' sales punya email di Master_Mapping (TYPE INTERNAL SALES, dicocokkan lewat nama). 1 email per sales.' + (vac ? ' ' + vac + ' posisi VACANT dilewati.' : '') + (noIs.length ? ' Belum ada: ' + noIs.slice(0, 8).map(function (r) { return title(r.nama); }).join(', ') + (noIs.length > 8 ? ', dan lainnya' : '') + '.' : '') : 'Sheet Internal Sales di file ini bukan format per orang (kolom NAME), jadi tidak bisa dikirim per sales.';
     } else if (P.jenis === 'mdi') {
       var ptMiss = d.mdiPartners.filter(function (pt) { return !pt.rows.some(function (r) { return r.map && splitEmails(r.map.EMAIL_TO).length; }); });
       bad = d.mdi.filter(function (r) { return !r.map; }).length;
