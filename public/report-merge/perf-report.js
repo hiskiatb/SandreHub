@@ -311,22 +311,24 @@
 
   function insightSdp(e) {
     var r = e.row, d = P.data, out = [];
-    out.push('**Score ' + Q(r.score) + '** (' + BAND_TXT[band(r.score)] + '). ' + kpiLine(r) + '.');
+    out.push('Pencapaian::**Score ' + Q(r.score) + '** (' + BAND_TXT[band(r.score)] + ').');
+    out.push('KPI::' + kpiLine(r) + '.');
     var w = weakest(r);
-    if (w && band(w.v) !== 'g') out.push('KPI dengan capaian terendah: **' + w.k.label + '** ' + Q(w.v) + ' — menjadi prioritas perbaikan.');
+    if (w && band(w.v) !== 'g') out.push('Prioritas::Perbaikan pada **' + w.k.label + '** ' + Q(w.v) + '.');
     var peers = d.sdpRows.filter(function (x) { return norm(x.area) === norm(r.area); });
-    if (peers.length > 1) { var rk = rankIn(peers, r); out.push('Peringkat **' + rk.r + ' dari ' + rk.n + '** SDP di Area ' + title(r.area) + ' (rata-rata area ' + Q(avg(peers.map(function (x) { return x.score; }))) + ').'); }
+    if (peers.length > 1) { var rk = rankIn(peers, r); out.push('Peringkat::**' + rk.r + ' dari ' + rk.n + '** SDP di Area ' + title(r.area) + ' (rata-rata area ' + Q(avg(peers.map(function (x) { return x.score; }))) + ').'); }
     return out;
   }
   function insightMdi(r) {
     var d = P.data, out = [];
-    out.push('**Score ' + Q(r.score) + '** (' + BAND_TXT[band(r.score)] + '). ' + kpiLine(r) + '.');
+    out.push('Pencapaian::**Score ' + Q(r.score) + '** (' + BAND_TXT[band(r.score)] + ').');
+    out.push('KPI::' + kpiLine(r) + '.');
     var w = weakest(r);
-    if (w && band(w.v) !== 'g') out.push('KPI dengan capaian terendah: **' + w.k.label + '** ' + Q(w.v) + ' — menjadi prioritas perbaikan.');
+    if (w && band(w.v) !== 'g') out.push('Prioritas::Perbaikan pada **' + w.k.label + '** ' + Q(w.v) + '.');
     var peers = d.mdi.filter(function (x) { return norm(x.region) === norm(r.region); });
-    if (peers.length > 1) { var rk = rankIn(peers, r); out.push('Peringkat **' + rk.r + ' dari ' + rk.n + '** MDI di ' + title(r.region) + '.'); }
+    if (peers.length > 1) { var rk = rankIn(peers, r); out.push('Peringkat::**' + rk.r + ' dari ' + rk.n + '** MDI di ' + title(r.region) + '.'); }
     var sdps = d.sdpRows.filter(function (x) { return norm(x.area) === norm(r.area); });
-    if (sdps.length) out.push('SDP area ' + title(r.area) + ': **' + countRed(sdps) + ' dari ' + sdps.length + '** SDP di bawah target.');
+    if (sdps.length) out.push('SDP Area::**' + countRed(sdps) + ' dari ' + sdps.length + '** SDP di Area ' + title(r.area) + ' di bawah target.');
     return out;
   }
   function regionPack(region) {
@@ -352,36 +354,54 @@
   function insightRegion(p) {
     var d = P.data, out = [], reg = p.reg;
     if (reg) {
-      var vs = d.circle && d.circle.score != null ? ' vs Sumatera ' + Q(d.circle.score) : '';
-      out.push('**Score ' + title(p.region) + ' ' + Q(reg.score) + '**' + vs + (p.areas.length ? ' — **' + countRed(p.areas) + ' dari ' + p.areas.length + ' area di bawah target**.' : '.'));
+      out.push('Pencapaian::**Score ' + title(p.region) + ' ' + Q(reg.score) + '**' + (d.circle && d.circle.score != null ? ' dibanding Sumatera ' + Q(d.circle.score) : '') + '.');
       var w = weakest(reg);
-      out.push(kpiLine(reg) + (w ? ' — KPI terendah: **' + w.k.label + '**.' : '.'));
+      out.push('KPI::' + kpiLine(reg) + (w ? '. KPI terendah: **' + w.k.label + '**.' : '.'));
     }
     if (p.areas.length) {
       var top = p.areas.slice(0, 2).map(function (a) { return title(a.nama) + ' ' + Q(a.score); });
       var bot = p.areas.slice(-3).reverse().map(function (a) { return title(a.nama) + ' ' + Q(a.score); });
-      out.push('Capaian tertinggi: ' + top.join(', ') + '. Area yang memerlukan perhatian: **' + bot.join(', ') + '**.');
+      out.push('Area::**' + countRed(p.areas) + ' dari ' + p.areas.length + '** area di bawah target. Capaian tertinggi: ' + top.join(', ') + '. Memerlukan perhatian: **' + bot.join(', ') + '**.');
     }
     if (p.mdi.length) {
       var lo = p.mdi[p.mdi.length - 1];
-      out.push('MDI: **' + countRed(p.mdi) + ' dari ' + p.mdi.length + '** partner di bawah target; capaian terendah ' + title(lo.partner) + ' (' + title(lo.area) + ') ' + Q(lo.score) + '.');
+      out.push('MDI::**' + countRed(p.mdi) + ' dari ' + p.mdi.length + '** partner di bawah target. Capaian terendah: ' + title(lo.partner) + ' (' + title(lo.area) + ') ' + Q(lo.score) + '.');
     }
-    if (p.sdpRows.length) {
-      out.push('SDP: **' + countRed(p.sdpRows) + ' dari ' + p.sdpRows.length + '** SDP di bawah target; rata-rata ' + Q(avg(p.sdpRows.map(function (x) { return x.score; }))) + '.');
-    }
+    if (p.sdpRows.length) out.push('SDP::**' + countRed(p.sdpRows) + ' dari ' + p.sdpRows.length + '** SDP di bawah target, rata-rata ' + Q(avg(p.sdpRows.map(function (x) { return x.score; }))) + '.');
     var unmapped = p.sdpRows.filter(function (r) { return !P.data.mapById[normKey(r.idMim3)] && !P.data.mapById[normKey(r.id3k)]; });
-    if (unmapped.length) out.push('**' + unmapped.length + ' SDP** belum terdaftar di Master_Mapping: ' + unmapped.slice(0, 4).map(sdpPairTxt).join(', ') + (unmapped.length > 4 ? ', dan lainnya' : '') + '.');
+    if (unmapped.length) out.push('Data::**' + unmapped.length + ' SDP** belum terdaftar di Master_Mapping: ' + unmapped.slice(0, 4).map(sdpPairTxt).join(', ') + (unmapped.length > 4 ? ', dan lainnya' : '') + '.');
     return out;
   }
-
   /* ======================= HTML email (tema SandraHub) ======================= */
   // Semua gaya inline + tabel (klien email seperti Outlook membuang <style>, flex, dan gradient).
   var F = 'font-family:Arial,Helvetica,sans-serif;';
   var C = { ink: '#1F1F24', body: '#4D4D4F', muted: '#6B6B78', line: '#E6E6EC', bg: '#F4F4F7', card: '#FFFFFF', dark: '#16161B', teal: '#32BCAD', tealDk: '#1E8C80', magenta: '#C6168D', yellow: '#FFCB05', red: '#ED1C24' };
   // Warna status standar laporan performa (RAG): isi solid hijau / kuning-amber / merah.
   var BAR = { g: '#00A651', y: '#FFC000', r: '#E3000F', na: '#D5D5DD' };
-  var PILL = { g: ['#00A651', '#FFFFFF'], y: ['#FFC000', '#3B2C00'], r: ['#E3000F', '#FFFFFF'], na: ['#E6E6EC', '#6B6B78'] };
-  var INK = { g: '#00843D', y: '#A87400', r: '#C8000D', na: '#6B6B78' };
+  // Gaya status mengikuti contoh Saila: latar lembut + teks/titik berwarna tegas.
+  var PILL = { g: ['#E2F3E8', '#0E7A3E'], y: ['#FBF0CC', '#A67600'], r: ['#F9DEDA', '#C42318'], na: ['#EEEEF2', '#6B6B78'] };
+  var INK = { g: '#0E7A3E', y: '#A67600', r: '#C42318', na: '#6B6B78' };
+  var DOT = { g: '#12A150', y: '#E0A100', r: '#E03A2F', na: '#B5B5C0' };
+  var STATUS = {
+    g: { label: 'TERCAPAI', aksi: 'Pertahankan momentum dan dorong capaian hingga 100%.' },
+    y: { label: 'PERLU PERHATIAN', aksi: 'Percepat KPI yang tertinggal agar segera mencapai target.' },
+    r: { label: 'DI BAWAH TARGET', aksi: 'Diperlukan rencana perbaikan dan monitoring intensif.' },
+  };
+  // Kartu ringkasan status: jumlah item per status (mis. area, sales, SDP).
+  function mStatus(list, unit) {
+    var n = { g: 0, y: 0, r: 0 };
+    list.forEach(function (x) { var b = band(x.score); if (n[b] != null) n[b]++; });
+    var cell = function (k) {
+      return '<td width="32%" valign="top" bgcolor="' + PILL[k][0] + '" style="' + F + 'background:' + PILL[k][0] + ';border-radius:14px;padding:14px 16px;">'
+        + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>'
+        + '<td valign="middle" style="' + F + 'font-size:12.5px;white-space:nowrap;"><span style="color:' + DOT[k] + ';font-size:16px;">&#9679;</span>&nbsp;<b style="color:' + INK[k] + ';letter-spacing:.3px;">' + STATUS[k].label + '</b>&nbsp; <span style="color:' + C.muted + ';">' + esc(LBL[k]) + '</span></td>'
+        + '<td align="right" valign="middle" style="' + F + 'white-space:nowrap;"><b style="font-size:26px;color:' + INK[k] + ';">' + n[k] + '</b> <span style="font-size:12px;color:' + C.muted + ';">' + esc(unit) + '</span></td>'
+        + '</tr></table>'
+        + '<div style="' + F + 'font-size:12px;color:' + C.body + ';margin-top:6px;line-height:1.45;">' + STATUS[k].aksi + '</div></td>';
+    };
+    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:4px 0 8px 0;"><tr>'
+      + cell('g') + '<td width="2%" style="font-size:1px;">&nbsp;</td>' + cell('y') + '<td width="2%" style="font-size:1px;">&nbsp;</td>' + cell('r') + '</tr></table>';
+  }
   function mP(txt) { return '<p style="' + F + 'font-size:14px;color:' + C.body + ';line-height:1.65;margin:0 0 14px 0;">' + txt + '</p>'; }
   function mText(raw) { return String(raw || '').split(/\n\s*\n/).filter(function (b) { return b.trim(); }).map(function (b) { return mP(esc(b).replace(/\n/g, '<br>')); }).join(''); }
   function mH(txt) { return '<p style="' + F + 'font-size:13px;font-weight:bold;color:' + C.ink + ';text-transform:uppercase;letter-spacing:.6px;margin:22px 0 10px 0;">' + txt + '</p>'; }
@@ -393,11 +413,11 @@
       + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:10px 0 4px 0;"><tr><td height="2" bgcolor="' + C.line + '" style="height:2px;line-height:2px;font-size:1px;background:' + C.line + ';">&nbsp;</td></tr></table>';
   }
   // Pill di dalam kalimat (span). Outlook Windows mengabaikan padding pada span, jadi diberi border warna sama sebagai "padding".
-  function pill(v) { var p = PILL[band(v)]; return '<span style="' + F + 'display:inline-block;background-color:' + p[0] + ';border:2px solid ' + p[0] + ';color:' + p[1] + ';font-weight:bold;font-size:12px;padding:1px 7px;border-radius:999px;white-space:nowrap;mso-highlight:' + p[0] + ';">' + pct(v) + '</span>'; }
+  function pill(v) { var b = band(v), p = PILL[b]; return '<span style="' + F + 'display:inline-block;background-color:' + p[0] + ';border:2px solid ' + p[0] + ';color:' + p[1] + ';font-weight:bold;font-size:12px;padding:1px 7px;border-radius:999px;white-space:nowrap;"><span style="color:' + DOT[b] + ';">&#9679;</span>&nbsp;' + pct(v) + '</span>'; }
   // Pill sebagai tabel kecil: tampil rapi juga di Outlook Windows (mesin Word).
   function pillBox(v, size, align) {
     var p = PILL[band(v)];
-    return '<table role="presentation" cellpadding="0" cellspacing="0" border="0"' + (align ? ' align="' + align + '"' : '') + ' style="border-collapse:separate;"><tr><td bgcolor="' + p[0] + '" style="' + F + 'background:' + p[0] + ';color:' + p[1] + ';font-weight:bold;font-size:' + (size || 12) + 'px;line-height:1.2;padding:' + (size > 14 ? '5px 12px' : '3px 9px') + ';border-radius:999px;white-space:nowrap;mso-line-height-rule:exactly;">' + pct(v) + '</td></tr></table>';
+    return '<table role="presentation" cellpadding="0" cellspacing="0" border="0"' + (align ? ' align="' + align + '"' : '') + ' style="border-collapse:separate;"><tr><td bgcolor="' + p[0] + '" style="' + F + 'background:' + p[0] + ';color:' + p[1] + ';font-weight:bold;font-size:' + (size || 12) + 'px;line-height:1.2;padding:' + (size > 14 ? '5px 12px' : '3px 9px') + ';border-radius:999px;white-space:nowrap;mso-line-height-rule:exactly;"><span style="color:' + DOT[band(v)] + ';">&#9679;</span>&nbsp;' + pct(v) + '</td></tr></table>';
   }
   // Bar progres: lebar penuh = 130%, garis target di 83%.
   function mBar(v, h) {
@@ -420,15 +440,20 @@
     }).join('') + '</tr></table>';
   }
   function insHtml(t) {
-    return esc(t).replace(/\[\[(null|-?[\d.e-]+)\]\]/g, function (_, v) { return pill(v === 'null' ? null : Number(v)); }).replace(/\*\*(.+?)\*\*/g, '<b style="color:' + C.ink + ';">$1</b>');
+    return esc(String(t).replace(/^[^:]{1,24}::/, '')).replace(/\[\[(null|-?[\d.e-]+)\]\]/g, function (_, v) { return pill(v === 'null' ? null : Number(v)); }).replace(/\*\*(.+?)\*\*/g, '<b style="color:' + C.ink + ';">$1</b>');
   }
-  function insPlain(list) { return list.map(function (t) { return t.replace(/\[\[(null|-?[\d.e-]+)\]\]/g, function (_, v) { return pct(v === 'null' ? null : Number(v)); }).replace(/\*\*/g, ''); }).join('\n'); }
+  function insPlain(list) { return list.map(function (t) { return t.replace(/^([^:]{1,24})::/, '$1: ').replace(/\[\[(null|-?[\d.e-]+)\]\]/g, function (_, v) { return pct(v === 'null' ? null : Number(v)); }).replace(/\*\*/g, ''); }).join('\n'); }
   function mInsight(list, judul) {
     return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:14px 0 6px 0;"><tr>'
       + '<td width="4" style="width:4px;background:' + C.teal + ';border-radius:4px;">&nbsp;</td>'
       + '<td style="' + F + 'background:#EEF9F7;padding:14px 18px;border-radius:0 12px 12px 0;">'
       + '<div style="font-size:12px;font-weight:bold;color:' + C.tealDk + ';text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">' + esc(judul || 'Insight') + '</div>'
-      + list.map(function (t) { return '<div style="font-size:13.5px;color:' + C.body + ';line-height:1.9;margin:0 0 4px 0;">•&nbsp; ' + insHtml(t) + '</div>'; }).join('')
+      + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">'
+      + list.map(function (t, i) {
+        var m = String(t).match(/^([^:]{1,24})::/);
+        return '<tr><td width="96" valign="top" style="' + F + 'width:96px;font-size:11px;font-weight:bold;color:' + C.tealDk + ';text-transform:uppercase;letter-spacing:.5px;padding:6px 10px 6px 0;' + (i ? 'border-top:1px solid #D7EEEA;' : '') + '">' + esc(m ? m[1] : '') + '</td>'
+          + '<td valign="top" style="' + F + 'font-size:13.5px;color:' + C.body + ';line-height:1.8;padding:4px 0;' + (i ? 'border-top:1px solid #D7EEEA;' : '') + '">' + insHtml(t) + '</td></tr>';
+      }).join('') + '</table>'
       + '</td></tr></table>';
   }
   // Grafik batang horizontal: [{nama, v, sub}]
@@ -466,7 +491,7 @@
   }
   var achCols = function () { return KPIS.map(function (k) { return { label: k.short, kind: 'pct', get: function (r) { return r[k.id] && r[k.id].ach; } }; }).concat([{ label: 'Score', kind: 'pct', get: function (r) { return r.score; } }]); };
   function mLegend() {
-    var chip = function (k, t) { return '<span style="display:inline-block;background-color:' + PILL[k][0] + ';border:2px solid ' + PILL[k][0] + ';color:' + PILL[k][1] + ';font-weight:bold;font-size:11px;padding:1px 8px;border-radius:999px;margin-left:6px;">' + esc(t) + '</span>'; };
+    var chip = function (k, t) { return '<span style="display:inline-block;background-color:' + PILL[k][0] + ';border:2px solid ' + PILL[k][0] + ';color:' + PILL[k][1] + ';font-weight:bold;font-size:11px;padding:1px 8px;border-radius:999px;margin-left:6px;"><span style="color:' + DOT[k] + ';">&#9679;</span>&nbsp;' + esc(t) + '</span>'; };
     return '<p style="' + F + 'font-size:11.5px;color:' + C.muted + ';margin:10px 0 0 0;">Status:' + chip('g', 'Tercapai ' + LBL.g) + chip('y', 'Perlu Perhatian ' + LBL.y) + chip('r', 'Di Bawah Target ' + LBL.r) + '</p>';
   }
   // Kerangka email: header gelap ala SandraHub + kartu putih + footer.
@@ -531,8 +556,9 @@
         var people = (d.people || []).filter(function (x) { return norm(x.REGION) === norm(region); });
         var html = wrap(
           mText(introFor({ name: h && h.nama ? h.nama : 'Head of Region' }, 'Yth. Bapak/Ibu {nama},\n\nBerikut kami sampaikan Performance Report ' + title(region) + ' periode {periode} (data per {tanggal}).'))
-          + mH('Ringkasan ' + esc(title(region))) + (p.reg ? mTiles(p.reg, d.circle) : '') + mLegend()
-          + mInsight(ins, 'Insight ' + title(region))
+          + mH('Ringkasan Kinerja ' + esc(title(region))) + (p.reg ? mTiles(p.reg, d.circle) : '')
+          + (p.areas.length ? mH('Status Area (' + p.areas.length + ' area)') + mStatus(p.areas, 'area') : '')
+          + mInsight(ins, 'Insight Utama')
           + mSec('1', 'Internal Sales', p.areas.length + ' area' + (people.length ? ' · ' + people.length + ' sales' : ''))
           + (p.areas.length ? mH('Score per Area') + mBars(p.areas.map(function (a) { return { nama: title(a.nama), v: a.score }; })) : '')
           + (p.areas.length ? mH('Detail per Area') + mTable([
@@ -651,8 +677,9 @@
       sdp.forEach(function (x) { (mcAvg[x.mc] = mcAvg[x.mc] || []).push(x); });
       var html = wrap(
         mText(introFor({ name: nmHoa }, 'Yth. Bapak/Ibu {nama},\n\nBerikut kami sampaikan Performance Report area ' + title(area.nama) + ' periode {periode} (data per {tanggal}).'))
-        + mH('Ringkasan Area ' + esc(title(area.nama))) + mTiles(area, reg, reg ? title(reg.nama) : '') + mLegend()
-        + mInsight(ins, 'Insight ' + title(area.nama))
+        + mH('Ringkasan Kinerja Area ' + esc(title(area.nama))) + mTiles(area, reg, reg ? title(reg.nama) : '')
+        + (people.length ? mH('Status Sales (' + people.length + ' sales)') + mStatus(people, 'sales') : '')
+        + mInsight(ins, 'Insight Utama')
         + mSec('1', 'Internal Sales', (people.length || clusters.length) + (people.length ? ' sales' : ' cluster'))
         + (people.length ? mH('Score per Sales') + mBars(people.map(function (x) { return { nama: title(x.nama), sub: x.CLUSTER, v: x.score }; }))
           + mH('Detail per Sales') + mTable([
@@ -694,15 +721,15 @@
     var out = [];
     var peers = P.data.areas.filter(function (x) { return norm(x.REGION) === norm(area.REGION); });
     var rk = peers.length > 1 ? rankIn(peers, area) : null;
-    out.push('**Score ' + title(area.nama) + ' ' + Q(area.score) + '**' + (reg ? ' vs ' + title(reg.nama) + ' ' + Q(reg.score) : '') + (rk ? ' — peringkat **' + rk.r + ' dari ' + rk.n + '** area.' : '.'));
+    out.push('Pencapaian::**Score ' + title(area.nama) + ' ' + Q(area.score) + '**' + (reg ? ' dibanding ' + title(reg.nama) + ' ' + Q(reg.score) : '') + (rk ? '. Peringkat **' + rk.r + ' dari ' + rk.n + '** area.' : '.'));
     var w = weakest(area);
-    out.push(kpiLine(area) + (w ? ' — KPI terendah: **' + w.k.label + '**.' : '.'));
+    out.push('KPI::' + kpiLine(area) + (w ? '. KPI terendah: **' + w.k.label + '**.' : '.'));
     if (people.length) {
       var red = people.filter(function (x) { return band(x.score) === 'r'; });
-      out.push('Sales: **' + red.length + ' dari ' + people.length + '** di bawah target' + (red.length ? '; capaian terendah ' + red.slice(-2).reverse().map(function (x) { return title(x.nama) + ' ' + Q(x.score); }).join(', ') : '') + '.');
+      out.push('Sales::**' + red.length + ' dari ' + people.length + '** sales di bawah target' + (red.length ? '. Capaian terendah: ' + red.slice(-2).reverse().map(function (x) { return title(x.nama) + ' ' + Q(x.score); }).join(', ') : '') + '.');
     }
-    if (mdi.length) out.push('MDI: ' + mdi.map(function (x) { return title(x.partner) + ' ' + Q(x.score); }).join(', ') + '.');
-    if (sdp.length) out.push('SDP: **' + countRed(sdp) + ' dari ' + sdp.length + '** SDP di bawah target; rata-rata ' + Q(avg(sdp.map(function (x) { return x.score; }))) + '; capaian terendah ' + sdp[sdp.length - 1].namaMim3 + ' ' + Q(sdp[sdp.length - 1].score) + '.');
+    if (mdi.length) out.push('MDI::' + mdi.map(function (x) { return title(x.partner) + ' ' + Q(x.score); }).join(', ') + '.');
+    if (sdp.length) out.push('SDP::**' + countRed(sdp) + ' dari ' + sdp.length + '** SDP di bawah target, rata-rata ' + Q(avg(sdp.map(function (x) { return x.score; }))) + '. Capaian terendah: ' + sdp[sdp.length - 1].namaMim3 + ' ' + Q(sdp[sdp.length - 1].score) + '.');
     return out;
   }
   var r4 = function (v) { return v == null ? '' : Math.round(v * 10000) / 10000; };
@@ -735,7 +762,16 @@
     '.pf-card .v{ font-size:26px; font-weight:800; margin-top:4px; font-family:var(--font-brand); }',
     '.pf-card .s{ font-size:12px; color:var(--muted); margin-top:2px; }',
     '.pf-g{ color:#00A651; } .pf-y{ color:#E0A800; } .pf-r{ color:#FF3B3B; } .pf-na{ color:var(--muted); }',
-    '.pf-bg-g{ background:#00A651 !important; color:#fff !important; } .pf-bg-y{ background:#FFC000 !important; color:#3B2C00 !important; } .pf-bg-r{ background:#E3000F !important; color:#fff !important; } .pf-bg-na{ color:var(--muted); }',
+    '.pf-bg-g{ background:#E2F3E8 !important; color:#0E7A3E !important; } .pf-bg-y{ background:#FBF0CC !important; color:#A67600 !important; } .pf-bg-r{ background:#F9DEDA !important; color:#C42318 !important; } .pf-bg-na{ color:var(--muted); }',
+    '.pf-pill::before{ content:"\\25CF"; margin-right:5px; } .pf-pill.pf-bg-g::before{ color:#12A150; } .pf-pill.pf-bg-y::before{ color:#E0A100; } .pf-pill.pf-bg-r::before{ color:#E03A2F; }',
+    '.pf-status{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }',
+    '.pf-st{ border-radius:14px; padding:14px 16px; }',
+    '.pf-st .h{ display:flex; align-items:baseline; justify-content:space-between; gap:8px; }',
+    '.pf-st .k{ font-weight:800; letter-spacing:.03em; font-size:13px; } .pf-st .k::before{ content:"\\25CF"; margin-right:7px; font-size:15px; }',
+    '.pf-st .rg{ font-weight:500; opacity:.75; margin-left:6px; } .pf-st .n{ font-size:28px; font-weight:800; } .pf-st .u{ font-size:12px; opacity:.75; margin-left:3px; }',
+    '.pf-st .a{ font-size:12px; margin-top:6px; opacity:.9; }',
+    '.pf-st.g{ background:#E2F3E8; color:#0E7A3E; } .pf-st.y{ background:#FBF0CC; color:#A67600; } .pf-st.r{ background:#F9DEDA; color:#C42318; }',
+    '.pf-st.g .k::before{ color:#12A150; } .pf-st.y .k::before{ color:#E0A100; } .pf-st.r .k::before{ color:#E03A2F; }',
     '.pf-card.pf-bg-g .l, .pf-card.pf-bg-r .l, .pf-card.pf-bg-g .s, .pf-card.pf-bg-r .s{ color:rgba(255,255,255,.88); } .pf-card.pf-bg-y .l, .pf-card.pf-bg-y .s{ color:rgba(59,44,0,.85); } .pf-card[class*=pf-bg-]{ border:0; }',
     '.pf-grid2{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }',
     '.pf-box{ border:1px solid var(--line); border-radius:14px; padding:14px 16px; background:var(--surf); min-width:0; }',
@@ -779,7 +815,7 @@
     '.pf-edit-row .token-hint{ grid-column:2; }',
     '.pf-edit-row label{ font-size:12px; font-weight:700; color:var(--ink2); }',
     '.pf-edit-row input{ width:100%; font:inherit; font-size:13px; padding:7px 10px; border-radius:8px; border:1px solid var(--line); background:var(--surf); color:var(--ink); }',
-    '@media (max-width:900px){ .pf-cards{ grid-template-columns:1fr 1fr; } .pf-grid2, .pf-reg, .pf-jenis{ grid-template-columns:1fr; } }',
+    '@media (max-width:900px){ .pf-cards{ grid-template-columns:1fr 1fr; } .pf-grid2, .pf-reg, .pf-jenis, .pf-status{ grid-template-columns:1fr; } }',
   ].join('\n');
   document.head.appendChild(css);
 
@@ -808,6 +844,15 @@
         var sub = k.id === 'dse' ? 'Skor ' + fmt(c.dse.t) + ' · DSE ' + fmt(c.dse.a) : 'Target ' + fmt(c[k.id].t) + ' · Actual ' + fmt(c[k.id].a);
         return card(k.label, c[k.id].ach, sub);
       }).join('') + '</div>';
+    }
+
+    // Status area (gaya kartu status)
+    if (d.areas.length) {
+      var cnt = { g: 0, y: 0, r: 0 };
+      d.areas.forEach(function (a) { var b = band(a.score); if (cnt[b] != null) cnt[b]++; });
+      html += '<div class="pf-sec"><div class="field-group-label">Status Area (' + d.areas.length + ' area)</div><div class="pf-status">' + ['g', 'y', 'r'].map(function (k) {
+        return '<div class="pf-st ' + k + '"><div class="h"><span class="k">' + STATUS[k].label + '<span class="rg">' + esc(LBL[k]) + '</span></span><span><span class="n">' + cnt[k] + '</span><span class="u">area</span></span></div><div class="a">' + STATUS[k].aksi + '</div></div>';
+      }).join('') + '</div></div>';
     }
 
     // Perbandingan region
