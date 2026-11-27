@@ -13,7 +13,7 @@
   var URLS = { home: '/report-merge/home.html', email: '/report-merge/index.html', sdp: '/report-merge/sdp.html', mdi: '/report-merge/mdi.html', performance: '/report-merge/index.html?flow=performance' };
   var MENUS = [
     { id: 'email', label: 'Blast Email Report', title: 'Ubah satu file Excel jadi banyak email terpisah per penerima.' },
-    { id: 'performance', label: 'Performance Report', title: 'Kirim laporan performa ke Internal Sales, MDI & SDP; To & Cc dari Daftar Penerima.' },
+    { id: 'performance', label: 'Performance Report', title: 'Visualisasi pencapaian + email per MDI/SDP dan ringkasan Head of Area.' },
     { id: 'sdp', label: 'Partner SDP', title: 'Kirim surat PDF Partner SDP yang sudah jadi, 1 email per ID mitra.' },
     { id: 'mdi', label: 'Partner MDI', title: 'Kirim Surat + BAST Partner MDI yang sudah jadi, 1 email per partner + type.' },
   ];

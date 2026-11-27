@@ -1,6 +1,7 @@
 // app/api/report-merge/perf-recipients/route.js
 // Smart Mail Sumatera > Performance Report: daftar penerima (To & Cc) per
-// kategori (Internal Sales / MDI / SDP). Disimpan di rm_app_settings
+// kategori. Dipakai untuk Head of Area (kategori "hoa"); MDI/SDP sekarang
+// memakai sheet Master_Mapping di Excel yang diupload. Disimpan di rm_app_settings
 // (key "perf_recipients_<kategori>", value = JSON array) supaya tidak perlu
 // tabel baru. Tiap baris: { kunci, nama, to, cc }. Kunci = isi kolom kunci
 // di Excel (Nama Sales / Nama MDI / ID SDP), dicocokkan tanpa beda huruf besar/kecil.
@@ -8,7 +9,7 @@ import { NextResponse } from "next/server";
 import { requireReportMergeAccess } from "../../../../lib/reportMerge/auth";
 import { getSetting, setSetting } from "../../../../lib/reportMerge/settings";
 
-const KATEGORI = ["internal_sales", "mdi", "sdp"];
+const KATEGORI = ["internal_sales", "mdi", "sdp", "hoa"]; // hoa = Head of Area per region (kunci = nama region)
 const EMAIL_RE = /^[^\s@;,]+@[^\s@;,]+\.[^\s@;,]+$/;
 
 const normKunci = (s) => String(s == null ? "" : s).trim().replace(/\s+/g, " ").toLowerCase();
