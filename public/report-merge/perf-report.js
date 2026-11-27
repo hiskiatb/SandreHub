@@ -904,6 +904,7 @@
     '.pf-reg .pf-bar{ grid-template-columns:78px 1fr 64px; }',
     '.pf-box h4, .pf-card .v{ color:var(--ink); } .pf-tbl td{ color:var(--ink2); } .pf-bar .n{ color:var(--ink2); }',
     '.pf-tbl td.c{ padding:4px 3px; text-align:center; } .pf-tbl .pf-pill{ font-size:11px; padding:2px 6px; }',
+    '.pf-low th:nth-child(2), .pf-low td:nth-child(2){ width:18%; overflow:hidden; text-overflow:ellipsis; } .pf-hm td:first-child{ white-space:nowrap; }',
     '.pf-hm{ table-layout:fixed; } .pf-hm th:first-child, .pf-hm td:first-child{ width:30%; overflow:hidden; text-overflow:ellipsis; }',
     '.pf-pill{ display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700; }',
     '.pf-tbl{ width:100%; border-collapse:collapse; font-size:12.5px; }',
@@ -1006,13 +1007,13 @@
     }).sort(function (x, y) { return ((y.o + y.r) / y.n) - ((x.o + x.r) / x.n); });
     var tot = countBands(sdp);
     html += '<div class="pf-sec pf-grid2">';
-    html += '<div class="pf-box"><h4>Sebaran Score SDP per Area <span class="hint" style="float:right;margin:0;">' + sdp.length + ' SDP · ' + BKEYS.map(function (k) { return '<span class="pf-' + k + '">' + tot[k] + '</span>'; }).join(' / ') + '</span></h4><div class="pf-scroll"><table class="pf-tbl"><thead><tr><th>Area</th><th>SDP</th><th style="width:45%">Sebaran</th><th>Rata-rata</th></tr></thead><tbody>'
+    html += '<div class="pf-box"><h4>Sebaran Status SDP per Area <span class="hint" style="float:right;margin:0;">' + sdp.length + ' SDP · ' + BKEYS.map(function (k) { return '<span class="pf-' + k + '">' + tot[k] + '</span>'; }).join(' / ') + '</span></h4><div class="pf-scroll"><table class="pf-tbl"><thead><tr><th>Area</th><th>SDP</th><th style="width:45%">Sebaran</th><th>Rata-rata</th></tr></thead><tbody>'
       + dist.map(function (x) {
         var seg = function (k, n) { return n ? '<i class="pf-s-' + k + '" style="width:' + (n / x.n * 100) + '%" title="' + n + ' SDP"></i>' : ''; };
-        return '<tr><td>' + esc(title(x.a)) + '</td><td>' + x.n + '</td><td><div class="pf-stack">' + BKEYS.map(function (k) { return seg(k, x[k]); }).join('') + '</div></td><td class="c pf-bg-' + band(x.avg) + '">' + pct(x.avg) + '</td></tr>';
+        return '<tr><td>' + esc(title(x.a)) + '</td><td>' + x.n + '</td><td><div class="pf-stack">' + BKEYS.map(function (k) { return seg(k, x[k]); }).join('') + '</div></td>' + cellPct(x.avg) + '</tr>';
       }).join('') + '</tbody></table></div></div>';
     var low = sdp.slice().sort(byScoreDesc).reverse().slice(0, 10);
-    html += '<div class="pf-box"><h4>10 SDP Score Terendah</h4><div class="pf-scroll"><table class="pf-tbl"><thead><tr><th>SDP</th><th>Area</th>' + KPIS.map(function (k) { return '<th>' + esc(k.short) + '</th>'; }).join('') + '<th>Score</th></tr></thead><tbody>'
+    html += '<div class="pf-box"><h4>10 SDP Score Terendah</h4><div class="pf-scroll"><table class="pf-tbl pf-hm pf-low"><thead><tr><th>SDP</th><th>Area</th>' + KPIS.map(function (k) { return '<th>' + esc(k.short) + '</th>'; }).join('') + '<th>Score</th></tr></thead><tbody>'
       + low.map(function (r) {
         return '<tr><td title="' + esc(r.idMim3) + '">' + esc(r.namaMim3) + '</td><td>' + esc(title(r.area)) + '</td>' + KPIS.map(function (k) { return cellPct(r[k.id].ach); }).join('') + cellPct(r.score) + '</tr>';
       }).join('') + '</tbody></table></div></div>';
