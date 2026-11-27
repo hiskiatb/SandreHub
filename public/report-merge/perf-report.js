@@ -457,6 +457,8 @@
   }
   // Pill di dalam kalimat (span). Outlook Windows mengabaikan padding pada span, jadi diberi border warna sama sebagai "padding".
   function pill(v) { var b = band(v), p = PILL[b]; return '<span style="' + F + 'display:inline-block;background-color:' + p[0] + ';border:2px solid ' + p[0] + ';color:' + p[1] + ';font-weight:bold;font-size:12px;padding:1px 7px;border-radius:999px;white-space:nowrap;"><span style="color:' + DOT[b] + ';">&#9679;</span>&nbsp;' + pct(v) + '</span>'; }
+  // Pill ringkas untuk sel tabel & grafik (markup kecil supaya email tidak terpotong Gmail >102 KB).
+  function pillS(v) { var b = band(v), p = PILL[b]; return '<span style="background-color:' + p[0] + ';border:2px solid ' + p[0] + ';color:' + p[1] + ';font:bold 11px Arial,sans-serif;border-radius:9px;white-space:nowrap;"><span style="color:' + DOT[b] + ';">&#9679;</span>&nbsp;' + pct(v) + '</span>'; }
   // Pill sebagai tabel kecil: tampil rapi juga di Outlook Windows (mesin Word).
   function pillBox(v, size, align) {
     var p = PILL[band(v)], big = size > 14;
@@ -510,7 +512,7 @@
     return '<table role="presentation" width="' + EW + '" cellpadding="0" cellspacing="0" style="width:' + EW + 'px;border-collapse:collapse;table-layout:fixed;">' + items.map(function (it) {
       return '<tr><td width="' + NW + '" valign="middle" style="' + F + 'width:' + NW + 'px;font-size:12.5px;color:' + C.ink + ';padding:5px 10px 5px 0;overflow:hidden;">' + esc(it.nama) + (it.sub ? '<div style="font-size:10.5px;color:' + C.muted + ';">' + esc(it.sub) + '</div>' : '') + '</td>'
         + '<td width="' + BW + '" valign="middle" style="width:' + BW + 'px;padding:5px 0;">' + mBar(it.v, 10, BW) + '</td>'
-        + '<td width="' + VW + '" align="right" valign="middle" style="' + F + 'width:' + VW + 'px;text-align:right;padding:5px 0;">' + pillBox(it.v, 12, 'right') + '</td></tr>';
+        + '<td width="' + VW + '" align="right" valign="middle" style="' + F + 'width:' + VW + 'px;text-align:right;padding:5px 0;">' + pillS(it.v) + '</td></tr>';
     }).join('') + '</table>';
   }
   // Batang bertumpuk sebaran status (lebar tetap): nama 170 | batang 464 | jumlah 130.
@@ -543,7 +545,7 @@
       var last = i === rows.length - 1;
       html += '<tr>' + cols.map(function (c, ci) {
         var v = c.get(r), st = F + 'width:' + widths[ci] + 'px;font-size:12.5px;padding:7px 6px;color:' + C.body + ';vertical-align:middle;' + (ci === 0 ? 'padding-left:12px;' : '') + (last ? '' : 'border-bottom:1px solid #F0F0F4;') + (i % 2 ? 'background:#FAFAFC;' : 'background:#FFFFFF;');
-        if (c.kind === 'pct') return '<td width="' + widths[ci] + '" align="right" style="' + st + 'text-align:right;padding-right:6px;">' + pillBox(v, 11, 'right') + '</td>';
+        if (c.kind === 'pct') return '<td width="' + widths[ci] + '" align="right" style="' + st + 'text-align:right;padding-right:6px;white-space:nowrap;">' + pillS(v) + '</td>';
         if (c.kind === 'num') return '<td width="' + widths[ci] + '" align="right" style="' + st + 'text-align:right;white-space:nowrap;">' + fmt(v) + '</td>';
         return '<td width="' + widths[ci] + '" style="' + st + 'word-wrap:break-word;' + (c.bold ? 'font-weight:bold;color:' + C.ink + ';' : '') + '">' + esc(v) + '</td>';
       }).join('') + '</tr>';
