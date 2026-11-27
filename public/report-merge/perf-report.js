@@ -904,7 +904,7 @@
     '.pf-reg .pf-bar{ grid-template-columns:78px 1fr 64px; }',
     '.pf-box h4, .pf-card .v{ color:var(--ink); } .pf-tbl td{ color:var(--ink2); } .pf-bar .n{ color:var(--ink2); }',
     '.pf-tbl td.c{ padding:4px 3px; text-align:center; } .pf-tbl .pf-pill{ font-size:11px; padding:2px 6px; }',
-    '.pf-low th:nth-child(2), .pf-low td:nth-child(2){ width:18%; overflow:hidden; text-overflow:ellipsis; } .pf-hm td:first-child{ white-space:nowrap; }',
+    '.pf-low{ table-layout:fixed; } .pf-low td{ overflow:hidden; text-overflow:ellipsis; } .pf-low th:nth-child(1){ width:36%; } .pf-low th:nth-child(2){ width:20%; } .pf-low th:nth-child(4){ width:18%; } .pf-hm td:first-child{ white-space:nowrap; }',
     '.pf-hm{ table-layout:fixed; } .pf-hm th:first-child, .pf-hm td:first-child{ width:30%; overflow:hidden; text-overflow:ellipsis; }',
     '.pf-pill{ display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700; }',
     '.pf-tbl{ width:100%; border-collapse:collapse; font-size:12.5px; }',
@@ -1013,9 +1013,10 @@
         return '<tr><td>' + esc(title(x.a)) + '</td><td>' + x.n + '</td><td><div class="pf-stack">' + BKEYS.map(function (k) { return seg(k, x[k]); }).join('') + '</div></td>' + cellPct(x.avg) + '</tr>';
       }).join('') + '</tbody></table></div></div>';
     var low = sdp.slice().sort(byScoreDesc).reverse().slice(0, 10);
-    html += '<div class="pf-box"><h4>10 SDP Score Terendah</h4><div class="pf-scroll"><table class="pf-tbl pf-hm pf-low"><thead><tr><th>SDP</th><th>Area</th>' + KPIS.map(function (k) { return '<th>' + esc(k.short) + '</th>'; }).join('') + '<th>Score</th></tr></thead><tbody>'
+    html += '<div class="pf-box"><h4>10 SDP Score Terendah</h4><div class="pf-scroll"><table class="pf-tbl pf-low"><thead><tr><th>SDP</th><th>Area</th><th>KPI terendah</th><th>Score</th></tr></thead><tbody>'
       + low.map(function (r) {
-        return '<tr><td title="' + esc(r.idMim3) + '">' + esc(r.namaMim3) + '</td><td>' + esc(title(r.area)) + '</td>' + KPIS.map(function (k) { return cellPct(r[k.id].ach); }).join('') + cellPct(r.score) + '</tr>';
+        var w = weakest(r);
+        return '<tr><td title="' + esc(r.idMim3 + ' / ' + r.id3k) + '">' + esc(r.namaMim3) + '</td><td>' + esc(title(r.area)) + '</td><td>' + (w ? esc(w.k.short) + ' ' + '<span class="pf-pill pf-bg-' + band(w.v) + '">' + pct(w.v) + '</span>' : '–') + '</td>' + cellPct(r.score) + '</tr>';
       }).join('') + '</tbody></table></div></div>';
     html += '</div>';
 
