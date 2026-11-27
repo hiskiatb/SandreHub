@@ -32,6 +32,8 @@ const PAGES = [
   { id: "report", title: "Report Merge", src: "/report-merge/index.html" },
   { id: "sdp", title: "Partner SDP", src: "/report-merge/sdp.html" },
   { id: "mdi", title: "Partner MDI", src: "/report-merge/mdi.html" },
+  // Performance Report = Blast Email Report (index.html) + perf-report.js, iframe terpisah.
+  { id: "performance", title: "Performance Report", src: "/report-merge/index.html?flow=performance" },
 ];
 
 function syncTheme(frame) {

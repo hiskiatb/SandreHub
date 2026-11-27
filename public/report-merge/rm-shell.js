@@ -10,9 +10,10 @@
  * halaman dibuka langsung (tanpa dashboard), cukup pindah URL.
  */
 (function () {
-  var URLS = { home: '/report-merge/home.html', email: '/report-merge/index.html', sdp: '/report-merge/sdp.html', mdi: '/report-merge/mdi.html' };
+  var URLS = { home: '/report-merge/home.html', email: '/report-merge/index.html', sdp: '/report-merge/sdp.html', mdi: '/report-merge/mdi.html', performance: '/report-merge/index.html?flow=performance' };
   var MENUS = [
     { id: 'email', label: 'Blast Email Report', title: 'Ubah satu file Excel jadi banyak email terpisah per penerima.' },
+    { id: 'performance', label: 'Performance Report', title: 'Visualisasi pencapaian + email per MDI/SDP dan ringkasan Head of Area.' },
     { id: 'sdp', label: 'Partner SDP', title: 'Kirim surat PDF Partner SDP yang sudah jadi, 1 email per ID mitra.' },
     { id: 'mdi', label: 'Partner MDI', title: 'Kirim Surat + BAST Partner MDI yang sudah jadi, 1 email per partner + type.' },
   ];
@@ -26,8 +27,10 @@
     sdp: '<path d="M4 10v9.5h16V10"/><path d="M3 10l1.6-5.5h14.8L21 10"/><path d="M3 10c0 1.4 1.1 2.5 2.5 2.5S8 11.4 8 10c0 1.4 1.1 2.5 2.5 2.5S13 11.4 13 10c0 1.4 1.1 2.5 2.5 2.5S18 11.4 18 10c0 1.4 1.1 2.5 2.5 2.5"/><path d="M10 19.5v-4.5h4v4.5"/>',
     // Gedung kantor + 2 dokumen (Surat & BAST): Mitra Pengelola Cluster
     mdi: '<path d="M4 20V5.5L11 3v17"/><path d="M11 9h5.5V20"/><path d="M6.5 7.5h2M6.5 11h2M6.5 14.5h2M13.5 12.5h1M13.5 15.5h1"/><path d="M3 20h18"/><path d="M17 14.5h3.5V20H17z"/>',
+    // Grafik garis naik: laporan performa
+    performance: '<path d="M3 20h18"/><path d="M4 16l5-5 4 3 7-8"/><path d="M15 6h5v5"/>',
   };
-  var ICON_BG = { email: ['#32BCAD', '#1E8C80'], sdp: ['#ED1C24', '#B3121A'], mdi: ['#EC008C', '#9E127A'] };
+  var ICON_BG = { email: ['#32BCAD', '#1E8C80'], sdp: ['#ED1C24', '#B3121A'], mdi: ['#EC008C', '#9E127A'], performance: ['#F7941D', '#C2620A'] };
   /** Ikon menu sebagai ubin SVG. size dalam px. */
   function icon(id, size) {
     var c = ICON_BG[id], g = 'rmIco' + id + size;
