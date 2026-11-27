@@ -259,6 +259,18 @@
       if (norm(m.ROLE) === 'HOR' && !d.hor[norm(m.REGION)]) d.hor[norm(m.REGION)] = m;
       if (norm(m.ROLE) === 'HOA' && !d.hoaMap[norm(m.BRANCH)]) d.hoaMap[norm(m.BRANCH)] = m;
     });
+    // Sales per orang (DSO/DSP) dicocokkan lewat nama (kolom NAME di sheet Internal Sales = PARTNER_NAME di Master_Mapping).
+    d.mapIs = {};
+    d.map.forEach(function (m) {
+      if (!/INTERNAL/.test(norm(m.TYPE)) || /^HO[AR]$/.test(norm(m.ROLE)) || /VACANT/.test(norm(m.STATUS))) return;
+      var k = normKey(m.PARTNER_NAME);
+      if (k && !d.mapIs[k]) d.mapIs[k] = m;
+    });
+    (d.people || []).forEach(function (r) { r.map = d.mapIs[normKey(r.nama)] || null; });
+    // MDI per partner (semua area dalam 1 email).
+    var pm = new Map();
+    d.mdi.forEach(function (r) { var k = normKey(r.partner); if (!pm.has(k)) pm.set(k, []); pm.get(k).push(r); });
+    d.mdiPartners = Array.from(pm.entries()).map(function (e) { return { key: e[0], partner: e[1][0].partner, rows: e[1].slice().sort(byScoreDesc) }; });
 
     // Entitas SDP: 1 per ID (MIM3 dan 3KIOSK masing-masing).
     d.sdp = [];
@@ -333,6 +345,31 @@
     if (peers.length > 1) { var rk = rankIn(peers, r); out.push('Peringkat::**' + rk.r + ' dari ' + rk.n + '** MDI di ' + title(r.region) + '.'); }
     var sdps = d.sdpRows.filter(function (x) { return norm(x.area) === norm(r.area); });
     if (sdps.length) out.push('SDP Area::**' + countRed(sdps) + ' dari ' + sdps.length + '** SDP di Area ' + title(r.area) + ' berstatus Warning/Critical.');
+    return out;
+  }
+  function insightMdiPartner(pt, agg) {
+    var rows = pt.rows, out = [];
+    if (rows.length > 1) {
+      out.push('Pencapaian::Rata-rata **Score ' + Q(agg.score) + '** dari **' + rows.length + ' area**.');
+      out.push('Area::Tertinggi ' + title(rows[0].area) + ' ' + Q(rows[0].score) + '; terendah **' + title(rows[rows.length - 1].area) + '** ' + Q(rows[rows.length - 1].score) + '.' + (countRed(rows) ? ' **' + countRed(rows) + ' area** berstatus Warning/Critical.' : ''));
+    } else {
+      out.push('Pencapaian::**Score ' + Q(rows[0].score) + '**.');
+    }
+    out.push('KPI::' + kpiLine(agg) + '.');
+    var w = weakest(agg);
+    if (w && band(w.v) !== 'g') out.push('Prioritas::Perbaikan pada **' + w.k.label + '** ' + Q(w.v) + '.');
+    return out;
+  }
+  function insightPerson(r) {
+    var d = P.data, out = [];
+    out.push('Pencapaian::**Score ' + Q(r.score) + '**.');
+    out.push('KPI::' + kpiLine(r) + '.');
+    var w = weakest(r);
+    if (w && band(w.v) !== 'g') out.push('Prioritas::Perbaikan pada **' + w.k.label + '** ' + Q(w.v) + '.');
+    var peers = (d.people || []).filter(function (x) { return norm(x.AREA) === norm(r.AREA); });
+    if (peers.length > 1) { var rk = rankIn(peers, r); out.push('Peringkat::**' + rk.r + ' dari ' + rk.n + '** sales di Area ' + title(r.AREA) + '.'); }
+    var regPeers = (d.people || []).filter(function (x) { return norm(x.REGION) === norm(r.REGION); });
+    if (regPeers.length > 1) { var rr = rankIn(regPeers, r); out.push('Region::Peringkat **' + rr.r + ' dari ' + rr.n + '** sales di ' + title(r.REGION) + '.'); }
     return out;
   }
   function regionPack(region) {
@@ -615,25 +652,66 @@
         });
       });
     } else if (P.jenis === 'mdi') {
-      d.mdi.forEach(function (r) {
-        var m = r.map, ins = insightMdi(r);
-        var nm = title(r.partner) + ' — ' + title(r.area);
+      d.mdiPartners.forEach(function (pt) {
+        var rows = pt.rows, to = [], cc = [], miss = [];
+        rows.forEach(function (r) {
+          if (!r.map || !splitEmails(r.map.EMAIL_TO).length) { miss.push(title(r.area)); return; }
+          to = to.concat(splitEmails(r.map.EMAIL_TO)); cc = cc.concat(splitEmails(r.map.EMAIL_CC));
+        });
+        var uniq = function (a) { var seen = {}; return a.filter(function (e) { var k = e.toLowerCase(); if (seen[k]) return false; seen[k] = 1; return true; }); };
+        to = uniq(to); cc = uniq(cc).filter(function (e) { return to.map(function (x) { return x.toLowerCase(); }).indexOf(e.toLowerCase()) < 0; });
+        var agg = { score: avg(rows.map(function (r) { return r.score; })) };
+        KPIS.forEach(function (k) { agg[k.id] = { ach: avg(rows.map(function (r) { return r[k.id].ach; })) }; });
+        var ins = insightMdiPartner(pt, agg);
         groups.push({
-          key: 'mdi|' + normKey(r.partner) + '|' + normKey(r.area), name: nm,
-          emails: m ? splitEmails(m.EMAIL_TO) : [], ccs: m ? splitEmails(m.EMAIL_CC) : [], rows: [flatRow(r)],
-          unmatched: !m || !splitEmails(m.EMAIL_TO).length,
-          unmatchedWhy: 'Partner "' + r.partner + '" area ' + r.area + ' belum ada di Master_Mapping (TYPE MDI).',
+          key: 'mdi|' + pt.key, name: title(pt.partner) + ' (' + rows.length + ' area)',
+          emails: to, ccs: cc, rows: rows.map(flatRow),
+          unmatched: !to.length,
+          unmatchedWhy: 'Partner "' + pt.partner + '" belum ada di Master_Mapping (TYPE MDI).',
           perf: {
-            subject: 'Performance Report MDI ' + title(r.partner) + ' ' + title(r.area) + ' — ' + P.periode,
-            html: wrap(mText(introFor({ name: r.partner }, INTRO_DEF))
-              + mH('Pencapaian ' + esc(title(r.area))) + mTiles(r, null) + mLegend()
-              + mInsight(ins)
-              + mH('Detail') + mTable([{ label: 'Area', bold: true, get: function (x) { return title(x.area); } }, { label: 'Partner', get: function (x) { return x.partner; } }].concat(achCols()), [r])
+            subject: 'Performance Report MDI ' + title(pt.partner) + ' — ' + P.periode,
+            html: wrap(mText(introFor({ name: pt.partner }, INTRO_DEF))
+              + mH(rows.length > 1 ? 'Ringkasan Kinerja (rata-rata ' + rows.length + ' area)' : 'Ringkasan Kinerja ' + esc(title(rows[0].area))) + mTiles(agg, null)
+              + (rows.length > 1 ? mH('Status Area (' + rows.length + ' area)') + mStatus(rows, 'area') : '')
+              + mInsight(ins, 'Insight Utama')
+              + (rows.length > 1 ? mH('Score per Area') + mBars(rows.map(function (r) { return { nama: title(r.area), sub: title(r.region), v: r.score }; })) : '')
+              + mH('Detail per Area') + mTable([{ label: 'Area', bold: true, get: function (x) { return title(x.area); } }, { label: 'Region', get: function (x) { return title(x.region); } }].concat(achCols()), rows)
+              + (miss.length ? mP('<i>Catatan: area ' + esc(miss.join(', ')) + ' belum terdaftar di Master_Mapping.</i>') : '')
               + '<div style="height:14px;"></div>' + mText(closingTxt()),
-              { title: title(r.partner), sub: subHead('MDI ' + title(r.area)) }),
+              { title: title(pt.partner), sub: subHead('MDI · ' + rows.length + ' area') }),
             insight: insPlain(ins),
-            attName: 'Performance Report ' + title(r.partner) + ' ' + title(r.area),
-            sheets: [['MDI', [flatRow(r)]]],
+            attName: 'Performance Report ' + title(pt.partner),
+            sheets: [['MDI', rows.map(flatRow)]],
+          },
+        });
+      });
+    } else if (P.jenis === 'is') {
+      (d.people || []).forEach(function (r) {
+        var m = r.map, ins = insightPerson(r);
+        var area = d.areas.filter(function (a) { return norm(a.nama) === norm(r.AREA); })[0] || null;
+        groups.push({
+          key: 'is|' + normKey(r.nama), name: title(r.nama) + ' — ' + (r.CLUSTER || title(r.AREA)),
+          emails: m ? splitEmails(m.EMAIL_TO) : [], ccs: m ? splitEmails(m.EMAIL_CC) : [], rows: [flatIsRow(r)],
+          unmatched: !m || !splitEmails(m.EMAIL_TO).length,
+          unmatchedWhy: 'Sales "' + r.nama + '" belum ada di Master_Mapping (TYPE INTERNAL SALES, PARTNER_NAME = nama sales) atau EMAIL_TO kosong.',
+          perf: {
+            subject: 'Performance Report ' + title(r.nama) + ' — ' + P.periode,
+            html: wrap(mText(introFor({ name: title(r.nama) }, INTRO_DEF))
+              + mH('Ringkasan Kinerja') + mTiles(r, area, area ? 'Area ' + title(area.nama) : '')
+              + mInsight(ins, 'Insight Utama')
+              + mH('Detail') + mTable([
+                { label: 'Cluster', bold: true, get: function (x) { return x.CLUSTER; } },
+                { label: 'Area', get: function (x) { return title(x.AREA); } },
+                { label: 'Trad Target', kind: 'num', get: function (x) { return x.trad.t; } },
+                { label: 'Trad Actual', kind: 'num', get: function (x) { return x.trad.a; } },
+                { label: 'FWA Target', kind: 'num', get: function (x) { return x.fwa.t; } },
+                { label: 'FWA Actual', kind: 'num', get: function (x) { return x.fwa.a; } },
+              ].concat(achCols()), [r])
+              + '<div style="height:14px;"></div>' + mText(closingTxt()),
+              { title: title(r.nama), sub: subHead('Internal Sales' + (m && m.ROLE ? ' ' + m.ROLE : '') + ' · ' + (r.CLUSTER || '') + ' · ' + title(r.AREA)) }),
+            insight: insPlain(ins),
+            attName: 'Performance Report ' + title(r.nama),
+            sheets: [['Internal Sales', [Object.assign({ Cluster: r.CLUSTER || '' }, flatIsRow(r))]]],
           },
         });
       });
@@ -806,7 +884,7 @@
     '.pf-legend .g{ background:#E2F3E8; color:#0E7A3E; } .pf-legend .y{ background:#FBF0CC; color:#A67600; } .pf-legend .r{ background:#F9DEDA; color:#C42318; }',
     '.pf-toolbar{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; }',
     '.pf-toolbar select{ width:auto; min-width:200px; }',
-    '.pf-jenis{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }',
+    '.pf-jenis{ display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px; }',
     '.pf-jenis label{ border:1px solid var(--line); border-radius:12px; padding:12px 14px; cursor:pointer; background:var(--surf2); display:block; }',
     '.pf-jenis label.on{ border-color:var(--teal); box-shadow:0 0 0 2px var(--good-bd); background:var(--surf); }',
     '.pf-jenis input{ margin-right:8px; }',
@@ -915,8 +993,16 @@
     var box = document.getElementById('pfMatch');
     if (!box || !P.data) return;
     var d = P.data, txt, bad = 0;
-    if (P.jenis === 'mdi') {
+    if (P.jenis === 'is') {
+      var ppl = d.people || [];
+      var noIs = ppl.filter(function (r) { return !r.map || !splitEmails(r.map.EMAIL_TO).length; });
+      bad = ppl.length ? noIs.length : 1;
+      txt = ppl.length ? (ppl.length - noIs.length) + ' dari ' + ppl.length + ' sales punya email di Master_Mapping (TYPE INTERNAL SALES, dicocokkan lewat nama). 1 email per sales.' + (noIs.length ? ' Belum ada: ' + noIs.slice(0, 8).map(function (r) { return title(r.nama); }).join(', ') + (noIs.length > 8 ? ', dan lainnya' : '') + '.' : '') : 'Sheet Internal Sales di file ini bukan format per orang (kolom NAME), jadi tidak bisa dikirim per sales.';
+    } else if (P.jenis === 'mdi') {
+      var ptMiss = d.mdiPartners.filter(function (pt) { return !pt.rows.some(function (r) { return r.map && splitEmails(r.map.EMAIL_TO).length; }); });
       bad = d.mdi.filter(function (r) { return !r.map; }).length;
+      txt = d.mdiPartners.length + ' email (1 per partner, semua area partner dalam 1 email) untuk ' + d.mdi.length + ' baris partner-area. ' + (d.mdi.length - bad) + ' dari ' + d.mdi.length + ' baris cocok dengan Master_Mapping.' + (ptMiss.length ? ' Partner tanpa alamat: ' + ptMiss.map(function (pt) { return title(pt.partner); }).join(', ') + '.' : '');
+      box.className = 'pf-match ' + (bad ? 'pf-bg-r' : 'pf-bg-g'); box.textContent = txt; return;
       txt = (d.mdi.length - bad) + ' dari ' + d.mdi.length + ' MDI cocok dengan Master_Mapping (PARTNER_NAME + BRANCH).';
     } else if (P.jenis === 'sdp') {
       var miss = d.sdp.filter(function (e) { return !e.map; });
@@ -1061,7 +1147,8 @@
       + '<div class="pf-sec"><div class="field-group-label">Jenis kiriman</div><div class="pf-jenis" id="pfJenis">'
       + '<label data-j="hor"><input type="radio" name="pfJenis" value="hor"><b>Head of Region</b><small>1 email per region ke HOR (Master_Mapping): ringkasan &amp; insight, Internal Sales, MDI, SDP + lampiran 3 sheet.</small></label>'
       + '<label data-j="hoa"><input type="radio" name="pfJenis" value="hoa"><b>Head of Area</b><small>1 email per area ke HOA (Master_Mapping): ringkasan area, sales, MDI, SDP area itu + lampiran 3 sheet.</small></label>'
-      + '<label data-j="mdi"><input type="radio" name="pfJenis" value="mdi"><b>Per MDI</b><small>1 email per partner + area. To/Cc dari Master_Mapping (TYPE MDI).</small></label>'
+      + '<label data-j="is"><input type="radio" name="pfJenis" value="is"><b>Per Internal Sales</b><small>1 email per sales (DSO/DSP) berisi capaiannya sendiri. To/Cc dari Master_Mapping (TYPE INTERNAL SALES).</small></label>'
+      + '<label data-j="mdi"><input type="radio" name="pfJenis" value="mdi"><b>Per MDI</b><small>1 email per partner, berisi semua area partner tersebut. To/Cc dari Master_Mapping (TYPE MDI).</small></label>'
       + '<label data-j="sdp"><input type="radio" name="pfJenis" value="sdp"><b>Per SDP</b><small>1 email per ID (MIM3 & 3KIOSK terpisah). To/Cc dari Master_Mapping.</small></label>'
       + '</div><div id="pfMatch" class="pf-match"></div></div>'
       + '<div class="pf-sec" id="pfHoa"></div>'
@@ -1147,7 +1234,7 @@
     if (!state.sender.email) { toast('Pengirim belum termuat dari server. Tunggu sebentar lalu coba lagi.'); return; }
     var groups = buildGroups();
     if (!groups.length) { toast('Tidak ada penerima untuk jenis kiriman ini.'); return; }
-    var label = { hor: 'Head of Region', hoa: 'Head of Area', mdi: 'MDI', sdp: 'SDP' }[P.jenis];
+    var label = { hor: 'Head of Region', hoa: 'Head of Area', is: 'Internal Sales', mdi: 'MDI', sdp: 'SDP' }[P.jenis];
     state.narrative = { judul: 'Performance Report ' + label, periode: P.periode, subjectTpl: '§subject', intro: '§insight', closing: '§closing' };
     var cols = Object.keys(groups[0].rows[0] || { Nama: '' });
     state.tableCols = cols.map(function (k) { return { key: k, label: k, included: true }; });
