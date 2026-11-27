@@ -315,7 +315,7 @@
 
   function insightSdp(e) {
     var r = e.row, d = P.data, out = [];
-    out.push('Pencapaian::**Score ' + Q(r.score) + '** (' + BAND_TXT[band(r.score)] + ').');
+    out.push('Pencapaian::**Score ' + Q(r.score) + '**.');
     out.push('KPI::' + kpiLine(r) + '.');
     var w = weakest(r);
     if (w && band(w.v) !== 'g') out.push('Prioritas::Perbaikan pada **' + w.k.label + '** ' + Q(w.v) + '.');
@@ -325,7 +325,7 @@
   }
   function insightMdi(r) {
     var d = P.data, out = [];
-    out.push('Pencapaian::**Score ' + Q(r.score) + '** (' + BAND_TXT[band(r.score)] + ').');
+    out.push('Pencapaian::**Score ' + Q(r.score) + '**.');
     out.push('KPI::' + kpiLine(r) + '.');
     var w = weakest(r);
     if (w && band(w.v) !== 'g') out.push('Prioritas::Perbaikan pada **' + w.k.label + '** ' + Q(w.v) + '.');
