@@ -1382,8 +1382,9 @@
     if (!mb || !mb.firstElementChild || !mb.clientWidth) return;
     var inner = mb.firstElementChild;
     inner.style.zoom = '';
-    // Lebar email = 820px + padding bingkai abu-abu 2 x 12px (+ ruang scrollbar).
-    var z = (mb.clientWidth - 24) / 870;
+    var cs = getComputedStyle(mb);
+    var avail = mb.clientWidth - parseFloat(cs.paddingLeft || 0) - parseFloat(cs.paddingRight || 0) - 4;
+    var z = avail / Math.max(1, inner.getBoundingClientRect().width);
     if (z > 0 && z < 1) inner.style.zoom = z.toFixed(3);
   }
   window.addEventListener('resize', fitPreview);
