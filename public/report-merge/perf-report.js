@@ -432,50 +432,56 @@
   function mStatus(list, unit) {
     var n = countBands(list);
     var cell = function (k) {
-      return '<td width="23.5%" valign="top" bgcolor="' + PILL[k][0] + '" style="' + F + 'background:' + PILL[k][0] + ';border-radius:14px;padding:12px 14px;">'
-        + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>'
-        + '<td valign="middle" style="' + F + 'font-size:12px;line-height:1.35;"><span style="color:' + DOT[k] + ';font-size:14px;">&#9679;</span>&nbsp;<b style="color:' + INK[k] + ';letter-spacing:.3px;">' + STATUS[k].label + '</b><br><span style="color:' + C.muted + ';">' + esc(LBL[k]) + '</span></td>'
-        + '<td align="right" valign="middle" style="' + F + 'white-space:nowrap;"><b style="font-size:26px;color:' + INK[k] + ';">' + n[k] + '</b> <span style="font-size:12px;color:' + C.muted + ';">' + esc(unit) + '</span></td>'
+      return '<td width="' + TILE_W + '" valign="top" bgcolor="' + PILL[k][0] + '" style="' + F + 'width:' + TILE_W + 'px;background:' + PILL[k][0] + ';border-radius:14px;padding:12px 14px;">'
+        + '<table role="presentation" width="' + (TILE_W - 28) + '" cellpadding="0" cellspacing="0" style="width:' + (TILE_W - 28) + 'px;border-collapse:collapse;table-layout:fixed;"><tr>'
+        + '<td width="' + (TILE_W - 28 - 62) + '" valign="top" style="' + F + 'font-size:12px;line-height:1.35;"><span style="color:' + DOT[k] + ';font-size:14px;">&#9679;</span>&nbsp;<b style="color:' + INK[k] + ';letter-spacing:.3px;">' + STATUS[k].label + '</b><br><span style="color:' + C.muted + ';">' + esc(LBL[k]) + '</span></td>'
+        + '<td width="62" align="right" valign="top" style="' + F + 'width:62px;white-space:nowrap;"><b style="font-size:26px;line-height:28px;color:' + INK[k] + ';">' + n[k] + '</b><br><span style="font-size:11px;color:' + C.muted + ';">' + esc(unit) + '</span></td>'
         + '</tr></table>'
         + '<div style="' + F + 'font-size:12px;color:' + C.body + ';margin-top:6px;line-height:1.45;">' + STATUS[k].aksi + '</div></td>';
     };
-    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:4px 0 8px 0;"><tr>'
-      + BKEYS.map(cell).join('<td width="2%" style="font-size:1px;">&nbsp;</td>') + '</tr></table>';
+    return '<table role="presentation" width="' + EW + '" cellpadding="0" cellspacing="0" style="width:' + EW + 'px;border-collapse:collapse;table-layout:fixed;margin:4px 0 8px 0;"><tr>'
+      + BKEYS.map(cell).join(gapTd()) + '</tr></table>';
   }
   function mP(txt) { return '<p style="' + F + 'font-size:14px;color:' + C.body + ';line-height:1.65;margin:0 0 14px 0;">' + txt + '</p>'; }
   function mText(raw) { return String(raw || '').split(/\n\s*\n/).filter(function (b) { return b.trim(); }).map(function (b) { return mP(esc(b).replace(/\n/g, '<br>')); }).join(''); }
   function mH(txt) { return '<p style="' + F + 'font-size:13px;font-weight:bold;color:' + C.ink + ';text-transform:uppercase;letter-spacing:.6px;margin:22px 0 10px 0;">' + txt + '</p>'; }
+  // Lebar konten email tetap (px) supaya tidak bergeser di Outlook Windows: 820 - 2x28 padding.
+  var EW = 764;
+  var TD0 = 'font-size:1px;line-height:1px;';
   function mSec(no, txt, sub) {
-    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:30px 0 6px 0;"><tr>'
-      + '<td width="34" height="34" style="' + F + 'width:34px;height:34px;background:' + C.magenta + ';color:#fff;font-size:15px;font-weight:bold;text-align:center;border-radius:9px;">' + esc(no) + '</td>'
-      + '<td style="' + F + 'padding-left:12px;"><div style="font-size:18px;font-weight:bold;color:' + C.ink + ';">' + esc(txt) + '</div>'
+    return '<table role="presentation" width="' + EW + '" cellpadding="0" cellspacing="0" style="width:' + EW + 'px;border-collapse:collapse;margin:30px 0 6px 0;"><tr>'
+      + '<td width="34" height="34" align="center" valign="middle" style="' + F + 'width:34px;height:34px;background:' + C.magenta + ';color:#fff;font-size:15px;font-weight:bold;text-align:center;border-radius:9px;">' + esc(no) + '</td>'
+      + '<td width="' + (EW - 34) + '" valign="middle" style="' + F + 'padding-left:12px;"><div style="font-size:18px;font-weight:bold;color:' + C.ink + ';">' + esc(txt) + '</div>'
       + (sub ? '<div style="font-size:12.5px;color:' + C.muted + ';margin-top:2px;">' + esc(sub) + '</div>' : '') + '</td></tr></table>'
-      + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:10px 0 4px 0;"><tr><td height="2" bgcolor="' + C.line + '" style="height:2px;line-height:2px;font-size:1px;background:' + C.line + ';">&nbsp;</td></tr></table>';
+      + '<table role="presentation" width="' + EW + '" cellpadding="0" cellspacing="0" style="width:' + EW + 'px;border-collapse:collapse;margin:10px 0 4px 0;"><tr><td height="2" bgcolor="' + C.line + '" style="height:2px;' + TD0 + 'background:' + C.line + ';">&nbsp;</td></tr></table>';
   }
   // Pill di dalam kalimat (span). Outlook Windows mengabaikan padding pada span, jadi diberi border warna sama sebagai "padding".
   function pill(v) { var b = band(v), p = PILL[b]; return '<span style="' + F + 'display:inline-block;background-color:' + p[0] + ';border:2px solid ' + p[0] + ';color:' + p[1] + ';font-weight:bold;font-size:12px;padding:1px 7px;border-radius:999px;white-space:nowrap;"><span style="color:' + DOT[b] + ';">&#9679;</span>&nbsp;' + pct(v) + '</span>'; }
   // Pill sebagai tabel kecil: tampil rapi juga di Outlook Windows (mesin Word).
   function pillBox(v, size, align) {
-    var p = PILL[band(v)];
-    return '<table role="presentation" cellpadding="0" cellspacing="0" border="0"' + (align ? ' align="' + align + '"' : '') + ' style="border-collapse:separate;"><tr><td bgcolor="' + p[0] + '" style="' + F + 'background:' + p[0] + ';color:' + p[1] + ';font-weight:bold;font-size:' + (size || 12) + 'px;line-height:1.2;padding:' + (size > 14 ? '5px 12px' : '3px 9px') + ';border-radius:999px;white-space:nowrap;mso-line-height-rule:exactly;"><span style="color:' + DOT[band(v)] + ';">&#9679;</span>&nbsp;' + pct(v) + '</td></tr></table>';
+    var p = PILL[band(v)], big = size > 14;
+    return '<table role="presentation" cellpadding="0" cellspacing="0" border="0"' + (align ? ' align="' + align + '"' : '') + ' style="border-collapse:separate;"><tr><td bgcolor="' + p[0] + '" style="' + F + 'background:' + p[0] + ';color:' + p[1] + ';font-weight:bold;font-size:' + (size || 12) + 'px;line-height:1.2;padding:' + (big ? '5px 12px' : '2px 7px') + ';border-radius:999px;white-space:nowrap;mso-line-height-rule:exactly;"><span style="color:' + DOT[band(v)] + ';">&#9679;</span>&nbsp;' + pct(v) + '</td></tr></table>';
   }
-  // Bar progres: lebar penuh = 130%, garis target di 83%.
-  function mBar(v, h) {
-    h = h || 8;
-    var w = v == null ? 0 : Math.max(1, Math.round(Math.min(v, 1.3) / 1.3 * 100));
-    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>'
-      + (w ? '<td width="' + w + '%" height="' + h + '" style="height:' + h + 'px;line-height:' + h + 'px;font-size:1px;background:' + C.teal + ';border-radius:' + h + 'px 0 0 ' + h + 'px;">&nbsp;</td>' : '')
-      + (w < 100 ? '<td height="' + h + '" style="height:' + h + 'px;line-height:' + h + 'px;font-size:1px;background:#EDEDF2;border-radius:0 ' + h + 'px ' + h + 'px 0;">&nbsp;</td>' : '')
+  // Bar progres berukuran tetap (px). Lebar penuh = 130%.
+  function mBar(v, h, width) {
+    h = h || 8; width = width || 150;
+    var w = v == null ? 0 : Math.max(1, Math.round(Math.min(v, 1.3) / 1.3 * width));
+    return '<table role="presentation" width="' + width + '" cellpadding="0" cellspacing="0" style="width:' + width + 'px;border-collapse:collapse;table-layout:fixed;"><tr>'
+      + (w ? '<td width="' + w + '" height="' + h + '" style="width:' + w + 'px;height:' + h + 'px;' + TD0 + 'background:' + C.teal + ';border-radius:' + h + 'px 0 0 ' + h + 'px;">&nbsp;</td>' : '')
+      + (w < width ? '<td width="' + (width - w) + '" height="' + h + '" style="width:' + (width - w) + 'px;height:' + h + 'px;' + TD0 + 'background:#EDEDF2;border-radius:0 ' + h + 'px ' + h + 'px 0;">&nbsp;</td>' : '')
       + '</tr></table>';
   }
+  // 4 kolom kartu: 4 x 185 + 3 x 8 = 764.
+  var TILE_W = 185, GAP = 8;
+  function gapTd() { return '<td width="' + GAP + '" style="width:' + GAP + 'px;' + TD0 + '">&nbsp;</td>'; }
   function mTiles(o, compare, cmpLbl) {
     var cells = [{ lbl: 'Score', v: o.score, cmp: compare && compare.score, big: true }].concat(KPIS.map(function (k) { return { lbl: k.label, v: o[k.id] && o[k.id].ach, cmp: compare && compare[k.id] && compare[k.id].ach }; }));
-    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:0 0 6px 0;"><tr>' + cells.map(function (c, ci) {
-      return (ci ? '<td width="8" style="width:8px;font-size:1px;">&nbsp;</td>' : '') + '<td width="24%" bgcolor="#FFFFFF" valign="top" style="' + F + 'background:#fff;border:1px solid ' + C.line + ';border-top:3px solid ' + C.teal + ';border-radius:12px;padding:12px 14px;vertical-align:top;">'
-        + '<div style="font-size:10.5px;color:' + C.muted + ';text-transform:uppercase;letter-spacing:.5px;font-weight:bold;height:26px;">' + esc(c.lbl) + '</div>'
-        + '<div style="margin:6px 0 8px 0;">' + pillBox(c.v, c.big ? 22 : 19) + '</div>'
-        + mBar(c.v, 6)
-        + (c.cmp != null ? '<div style="font-size:11px;color:' + C.muted + ';margin-top:7px;">' + esc(cmpLbl || 'Sumatera') + ' <b style="color:' + C.body + ';">' + pct(c.cmp) + '</b></div>' : '')
+    return '<table role="presentation" width="' + EW + '" cellpadding="0" cellspacing="0" style="width:' + EW + 'px;border-collapse:collapse;table-layout:fixed;margin:0 0 6px 0;"><tr>' + cells.map(function (c, ci) {
+      return (ci ? gapTd() : '') + '<td width="' + TILE_W + '" bgcolor="#FFFFFF" valign="top" style="' + F + 'width:' + TILE_W + 'px;background:#fff;border:1px solid ' + C.line + ';border-top:3px solid ' + C.teal + ';border-radius:12px;padding:12px 14px;vertical-align:top;">'
+        + '<div style="font-size:10.5px;color:' + C.muted + ';text-transform:uppercase;letter-spacing:.5px;font-weight:bold;height:28px;line-height:14px;overflow:hidden;">' + esc(c.lbl) + '</div>'
+        + '<div style="margin:6px 0 8px 0;">' + pillBox(c.v, c.big ? 20 : 18) + '</div>'
+        + mBar(c.v, 6, TILE_W - 30)
+        + (c.cmp != null ? '<div style="font-size:11px;color:' + C.muted + ';margin-top:7px;white-space:nowrap;">' + esc(cmpLbl || 'Sumatera') + ' <b style="color:' + C.body + ';">' + pct(c.cmp) + '</b></div>' : '')
         + '</td>';
     }).join('') + '</tr></table>';
   }
@@ -484,47 +490,62 @@
   }
   function insPlain(list) { return list.map(function (t) { return t.replace(/^([^:]{1,24})::/, '$1: ').replace(/\[\[(null|-?[\d.e-]+)\]\]/g, function (_, v) { return pct(v === 'null' ? null : Number(v)); }).replace(/\*\*/g, ''); }).join('\n'); }
   function mInsight(list, judul) {
-    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:14px 0 6px 0;"><tr>'
-      + '<td width="4" style="width:4px;background:' + C.teal + ';border-radius:4px;">&nbsp;</td>'
-      + '<td style="' + F + 'background:#EEF9F7;padding:14px 18px;border-radius:0 12px 12px 0;">'
+    var inner = EW - 4 - 36;
+    return '<table role="presentation" width="' + EW + '" cellpadding="0" cellspacing="0" style="width:' + EW + 'px;border-collapse:collapse;table-layout:fixed;margin:14px 0 6px 0;"><tr>'
+      + '<td width="4" style="width:4px;' + TD0 + 'background:' + C.teal + ';">&nbsp;</td>'
+      + '<td width="' + (EW - 4) + '" style="' + F + 'background:#EEF9F7;padding:14px 18px;border-radius:0 12px 12px 0;">'
       + '<div style="font-size:12px;font-weight:bold;color:' + C.tealDk + ';text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">' + esc(judul || 'Insight') + '</div>'
-      + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">'
+      + '<table role="presentation" width="' + inner + '" cellpadding="0" cellspacing="0" style="width:' + inner + 'px;border-collapse:collapse;table-layout:fixed;">'
       + list.map(function (t, i) {
         var m = String(t).match(/^([^:]{1,24})::/);
-        return '<tr><td width="96" valign="top" style="' + F + 'width:96px;font-size:11px;font-weight:bold;color:' + C.tealDk + ';text-transform:uppercase;letter-spacing:.5px;padding:6px 10px 6px 0;' + (i ? 'border-top:1px solid #D7EEEA;' : '') + '">' + esc(m ? m[1] : '') + '</td>'
-          + '<td valign="top" style="' + F + 'font-size:13.5px;color:' + C.body + ';line-height:1.8;padding:4px 0;' + (i ? 'border-top:1px solid #D7EEEA;' : '') + '">' + insHtml(t) + '</td></tr>';
+        var bt = i ? 'border-top:1px solid #D7EEEA;' : '';
+        return '<tr><td width="100" valign="top" style="' + F + 'width:100px;font-size:11px;font-weight:bold;color:' + C.tealDk + ';text-transform:uppercase;letter-spacing:.5px;padding:7px 10px 7px 0;' + bt + '">' + esc(m ? m[1] : '') + '</td>'
+          + '<td width="' + (inner - 100) + '" valign="top" style="' + F + 'font-size:13.5px;color:' + C.body + ';line-height:1.8;padding:4px 0;word-wrap:break-word;' + bt + '">' + insHtml(t) + '</td></tr>';
       }).join('') + '</table>'
       + '</td></tr></table>';
   }
-  // Grafik batang horizontal: [{nama, v, sub}]
+  // Grafik batang horizontal (lebar tetap): nama 170 | batang 504 | nilai 90.
   function mBars(items) {
-    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">' + items.map(function (it) {
-      return '<tr><td width="150" style="' + F + 'font-size:12.5px;color:' + C.ink + ';padding:5px 10px 5px 0;white-space:nowrap;width:150px;">' + esc(it.nama) + (it.sub ? '<div style="font-size:10.5px;color:' + C.muted + ';">' + esc(it.sub) + '</div>' : '') + '</td>'
-        + '<td style="padding:5px 0;">' + mBar(it.v, 10) + '</td>'
-        + '<td width="72" align="right" style="' + F + 'text-align:right;padding:5px 0 5px 10px;width:72px;white-space:nowrap;">' + pillBox(it.v, 12, 'right') + '</td></tr>';
+    var NW = 170, VW = 90, BW = EW - NW - VW;
+    return '<table role="presentation" width="' + EW + '" cellpadding="0" cellspacing="0" style="width:' + EW + 'px;border-collapse:collapse;table-layout:fixed;">' + items.map(function (it) {
+      return '<tr><td width="' + NW + '" valign="middle" style="' + F + 'width:' + NW + 'px;font-size:12.5px;color:' + C.ink + ';padding:5px 10px 5px 0;overflow:hidden;">' + esc(it.nama) + (it.sub ? '<div style="font-size:10.5px;color:' + C.muted + ';">' + esc(it.sub) + '</div>' : '') + '</td>'
+        + '<td width="' + BW + '" valign="middle" style="width:' + BW + 'px;padding:5px 0;">' + mBar(it.v, 10, BW) + '</td>'
+        + '<td width="' + VW + '" align="right" valign="middle" style="' + F + 'width:' + VW + 'px;text-align:right;padding:5px 0;">' + pillBox(it.v, 12, 'right') + '</td></tr>';
     }).join('') + '</table>';
   }
-  // Batang bertumpuk sebaran hijau/kuning/merah: [{nama, g, y, r, n}]
+  // Batang bertumpuk sebaran status (lebar tetap): nama 170 | batang 464 | jumlah 130.
   function mStack(items) {
-    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">' + items.map(function (it) {
-      var seg = function (k, n) { return n ? '<td width="' + Math.max(1, Math.round(n / it.n * 100)) + '%" height="12" style="height:12px;font-size:1px;line-height:12px;background:' + BAR[k] + ';">&nbsp;</td>' : ''; };
-      return '<tr><td style="' + F + 'font-size:12.5px;color:' + C.ink + ';padding:5px 10px 5px 0;white-space:nowrap;width:150px;">' + esc(it.nama) + '</td>'
-        + '<td style="padding:5px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>' + BKEYS.map(function (k) { return seg(k, it[k] || 0); }).join('') + '</tr></table></td>'
-        + '<td style="' + F + 'font-size:11.5px;color:' + C.muted + ';text-align:right;padding:5px 0 5px 10px;width:110px;white-space:nowrap;">' + BKEYS.map(function (k) { return '<b style="color:' + INK[k] + ';">' + (it[k] || 0) + '</b>'; }).join(' · ') + '</td></tr>';
-    }).join('') + '</table>';
+    var NW = 170, CW = 130, BW = EW - NW - CW;
+    return '<table role="presentation" width="' + EW + '" cellpadding="0" cellspacing="0" style="width:' + EW + 'px;border-collapse:collapse;table-layout:fixed;">' + items.map(function (it) {
+      var sisa = BW, segs = BKEYS.filter(function (k) { return it[k]; });
+      var html = segs.map(function (k, idx) {
+        var w = idx === segs.length - 1 ? sisa : Math.max(1, Math.round(it[k] / it.n * BW));
+        sisa -= w;
+        return '<td width="' + w + '" height="12" style="width:' + w + 'px;height:12px;' + TD0 + 'background:' + BAR[k] + ';">&nbsp;</td>';
+      }).join('');
+      return '<tr><td width="' + NW + '" style="' + F + 'width:' + NW + 'px;font-size:12.5px;color:' + C.ink + ';padding:5px 10px 5px 0;">' + esc(it.nama) + '</td>'
+        + '<td width="' + BW + '" style="width:' + BW + 'px;padding:5px 0;"><table role="presentation" width="' + BW + '" cellpadding="0" cellspacing="0" style="width:' + BW + 'px;border-collapse:collapse;table-layout:fixed;"><tr>' + html + '</tr></table></td>'
+        + '<td width="' + CW + '" align="right" style="' + F + 'width:' + CW + 'px;font-size:11.5px;color:' + C.muted + ';text-align:right;padding:5px 0 5px 10px;white-space:nowrap;">' + BKEYS.map(function (k) { return '<b style="color:' + INK[k] + ';">' + (it[k] || 0) + '</b>'; }).join(' · ') + '</td></tr>';
+    }).join('') + '</table>'
+      + '<p style="' + F + 'font-size:11px;color:' + C.muted + ';margin:6px 0 0 0;">Urutan angka: ' + BKEYS.map(function (k) { return STATUS[k].label; }).join(' · ') + '</p>';
   }
-  // cols: [{label, get(row) -> value, kind: 'pct'|'num'|'text'}]
+  // Tabel lebar tetap (764px, table-layout fixed): kolom persen 88px, angka 76px, sisa dibagi rata ke kolom teks.
+  var COLW = { pct: 88, num: 76 };
   function mTable(cols, rows) {
-    var th = F + 'background:' + C.bg + ';color:' + C.muted + ';font-size:10.5px;font-weight:bold;text-transform:uppercase;letter-spacing:.4px;padding:9px 10px;text-align:left;border-bottom:1px solid ' + C.line + ';white-space:nowrap;';
-    var html = '<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:separate;border-spacing:0;border:1px solid ' + C.line + ';border-radius:12px;margin:0 0 6px 0;"><tr>'
-      + cols.map(function (c) { return '<th style="' + th + (c.kind && c.kind !== 'text' ? 'text-align:right;' : '') + '">' + esc(c.label) + '</th>'; }).join('') + '</tr>';
+    var fixed = 0, nText = 0;
+    cols.forEach(function (c) { if (c.kind === 'pct' || c.kind === 'num') fixed += COLW[c.kind]; else nText++; });
+    var tw = nText ? Math.floor((EW - 2 - fixed) / nText) : 0;
+    var widths = cols.map(function (c) { return c.kind === 'pct' || c.kind === 'num' ? COLW[c.kind] : tw; });
+    var th = F + 'background:' + C.bg + ';color:' + C.muted + ';font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:.3px;padding:9px 6px;border-bottom:1px solid ' + C.line + ';word-wrap:break-word;';
+    var html = '<table role="presentation" width="' + EW + '" cellpadding="0" cellspacing="0" style="width:' + EW + 'px;border-collapse:separate;border-spacing:0;table-layout:fixed;border:1px solid ' + C.line + ';border-radius:12px;margin:0 0 6px 0;"><tr>'
+      + cols.map(function (c, ci) { var right = c.kind === 'pct' || c.kind === 'num'; return '<th width="' + widths[ci] + '" align="' + (right ? 'right' : 'left') + '" style="' + th + 'width:' + widths[ci] + 'px;text-align:' + (right ? 'right' : 'left') + ';' + (ci === 0 ? 'padding-left:12px;' : '') + '">' + esc(c.label) + '</th>'; }).join('') + '</tr>';
     rows.forEach(function (r, i) {
       var last = i === rows.length - 1;
-      html += '<tr>' + cols.map(function (c) {
-        var v = c.get(r), st = F + 'font-size:12.5px;padding:7px 10px;white-space:nowrap;color:' + C.body + ';' + (last ? '' : 'border-bottom:1px solid #F0F0F4;') + (i % 2 ? 'background:#FAFAFC;' : 'background:#FFFFFF;');
-        if (c.kind === 'pct') return '<td align="right" style="' + st + 'text-align:right;">' + pillBox(v, 12, 'right') + '</td>';
-        if (c.kind === 'num') return '<td style="' + st + 'text-align:right;">' + fmt(v) + '</td>';
-        return '<td style="' + st + (c.bold ? 'font-weight:bold;color:' + C.ink + ';' : '') + '">' + esc(v) + '</td>';
+      html += '<tr>' + cols.map(function (c, ci) {
+        var v = c.get(r), st = F + 'width:' + widths[ci] + 'px;font-size:12.5px;padding:7px 6px;color:' + C.body + ';vertical-align:middle;' + (ci === 0 ? 'padding-left:12px;' : '') + (last ? '' : 'border-bottom:1px solid #F0F0F4;') + (i % 2 ? 'background:#FAFAFC;' : 'background:#FFFFFF;');
+        if (c.kind === 'pct') return '<td width="' + widths[ci] + '" align="right" style="' + st + 'text-align:right;padding-right:6px;">' + pillBox(v, 11, 'right') + '</td>';
+        if (c.kind === 'num') return '<td width="' + widths[ci] + '" align="right" style="' + st + 'text-align:right;white-space:nowrap;">' + fmt(v) + '</td>';
+        return '<td width="' + widths[ci] + '" style="' + st + 'word-wrap:break-word;' + (c.bold ? 'font-weight:bold;color:' + C.ink + ';' : '') + '">' + esc(v) + '</td>';
       }).join('') + '</tr>';
     });
     return html + '</table>';
@@ -551,7 +572,7 @@
       + '<div style="font-size:24px;font-weight:bold;color:#fff;margin-top:6px;">' + esc(head.title || 'Performance Report') + '</div>'
       + (head.sub ? '<div style="font-size:13px;color:#B9B9C6;margin-top:4px;">' + esc(head.sub) + '</div>' : '')
       + '</td></tr>'
-      + '<tr><td style="' + F + 'padding:26px 28px 10px 28px;">' + inner + '</td></tr>'
+      + '<tr><td width="820" style="' + F + 'padding:26px 28px 10px 28px;">' + inner + '</td></tr>'
       + '<tr><td style="' + F + 'padding:16px 28px 22px 28px;border-top:1px solid ' + C.line + ';font-size:11.5px;color:' + C.muted + ';line-height:1.6;">'
       + 'Email ini dikirim otomatis dari SandraHub (Smart Mail Sumatera) — Sales &amp; Distribution, Indosat Circle Sumatera.</td></tr>'
       + '</table>'
@@ -709,7 +730,6 @@
               + mInsight(ins, 'Insight Utama')
               + mH('Detail') + mTable([
                 { label: 'Cluster', bold: true, get: function (x) { return x.CLUSTER; } },
-                { label: 'Area', get: function (x) { return title(x.AREA); } },
                 { label: 'Trad Target', kind: 'num', get: function (x) { return x.trad.t; } },
                 { label: 'Trad Actual', kind: 'num', get: function (x) { return x.trad.a; } },
                 { label: 'FWA Target', kind: 'num', get: function (x) { return x.fwa.t; } },
