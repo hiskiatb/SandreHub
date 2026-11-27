@@ -414,7 +414,7 @@
   }
   /* ======================= HTML email (tema SandraHub) ======================= */
   // Semua gaya inline + tabel (klien email seperti Outlook membuang <style>, flex, dan gradient).
-  var F = 'font-family:Arial,Helvetica,sans-serif;';
+  var F = 'font-family:Arial,sans-serif;';
   var C = { ink: '#1F1F24', body: '#4D4D4F', muted: '#6B6B78', line: '#E6E6EC', bg: '#F4F4F7', card: '#FFFFFF', dark: '#16161B', teal: '#32BCAD', tealDk: '#1E8C80', magenta: '#C6168D', yellow: '#FFCB05', red: '#ED1C24' };
   // Warna status standar laporan performa (RAG): isi solid hijau / kuning-amber / merah.
   var BAR = { g: '#12A150', y: '#E0A100', o: '#EE6A1F', r: '#E03A2F', na: '#D5D5DD' };
@@ -510,9 +510,9 @@
   function mBars(items) {
     var NW = 170, VW = 90, BW = EW - NW - VW;
     return '<table role="presentation" width="' + EW + '" cellpadding="0" cellspacing="0" style="width:' + EW + 'px;border-collapse:collapse;table-layout:fixed;">' + items.map(function (it) {
-      return '<tr><td width="' + NW + '" valign="middle" style="' + F + 'width:' + NW + 'px;font-size:12.5px;color:' + C.ink + ';padding:5px 10px 5px 0;overflow:hidden;">' + esc(it.nama) + (it.sub ? '<div style="font-size:10.5px;color:' + C.muted + ';">' + esc(it.sub) + '</div>' : '') + '</td>'
-        + '<td width="' + BW + '" valign="middle" style="width:' + BW + 'px;padding:5px 0;">' + mBar(it.v, 10, BW) + '</td>'
-        + '<td width="' + VW + '" align="right" valign="middle" style="' + F + 'width:' + VW + 'px;text-align:right;padding:5px 0;">' + pillS(it.v) + '</td></tr>';
+      return '<tr><td width="' + NW + '" style="font:12.5px Arial,sans-serif;color:' + C.ink + ';padding:5px 10px 5px 0;">' + esc(it.nama) + (it.sub ? '<div style="font-size:10.5px;color:' + C.muted + ';">' + esc(it.sub) + '</div>' : '') + '</td>'
+        + '<td width="' + BW + '" style="padding:5px 0;">' + mBar(it.v, 10, BW) + '</td>'
+        + '<td width="' + VW + '" align="right" style="padding:5px 0;white-space:nowrap;">' + pillS(it.v) + '</td></tr>';
     }).join('') + '</table>';
   }
   // Batang bertumpuk sebaran status (lebar tetap): nama 170 | batang 464 | jumlah 130.
@@ -541,13 +541,14 @@
     var th = F + 'background:' + C.bg + ';color:' + C.muted + ';font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:.3px;padding:9px 6px;border-bottom:1px solid ' + C.line + ';word-wrap:break-word;';
     var html = '<table role="presentation" width="' + EW + '" cellpadding="0" cellspacing="0" style="width:' + EW + 'px;border-collapse:separate;border-spacing:0;table-layout:fixed;border:1px solid ' + C.line + ';border-radius:12px;margin:0 0 6px 0;"><tr>'
       + cols.map(function (c, ci) { var right = c.kind === 'pct' || c.kind === 'num'; return '<th width="' + widths[ci] + '" align="' + (right ? 'right' : 'left') + '" style="' + th + 'width:' + widths[ci] + 'px;text-align:' + (right ? 'right' : 'left') + ';' + (ci === 0 ? 'padding-left:12px;' : '') + '">' + esc(c.label) + '</th>'; }).join('') + '</tr>';
+    // Baris data: lebar kolom cukup di baris header (table-layout fixed), warna baris di <tr bgcolor>.
     rows.forEach(function (r, i) {
-      var last = i === rows.length - 1;
-      html += '<tr>' + cols.map(function (c, ci) {
-        var v = c.get(r), st = F + 'width:' + widths[ci] + 'px;font-size:12.5px;padding:7px 6px;color:' + C.body + ';vertical-align:middle;' + (ci === 0 ? 'padding-left:12px;' : '') + (last ? '' : 'border-bottom:1px solid #F0F0F4;') + (i % 2 ? 'background:#FAFAFC;' : 'background:#FFFFFF;');
-        if (c.kind === 'pct') return '<td width="' + widths[ci] + '" align="right" style="' + st + 'text-align:right;padding-right:6px;white-space:nowrap;">' + pillS(v) + '</td>';
-        if (c.kind === 'num') return '<td width="' + widths[ci] + '" align="right" style="' + st + 'text-align:right;white-space:nowrap;">' + fmt(v) + '</td>';
-        return '<td width="' + widths[ci] + '" style="' + st + 'word-wrap:break-word;' + (c.bold ? 'font-weight:bold;color:' + C.ink + ';' : '') + '">' + esc(v) + '</td>';
+      var last = i === rows.length - 1, bg = i % 2 ? '#FAFAFC' : '#FFFFFF';
+      html += '<tr bgcolor="' + bg + '">' + cols.map(function (c, ci) {
+        var v = c.get(r), st = 'font:12.5px Arial,sans-serif;color:' + C.body + ';padding:7px 6px' + (ci === 0 ? ' 7px 12px' : '') + ';' + (last ? '' : 'border-bottom:1px solid #F0F0F4;');
+        if (c.kind === 'pct') return '<td align="right" style="' + st + 'white-space:nowrap;">' + pillS(v) + '</td>';
+        if (c.kind === 'num') return '<td align="right" style="' + st + 'white-space:nowrap;">' + fmt(v) + '</td>';
+        return '<td style="' + st + 'word-wrap:break-word;' + (c.bold ? 'font-weight:bold;color:' + C.ink + ';' : '') + '">' + esc(v) + '</td>';
       }).join('') + '</tr>';
     });
     return html + '</table>';
