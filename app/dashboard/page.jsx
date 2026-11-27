@@ -1399,6 +1399,8 @@ export default function DashboardPage() {
                     </>
                   )}
                   {!isSDPMember && !isMPX && (!isAdminArea || isAdminLevel) && <SNavItem icon={<Wallet size={14} />}      label="Payout Tracker"       active={view === "payout-tracker"} maint={menuMaint("payout-tracker")} onClick={() => navigate("payout-tracker")} />}
+                  {/* Smart Mail Sumatera dikeluarkan dari Archive, ditaruh tepat di bawah Payout Tracker (permintaan Saila 2026-11-27). */}
+                  {canReportMerge && <SNavItem icon={<Mail size={14} />}         label="Smart Mail Sumatera" active={view === "report-merge"}     onClick={() => navigate("report-merge")} />}
                   {canSdp       && <SNavItem icon={<Store size={14} />}       label="SDP Management"       active={view === "sdp2"}           onClick={() => navigate("sdp2")} />}
                   {/* UPDATE (permintaan user - "mapping admin mc itu
                       seharusnya didalam dse prod, bukan menjadi menu
@@ -1484,7 +1486,6 @@ export default function DashboardPage() {
                           {isSPM        && <SNavItem icon={<MapPin size={14} />}           label="MC/Cluster Mapping" active={view === "mc-cluster"}       onClick={() => navigate("mc-cluster")} />}
                           {isSPM        && <SNavItem icon={<Key size={14} />}              label="Kode Otoritas"      active={view === "kode-otoritas"}    onClick={() => navigate("kode-otoritas")} />}
                           {isSPM        && <SNavItem icon={<Shield size={14} />}            label="Kode Otoritas MPX"  active={view === "admin-panel"}      onClick={() => navigate("admin-panel")} />}
-                          {canReportMerge && <SNavItem icon={<Mail size={14} />}         label="Smart Mail Sumatera" active={view === "report-merge"}     onClick={() => navigate("report-merge")} />}
                         </>
                       )}
                     </>
@@ -1722,6 +1723,14 @@ export default function DashboardPage() {
                       accent={{ color: "#C6168D", bg: d ? "rgba(198,22,141,0.11)" : "rgba(198,22,141,0.07)", bd: d ? "rgba(198,22,141,0.28)" : "rgba(198,22,141,0.16)", shadow: "rgba(198,22,141,0.16)" }} />
                   )}
 
+                  {/* Smart Mail Sumatera: keluar dari Archive, di samping Payout Tracker. */}
+                  {canReportMerge && (
+                    <DashCard icon={<Mail size={20} />} title="Smart Mail Sumatera"
+                      desc="Blast Email Report serta surat Partner SDP & MDI: generate PDF, approval, dan kirim email."
+                      tag={isSPM ? "SPM" : "IOH"} active={true} onClick={() => navigate("report-merge")} t={t} d={d}
+                      accent={{ color: d ? "#818CF8" : "#4F46E5", bg: d ? "rgba(129,140,248,0.11)" : "rgba(79,70,229,0.07)", bd: d ? "rgba(129,140,248,0.28)" : "rgba(79,70,229,0.16)", shadow: "rgba(79,70,229,0.16)" }} />
+                  )}
+
                   {/* SDP Management — SPM, BSM, CSE, PIC, dan IOH (lihat saja) */}
                   {canSdp && (
                     <DashCard icon={<Store size={20} />} title="SDP Management"
@@ -1863,12 +1872,6 @@ export default function DashboardPage() {
                             accent={{ color: d ? "#A78BFA" : "#7C3AED", bg: d ? "rgba(167,139,250,0.11)" : "rgba(124,58,237,0.07)", bd: d ? "rgba(167,139,250,0.28)" : "rgba(124,58,237,0.18)", shadow: "rgba(124,58,237,0.18)" }} />
                         )}
 
-                        {canReportMerge && (
-                          <DashCard icon={<Mail size={20} />} title="Smart Mail Sumatera"
-                            desc="Blast Email Report serta surat Partner SDP & MDI: generate PDF, approval, dan kirim email."
-                            tag={isSPM ? "SPM" : "IOH"} active={true} onClick={() => navigate("report-merge")} t={t} d={d}
-                            accent={{ color: d ? "#818CF8" : "#4F46E5", bg: d ? "rgba(129,140,248,0.11)" : "rgba(79,70,229,0.07)", bd: d ? "rgba(129,140,248,0.28)" : "rgba(79,70,229,0.16)", shadow: "rgba(79,70,229,0.16)" }} />
-                        )}
                       </div>
                     )}
                   </div>
