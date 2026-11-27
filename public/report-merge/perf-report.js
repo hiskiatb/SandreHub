@@ -773,7 +773,7 @@
     '.pf-st{ border-radius:14px; padding:14px 16px; }',
     '.pf-st .h{ display:flex; align-items:baseline; justify-content:space-between; gap:8px; }',
     '.pf-st .k{ font-weight:800; letter-spacing:.03em; font-size:13px; } .pf-st .k::before{ content:"\\25CF"; margin-right:7px; font-size:15px; }',
-    '.pf-st .rg{ font-weight:500; opacity:.75; margin-left:6px; } .pf-st .n{ font-size:28px; font-weight:800; } .pf-st .u{ font-size:12px; opacity:.75; margin-left:3px; }',
+    '.pf-st .h{ align-items:flex-start; } .pf-st .k{ white-space:nowrap; } .pf-st .rg{ display:block; font-weight:500; opacity:.75; margin:3px 0 0 22px; } .pf-st .n{ font-size:28px; font-weight:800; } .pf-st .u{ font-size:12px; opacity:.75; margin-left:3px; }',
     '.pf-st .a{ font-size:12px; margin-top:6px; opacity:.9; }',
     '.pf-st.g{ background:#E2F3E8; color:#0E7A3E; } .pf-st.y{ background:#FBF0CC; color:#A67600; } .pf-st.r{ background:#F9DEDA; color:#C42318; }',
     '.pf-st.g .k::before{ color:#12A150; } .pf-st.y .k::before{ color:#E0A100; } .pf-st.r .k::before{ color:#E03A2F; }',
