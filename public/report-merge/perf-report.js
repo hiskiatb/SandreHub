@@ -400,19 +400,19 @@
     h = h || 8;
     var w = v == null ? 0 : Math.max(1, Math.round(Math.min(v, 1.3) / 1.3 * 100));
     return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>'
-      + (w ? '<td width="' + w + '%" style="height:' + h + 'px;line-height:' + h + 'px;font-size:1px;background:' + BAR[band(v)] + ';border-radius:' + h + 'px 0 0 ' + h + 'px;">&nbsp;</td>' : '')
+      + (w ? '<td width="' + w + '%" style="height:' + h + 'px;line-height:' + h + 'px;font-size:1px;background:' + C.teal + ';border-radius:' + h + 'px 0 0 ' + h + 'px;">&nbsp;</td>' : '')
       + (w < 100 ? '<td style="height:' + h + 'px;line-height:' + h + 'px;font-size:1px;background:#EDEDF2;border-radius:0 ' + h + 'px ' + h + 'px 0;">&nbsp;</td>' : '')
       + '</tr></table>';
   }
   function mTiles(o, compare) {
     var cells = [{ lbl: 'Score', v: o.score, cmp: compare && compare.score, big: true }].concat(KPIS.map(function (k) { return { lbl: k.label, v: o[k.id] && o[k.id].ach, cmp: compare && compare[k.id] && compare[k.id].ach }; }));
     return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;border-spacing:8px 0;margin:0 -8px 6px -8px;"><tr>' + cells.map(function (c) {
-      var pc = PILL[band(c.v)], STAT = { g: 'TERCAPAI', y: 'WASPADA', r: 'DI BAWAH TARGET', na: '' }[band(c.v)];
-      return '<td width="25%" style="' + F + 'background:' + pc[0] + ';border-radius:12px;padding:12px 14px;vertical-align:top;">'
-        + '<div style="font-size:10.5px;color:' + pc[1] + ';text-transform:uppercase;letter-spacing:.5px;font-weight:bold;min-height:26px;">' + esc(c.lbl) + '</div>'
-        + '<div style="font-size:' + (c.big ? 28 : 24) + 'px;font-weight:bold;color:' + pc[1] + ';margin:4px 0 4px 0;">' + pct(c.v) + '</div>'
-        + '<div style="font-size:10.5px;font-weight:bold;letter-spacing:.6px;color:' + pc[1] + ';">' + STAT + '</div>'
-        + (c.cmp != null ? '<div style="font-size:11px;color:' + pc[1] + ';margin-top:6px;">Sumatera <b>' + pct(c.cmp) + '</b></div>' : '')
+      var pc = PILL[band(c.v)];
+      return '<td width="25%" style="' + F + 'background:#fff;border:1px solid ' + C.line + ';border-top:3px solid ' + C.teal + ';border-radius:12px;padding:12px 14px;vertical-align:top;">'
+        + '<div style="font-size:10.5px;color:' + C.muted + ';text-transform:uppercase;letter-spacing:.5px;font-weight:bold;min-height:26px;">' + esc(c.lbl) + '</div>'
+        + '<div style="margin:6px 0 8px 0;"><span style="display:inline-block;background:' + pc[0] + ';color:' + pc[1] + ';font-size:' + (c.big ? 22 : 19) + 'px;font-weight:bold;padding:4px 12px;border-radius:10px;">' + pct(c.v) + '</span></div>'
+        + mBar(c.v, 6)
+        + (c.cmp != null ? '<div style="font-size:11px;color:' + C.muted + ';margin-top:7px;">Sumatera <b style="color:' + C.body + ';">' + pct(c.cmp) + '</b></div>' : '')
         + '</td>';
     }).join('') + '</tr></table>';
   }
@@ -643,7 +643,6 @@
     '.pf-g{ color:#00A651; } .pf-y{ color:#E0A800; } .pf-r{ color:#FF3B3B; } .pf-na{ color:var(--muted); }',
     '.pf-bg-g{ background:#00A651 !important; color:#fff !important; } .pf-bg-y{ background:#FFC000 !important; color:#3B2C00 !important; } .pf-bg-r{ background:#E3000F !important; color:#fff !important; } .pf-bg-na{ color:var(--muted); }',
     '.pf-card.pf-bg-g .l, .pf-card.pf-bg-r .l, .pf-card.pf-bg-g .s, .pf-card.pf-bg-r .s{ color:rgba(255,255,255,.88); } .pf-card.pf-bg-y .l, .pf-card.pf-bg-y .s{ color:rgba(59,44,0,.85); } .pf-card[class*=pf-bg-]{ border:0; }',
-    '.pf-tbl td.c{ border:2px solid var(--surf) !important; }',
     '.pf-grid2{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }',
     '.pf-box{ border:1px solid var(--line); border-radius:14px; padding:14px 16px; background:var(--surf); min-width:0; }',
     '.pf-box h4{ margin:0 0 10px; font-size:13.5px; }',
@@ -654,7 +653,9 @@
     '.pf-bar .t i{ position:absolute; left:0; top:0; bottom:0; border-radius:6px; }',
     '.pf-bar .t b{ position:absolute; top:-2px; bottom:-2px; width:2px; background:var(--ink2); opacity:.45; }',
     '.pf-bar .p{ text-align:right; font-weight:700; font-variant-numeric:tabular-nums; }',
-    '.pf-i-g{ background:#00A651; } .pf-i-y{ background:#FFC000; } .pf-i-r{ background:#E3000F; } .pf-i-na{ background:var(--line); }',
+    '.pf-i-g, .pf-i-y, .pf-i-r{ background:var(--ioh-teal); } .pf-i-na{ background:var(--line); }',
+    '.pf-s-g{ background:#00A651; } .pf-s-y{ background:#FFC000; } .pf-s-r{ background:#E3000F; }',
+    '.pf-card .v .pf-pill{ font-size:24px; padding:4px 12px; border-radius:10px; }',
     '.pf-reg{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }',
     '.pf-reg .pf-bar{ grid-template-columns:78px 1fr 64px; }',
     '.pf-pill{ display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700; }',
@@ -684,8 +685,9 @@
   document.head.appendChild(css);
 
   /* ======================= Visualisasi (Tahap 2) ======================= */
+  function cellPct(v) { return '<td class="c"><span class="pf-pill pf-bg-' + band(v) + '">' + pct(v) + '</span></td>'; }
   function card(lbl, v, sub) {
-    return '<div class="pf-card pf-bg-' + band(v) + '"><div class="l">' + esc(lbl) + '</div><div class="v">' + pct(v) + '</div>' + (sub ? '<div class="s">' + sub + '</div>' : '') + '</div>';
+    return '<div class="pf-card"><div class="l">' + esc(lbl) + '</div><div class="v"><span class="pf-pill pf-bg-' + band(v) + '">' + pct(v) + '</span></div>' + (sub ? '<div class="s">' + sub + '</div>' : '') + '</div>';
   }
   function bar(name, v, title2) {
     var w = v == null ? 0 : Math.min(v, 1.3) / 1.3 * 100;
@@ -727,7 +729,7 @@
     var hmKosong = !areas.length ? '<tr><td colspan="5" class="hint" style="white-space:normal;padding:14px 8px;">' + (d.areas.length ? 'Tidak ada area untuk region ini.' : 'Blok AREA tidak ditemukan di sheet Internal Sales (blok yang terbaca: ' + esc(Object.keys(d.is).join(', ') || '-') + '). Pastikan ada tabel dengan header kolom pertama "AREA" dan baris sub-header TARGET / ACTUAL / ACH.') + '</td></tr>' : '';
     html += '<div class="pf-box"><h4>Heatmap Area × KPI</h4><div class="pf-scroll"><table class="pf-tbl"><thead><tr><th>Area</th>' + KPIS.map(function (k) { return '<th>' + esc(k.short) + '</th>'; }).join('') + '<th>Score</th></tr></thead><tbody>'
       + areas.map(function (a) {
-        return '<tr><td title="' + esc(title(a.REGION)) + '">' + esc(title(a.nama)) + '</td>' + KPIS.map(function (k) { return '<td class="c pf-bg-' + band(a[k.id].ach) + '">' + pct(a[k.id].ach) + '</td>'; }).join('') + '<td class="c pf-bg-' + band(a.score) + '">' + pct(a.score) + '</td></tr>';
+        return '<tr><td title="' + esc(title(a.REGION)) + '">' + esc(title(a.nama)) + '</td>' + KPIS.map(function (k) { return cellPct(a[k.id].ach); }).join('') + cellPct(a.score) + '</tr>';
       }).join('') + hmKosong + '</tbody></table></div></div>';
     var mdi = d.mdi.filter(function (r) { return inRegion(r.region); }).sort(byScoreDesc);
     html += '<div class="pf-box"><h4>Ranking MDI (Score)</h4><div class="pf-scroll"><div class="pf-bars">' + mdi.map(function (r) {
@@ -747,13 +749,13 @@
     html += '<div class="pf-sec pf-grid2">';
     html += '<div class="pf-box"><h4>Sebaran Score SDP per Area <span class="hint" style="float:right;margin:0;">' + sdp.length + ' SDP · <span class="pf-g">' + tot.g + '</span> / <span class="pf-y">' + tot.y + '</span> / <span class="pf-r">' + tot.r + '</span></span></h4><div class="pf-scroll"><table class="pf-tbl"><thead><tr><th>Area</th><th>SDP</th><th style="width:45%">Sebaran</th><th>Rata-rata</th></tr></thead><tbody>'
       + dist.map(function (x) {
-        var seg = function (k, n) { return n ? '<i class="pf-i-' + k + '" style="width:' + (n / x.n * 100) + '%" title="' + n + ' SDP"></i>' : ''; };
+        var seg = function (k, n) { return n ? '<i class="pf-s-' + k + '" style="width:' + (n / x.n * 100) + '%" title="' + n + ' SDP"></i>' : ''; };
         return '<tr><td>' + esc(title(x.a)) + '</td><td>' + x.n + '</td><td><div class="pf-stack">' + seg('g', x.g) + seg('y', x.y) + seg('r', x.r) + '</div></td><td class="c pf-bg-' + band(x.avg) + '">' + pct(x.avg) + '</td></tr>';
       }).join('') + '</tbody></table></div></div>';
     var low = sdp.slice().sort(byScoreDesc).reverse().slice(0, 10);
     html += '<div class="pf-box"><h4>10 SDP Score Terendah</h4><div class="pf-scroll"><table class="pf-tbl"><thead><tr><th>SDP</th><th>Area</th>' + KPIS.map(function (k) { return '<th>' + esc(k.short) + '</th>'; }).join('') + '<th>Score</th></tr></thead><tbody>'
       + low.map(function (r) {
-        return '<tr><td title="' + esc(r.idMim3) + '">' + esc(r.namaMim3) + '</td><td>' + esc(title(r.area)) + '</td>' + KPIS.map(function (k) { return '<td class="c pf-bg-' + band(r[k.id].ach) + '">' + pct(r[k.id].ach) + '</td>'; }).join('') + '<td class="c pf-bg-' + band(r.score) + '">' + pct(r.score) + '</td></tr>';
+        return '<tr><td title="' + esc(r.idMim3) + '">' + esc(r.namaMim3) + '</td><td>' + esc(title(r.area)) + '</td>' + KPIS.map(function (k) { return cellPct(r[k.id].ach); }).join('') + cellPct(r.score) + '</tr>';
       }).join('') + '</tbody></table></div></div>';
     html += '</div>';
 
