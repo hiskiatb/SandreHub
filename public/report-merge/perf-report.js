@@ -902,6 +902,9 @@
     '.pf-card .v .pf-pill{ font-size:24px; padding:4px 12px; border-radius:10px; }',
     '.pf-reg{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }',
     '.pf-reg .pf-bar{ grid-template-columns:78px 1fr 64px; }',
+    '.pf-box h4, .pf-card .v{ color:var(--ink); } .pf-tbl td{ color:var(--ink2); } .pf-bar .n{ color:var(--ink2); }',
+    '.pf-tbl td.c{ padding:4px 3px; text-align:center; } .pf-tbl .pf-pill{ font-size:11px; padding:2px 6px; }',
+    '.pf-hm{ table-layout:fixed; } .pf-hm th:first-child, .pf-hm td:first-child{ width:30%; overflow:hidden; text-overflow:ellipsis; }',
     '.pf-pill{ display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700; }',
     '.pf-tbl{ width:100%; border-collapse:collapse; font-size:12.5px; }',
     '.pf-tbl th{ text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); padding:6px 8px; border-bottom:1px solid var(--line); cursor:pointer; white-space:nowrap; }',
@@ -984,7 +987,7 @@
     var areas = d.areas.filter(function (a) { return inRegion(a.REGION); }).sort(byScoreDesc);
     html += '<div class="pf-sec pf-grid2">';
     var hmKosong = !areas.length ? '<tr><td colspan="5" class="hint" style="white-space:normal;padding:14px 8px;">' + (d.areas.length ? 'Tidak ada area untuk region ini.' : 'Blok AREA tidak ditemukan di sheet Internal Sales (blok yang terbaca: ' + esc(Object.keys(d.is).join(', ') || '-') + '). Pastikan ada tabel dengan header kolom pertama "AREA" dan baris sub-header TARGET / ACTUAL / ACH.') + '</td></tr>' : '';
-    html += '<div class="pf-box"><h4>Heatmap Area × KPI</h4><div class="pf-scroll"><table class="pf-tbl"><thead><tr><th>Area</th>' + KPIS.map(function (k) { return '<th>' + esc(k.short) + '</th>'; }).join('') + '<th>Score</th></tr></thead><tbody>'
+    html += '<div class="pf-box"><h4>Heatmap Area × KPI</h4><div class="pf-scroll"><table class="pf-tbl pf-hm"><thead><tr><th>Area</th>' + KPIS.map(function (k) { return '<th>' + esc(k.short) + '</th>'; }).join('') + '<th>Score</th></tr></thead><tbody>'
       + areas.map(function (a) {
         return '<tr><td title="' + esc(title(a.REGION)) + '">' + esc(title(a.nama)) + '</td>' + KPIS.map(function (k) { return cellPct(a[k.id].ach); }).join('') + cellPct(a.score) + '</tr>';
       }).join('') + hmKosong + '</tbody></table></div></div>';
