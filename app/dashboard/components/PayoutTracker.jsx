@@ -12,7 +12,7 @@ import supabase from "../../../lib/supabase";
 import { DocsCell, PoDocsTab, usePartnerDocStats } from "./PayoutPartnerDocs";
 import { PartnerLettersTab } from "./PayoutPartnerLetters";
 import { InvoiceReminderModal, InvoiceReminderDashboard, ReminderButton, readContactsSheet, saveContacts, CONTACTS_SHEET } from "./PayoutInvoiceReminder";
-import { DOC_REF_COLUMN, refKey, statKey, doneCount, DOC_TYPES, canManageApprovals } from "../../../lib/payoutPartnerDocs";
+import { DOC_REF_COLUMN, refKey, statKey, doneCount, DOC_TYPES, canManageApprovals, canSendReminders } from "../../../lib/payoutPartnerDocs";
 
 let _xlsx = null;
 async function getXLSX() {
@@ -1522,19 +1522,20 @@ function StatusDistribution({ rows, t }) {
    dc=Distribution Fee & Champions, hist=Riwayat, raw=Raw Data, ytd=YTD Summary, acc=Accrual (Agency), fc=Forecast (Partner).
    agency = boleh melihat Agency Prepaid; upload = boleh Upload/Publish (layar Admin). Tab pertama = halaman pembuka. */
 const ROLE_VIEWS = {
+  // Aturan Saila 2026-11-27: Forecast = hanya admin SPM; Accrual (Agency) = SPM & Region;
+  // Raw Data + Distribution Fee & Champions = Region & partner (partner hanya datanya sendiri,
+  // lewat partnerName dari page.jsx); Dashboard & Upload & Merge Dokumen tidak berubah.
+  // Region hanya melihat partner di area-nya (regionFilter dari page.jsx).
   admin:   { tabs:["dash","dc","raw","ytd","acc","fc"], agency:true,  upload:true  }, // spm_sumatera
-  ioh:     { tabs:["dash","dc","raw","ytd","acc","fc"], agency:true,  upload:false }, // internal_ioh (seluruh Sumatera)
-  region:  { tabs:["dash","acc"],                       agency:true,  upload:false }, // IOH / SFM regional (region terkunci)
-  partner: { tabs:["out","dc","hist"],                  agency:false, upload:false }, // finance_mpx (hanya invoice sendiri)
-  // Partner Level / Region Level / Circle (permintaan user - "Dashboard, Distribution Fee
-  // & Champions, Raw Data = per partner" / "+YTD Summary = per region" / "+Forecast = all
-  // circle Sumatera") - read-only, scope data-nya dikunci dari profiles.partner_name
-  // (lihat partnerName/regionFilter props di page.jsx), TIDAK dapat Outstanding/Riwayat/
-  // Accrual/Upload (bukan domainnya, itu milik finance_mpx/spm_sumatera/internal_ioh).
-  admpartner: { tabs:["dash","dc","raw"],            agency:false, upload:false }, // admin_partner (Partner Level)
-  admregion:  { tabs:["dash","dc","raw","ytd"],      agency:false, upload:false }, // admin_region (Region Level)
-  admcircle:  { tabs:["dash","dc","raw","ytd","fc"], agency:false, upload:false }, // admin_circle (Circle - seluruh Sumatera)
-  other:   { tabs:["dash","dc","raw","ytd","fc"],       agency:false, upload:false }, // role lain yang bisa membuka menu ini
+  ioh:     { tabs:["dash","dc","raw","ytd","acc"],      agency:true,  upload:false }, // internal_ioh (seluruh Sumatera)
+  region:  { tabs:["dash","dc","raw","acc"],            agency:true,  upload:false }, // IOH / SFM regional (region terkunci)
+  partner: { tabs:["out","dc","hist","raw"],            agency:false, upload:false }, // finance_mpx (hanya invoice sendiri)
+  // Partner Level / Region Level / Circle - read-only, scope data-nya dikunci dari profiles.partner_name
+  // (lihat partnerName/regionFilter props di page.jsx), TIDAK dapat Outstanding/Riwayat/Upload.
+  admpartner: { tabs:["dash","dc","raw"],               agency:false, upload:false }, // admin_partner (Partner Level)
+  admregion:  { tabs:["dash","dc","raw","ytd","acc"],   agency:true,  upload:false }, // admin_region (Region Level)
+  admcircle:  { tabs:["dash","dc","raw","ytd"],         agency:false, upload:false }, // admin_circle (Circle - seluruh Sumatera)
+  other:   { tabs:["dash","dc","raw","ytd"],            agency:false, upload:false }, // role lain yang bisa membuka menu ini
 };
 const ROLE_KIND = {
   spm_sumatera:"admin", internal_ioh:"ioh", finance_mpx:"partner",
@@ -2156,7 +2157,7 @@ function DetailsTabs(props) {
   const tabs = [
     { id:"out",  label:"Outstanding", count:ins.open.length },
     { id:"own",  label:isAg?"Agencies":"Partners", count:ins.owners.length },
-    ...(canManageApprovals(props.profile) ? [{ id:"rem", label:"Invoice Reminder", count:new Set(ins.remind.filter(x=>x.name && x.name!=="—").map(x=>x.name)).size }] : []),
+    ...(canSendReminders(props.profile) ? [{ id:"rem", label:"Invoice Reminder", count:new Set(ins.remind.filter(x=>x.name && x.name!=="—").map(x=>x.name)).size }] : []),
   ];
   const cur = tabs.some(x=>x.id===tab) ? tab : "out";
   return (
@@ -2172,7 +2173,7 @@ function DetailsTabs(props) {
           <Btn t={t} variant="primary" sm onClick={()=>exportSummary("xlsx")} title="Filtered monthly summary as Excel">Excel</Btn>
         </div>}
       </div>
-      {cur==="out"  && <OutstandingTab ins={ins} isAg={isAg} w={w} t={t} view={view} setView={setView} sort={sort} setSort={setSort} canRemind={canManageApprovals(props.profile)} showToast={props.showToast}/>}
+      {cur==="out"  && <OutstandingTab ins={ins} isAg={isAg} w={w} t={t} view={view} setView={setView} sort={sort} setSort={setSort} canRemind={canSendReminders(props.profile)} showToast={props.showToast}/>}
       {cur==="own"  && <PartnersTab ins={ins} isAg={isAg} w={w} t={t}/>}
       {cur==="rem"  && <InvoiceReminderDashboard ins={ins} isAg={isAg} w={w} t={t} showToast={props.showToast}/>}
     </Card>

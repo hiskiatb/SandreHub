@@ -696,6 +696,11 @@ export default function DashboardPage() {
   // dia akses (Prod. & AR, khususnya tab HoA AR). isAdminArea ditambahkan
   // eksplisit supaya kedua arah itu dibenerin.
   const isAdminArea = hasRole(profile, "admin_area");
+  // Payout Tracker (aturan Saila 2026-11-27): finance_mpx = partner Payout Tracker, boleh membuka
+  // menu ini dengan data dikunci ke partner_name sendiri (tab diatur ROLE_VIEWS di PayoutTracker.jsx).
+  // Admin MC (admin_partner_mdi / admin_mc) tetap TIDAK boleh. Dulu ketiga gate pakai "!isMPX" sehingga
+  // finance_mpx ikut terblokir.
+  const isFinanceMpx = hasRole(profile, "finance_mpx");
   // Partner Level/Circle/Region Level (permintaan user - "Tambahkan
   // Partner Level, Circle, Region Level dari data dse itu juga") - READ-
   // ONLY, cuma lihat Prod. & AR scoped ke pt_name/circle/region masing2
@@ -1398,7 +1403,7 @@ export default function DashboardPage() {
                       )}
                     </>
                   )}
-                  {!isSDPMember && !isMPX && (!isAdminArea || isAdminLevel) && <SNavItem icon={<Wallet size={14} />}      label="Payout Tracker"       active={view === "payout-tracker"} maint={menuMaint("payout-tracker")} onClick={() => navigate("payout-tracker")} />}
+                  {!isSDPMember && (!isMPX || isFinanceMpx) && (!isAdminArea || isAdminLevel) && <SNavItem icon={<Wallet size={14} />}      label="Payout Tracker"       active={view === "payout-tracker"} maint={menuMaint("payout-tracker")} onClick={() => navigate("payout-tracker")} />}
                   {canSdp       && <SNavItem icon={<Store size={14} />}       label="SDP Management"       active={view === "sdp2"}           onClick={() => navigate("sdp2")} />}
                   {/* UPDATE (permintaan user - "mapping admin mc itu
                       seharusnya didalam dse prod, bukan menjadi menu
@@ -1715,7 +1720,7 @@ export default function DashboardPage() {
                       dilonggarkan kalau akun itu JUGA isAdminLevel - sejalan
                       dgn filosofi "hak akses teratas digabung" yg sudah
                       dipakai di tempat lain (mis. getCategoryOptionsForRoles). */}
-                  {!isSDPMember && !isMPX && (!isAdminArea || isAdminLevel) && (
+                  {!isSDPMember && (!isMPX || isFinanceMpx) && (!isAdminArea || isAdminLevel) && (
                     <DashCard icon={<Wallet size={20} />} title="Payout Tracker"
                       desc="Monitoring pembayaran Partner & Agency Prepaid — SLA, funnel, heatmap, dan raw data."
                       tag="Payout" active={true} onClick={() => navigate("payout-tracker")} t={t} d={d}
@@ -1931,7 +1936,7 @@ export default function DashboardPage() {
             )}
 
             {/* ── Payout Tracker ── */}
-            {view === "payout-tracker" && !isSDPMember && !isMPX && (!isAdminArea || isAdminLevel) && !viewUnderMaint && (
+            {view === "payout-tracker" && !isSDPMember && (!isMPX || isFinanceMpx) && (!isAdminArea || isAdminLevel) && !viewUnderMaint && (
               <motion.div key="pt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
                 <PayoutTracker theme={theme} profile={profile} regionFilter={isAdminRegionRole ? (profile?.partner_name || null) : iohRegionView} partnerName={isMPX ? (profile?.partner_name || null) : isAdminPartnerRole ? (profile?.partner_name || null) : (activePartner || null)} filterType={activeType !== "ALL" ? activeType : null} readOnly={isReadOnly || isAdminLevel} masterData={masterData} />
