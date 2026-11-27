@@ -85,13 +85,19 @@
   }
   var kpiOf = function (txt) { var t = norm(txt); if (/SCORE/.test(t)) return 'score'; for (var i = 0; i < KPIS.length; i++) if (KPIS[i].re.test(t)) return KPIS[i].id; return null; };
 
+  // Header blok = baris berisi judul KPI "RGUGA ... TRAD" yang diikuti baris sub-header berisi ACH.
+  // (Jangan cuma cari kata TRAD: nama orang seperti "ESTRADA" juga mengandungnya.)
+  function isHeaderAt(rows, i) {
+    var h = rows[i], s = rows[i + 1];
+    if (!h || !s) return false;
+    return h.some(function (c) { return /RGUGA.*TRAD|TRAD.*USAGE/.test(norm(c)); }) && s.some(function (c) { return norm(c) === 'ACH'; });
+  }
   // Sheet Internal Sales: beberapa blok, tiap blok = baris header KPI + baris sub-header (TARGET/ACTUAL/ACH).
   function parseIS(rows) {
     var blocks = {};
     for (var i = 0; i < rows.length - 1; i++) {
       var h = rows[i], s = rows[i + 1];
-      if (!h.some(function (c) { return /TRAD/.test(norm(c)); })) continue;
-      if (!s.some(function (c) { return norm(c) === 'ACH'; })) continue;
+      if (!isHeaderAt(rows, i)) continue;
       var h0 = norm(h[0]) || norm(h[1]);
       var level = /^NAME$|^NAMA$|SALES/.test(h0) ? 'NAME' : /CLUSTER|^MC\b/.test(h0) ? 'CLUSTER' : /AREA|BRANCH/.test(h0) ? 'AREA' : /REGION/.test(h0) ? 'REGION' : /CIRCLE/.test(h0) ? 'CIRCLE' : h0;
       var dims = [], cols = { score: null };
@@ -118,12 +124,12 @@
         if (!String(row[0]).trim()) {
           // Baris kosong: lewati 1 baris kosong di awal/tengah, berhenti kalau sudah 2 berturut-turut
           // atau ketemu header blok berikutnya.
-          if (row.some(function (c) { return /TRAD/.test(norm(c)); })) break;
+          if (isHeaderAt(rows, r)) break;
           if (++kosong >= 2 && list.length) break;
           if (kosong >= 3) break;
           continue;
         }
-        if (row.some(function (c) { return /TRAD/.test(norm(c)); })) break;
+        if (isHeaderAt(rows, r)) break;
         kosong = 0;
         var o = { nama: String(row[0]).trim(), level: level };
         dims.forEach(function (d) { o[d.name] = String(row[d.c]).trim(); });
