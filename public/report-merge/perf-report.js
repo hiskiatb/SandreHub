@@ -387,28 +387,33 @@
   function mH(txt) { return '<p style="' + F + 'font-size:13px;font-weight:bold;color:' + C.ink + ';text-transform:uppercase;letter-spacing:.6px;margin:22px 0 10px 0;">' + txt + '</p>'; }
   function mSec(no, txt, sub) {
     return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:30px 0 6px 0;"><tr>'
-      + '<td width="34" style="' + F + 'width:34px;height:34px;background:' + C.magenta + ';color:#fff;font-size:15px;font-weight:bold;text-align:center;border-radius:9px;">' + esc(no) + '</td>'
+      + '<td width="34" height="34" style="' + F + 'width:34px;height:34px;background:' + C.magenta + ';color:#fff;font-size:15px;font-weight:bold;text-align:center;border-radius:9px;">' + esc(no) + '</td>'
       + '<td style="' + F + 'padding-left:12px;"><div style="font-size:18px;font-weight:bold;color:' + C.ink + ';">' + esc(txt) + '</div>'
       + (sub ? '<div style="font-size:12.5px;color:' + C.muted + ';margin-top:2px;">' + esc(sub) + '</div>' : '') + '</td></tr></table>'
-      + '<div style="height:2px;line-height:2px;background:' + C.line + ';margin:10px 0 4px 0;">&nbsp;</div>';
+      + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:10px 0 4px 0;"><tr><td height="2" bgcolor="' + C.line + '" style="height:2px;line-height:2px;font-size:1px;background:' + C.line + ';">&nbsp;</td></tr></table>';
   }
-  function pill(v) { var p = PILL[band(v)]; return '<span style="' + F + 'display:inline-block;background:' + p[0] + ';color:' + p[1] + ';font-weight:bold;font-size:12px;padding:3px 9px;border-radius:999px;white-space:nowrap;">' + pct(v) + '</span>'; }
+  // Pill di dalam kalimat (span). Outlook Windows mengabaikan padding pada span, jadi diberi border warna sama sebagai "padding".
+  function pill(v) { var p = PILL[band(v)]; return '<span style="' + F + 'display:inline-block;background:' + p[0] + ';border:2px solid ' + p[0] + ';color:' + p[1] + ';font-weight:bold;font-size:12px;padding:1px 7px;border-radius:999px;white-space:nowrap;mso-highlight:' + p[0] + ';">' + pct(v) + '</span>'; }
+  // Pill sebagai tabel kecil: tampil rapi juga di Outlook Windows (mesin Word).
+  function pillBox(v, size, align) {
+    var p = PILL[band(v)];
+    return '<table role="presentation" cellpadding="0" cellspacing="0" border="0"' + (align ? ' align="' + align + '"' : '') + ' style="border-collapse:separate;"><tr><td bgcolor="' + p[0] + '" style="' + F + 'background:' + p[0] + ';color:' + p[1] + ';font-weight:bold;font-size:' + (size || 12) + 'px;line-height:1.2;padding:' + (size > 14 ? '5px 12px' : '3px 9px') + ';border-radius:999px;white-space:nowrap;mso-line-height-rule:exactly;">' + pct(v) + '</td></tr></table>';
+  }
   // Bar progres: lebar penuh = 130%, garis target di 83%.
   function mBar(v, h) {
     h = h || 8;
     var w = v == null ? 0 : Math.max(1, Math.round(Math.min(v, 1.3) / 1.3 * 100));
     return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>'
-      + (w ? '<td width="' + w + '%" style="height:' + h + 'px;line-height:' + h + 'px;font-size:1px;background:' + C.teal + ';border-radius:' + h + 'px 0 0 ' + h + 'px;">&nbsp;</td>' : '')
-      + (w < 100 ? '<td style="height:' + h + 'px;line-height:' + h + 'px;font-size:1px;background:#EDEDF2;border-radius:0 ' + h + 'px ' + h + 'px 0;">&nbsp;</td>' : '')
+      + (w ? '<td width="' + w + '%" height="' + h + '" style="height:' + h + 'px;line-height:' + h + 'px;font-size:1px;background:' + C.teal + ';border-radius:' + h + 'px 0 0 ' + h + 'px;">&nbsp;</td>' : '')
+      + (w < 100 ? '<td height="' + h + '" style="height:' + h + 'px;line-height:' + h + 'px;font-size:1px;background:#EDEDF2;border-radius:0 ' + h + 'px ' + h + 'px 0;">&nbsp;</td>' : '')
       + '</tr></table>';
   }
   function mTiles(o, compare, cmpLbl) {
     var cells = [{ lbl: 'Score', v: o.score, cmp: compare && compare.score, big: true }].concat(KPIS.map(function (k) { return { lbl: k.label, v: o[k.id] && o[k.id].ach, cmp: compare && compare[k.id] && compare[k.id].ach }; }));
-    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;border-spacing:8px 0;margin:0 -8px 6px -8px;"><tr>' + cells.map(function (c) {
-      var pc = PILL[band(c.v)];
-      return '<td width="25%" style="' + F + 'background:#fff;border:1px solid ' + C.line + ';border-top:3px solid ' + C.teal + ';border-radius:12px;padding:12px 14px;vertical-align:top;">'
-        + '<div style="font-size:10.5px;color:' + C.muted + ';text-transform:uppercase;letter-spacing:.5px;font-weight:bold;min-height:26px;">' + esc(c.lbl) + '</div>'
-        + '<div style="margin:6px 0 8px 0;"><span style="display:inline-block;background:' + pc[0] + ';color:' + pc[1] + ';font-size:' + (c.big ? 22 : 19) + 'px;font-weight:bold;padding:4px 12px;border-radius:10px;">' + pct(c.v) + '</span></div>'
+    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:0 0 6px 0;"><tr>' + cells.map(function (c, ci) {
+      return (ci ? '<td width="8" style="width:8px;font-size:1px;">&nbsp;</td>' : '') + '<td width="24%" bgcolor="#FFFFFF" valign="top" style="' + F + 'background:#fff;border:1px solid ' + C.line + ';border-top:3px solid ' + C.teal + ';border-radius:12px;padding:12px 14px;vertical-align:top;">'
+        + '<div style="font-size:10.5px;color:' + C.muted + ';text-transform:uppercase;letter-spacing:.5px;font-weight:bold;height:26px;">' + esc(c.lbl) + '</div>'
+        + '<div style="margin:6px 0 8px 0;">' + pillBox(c.v, c.big ? 22 : 19) + '</div>'
         + mBar(c.v, 6)
         + (c.cmp != null ? '<div style="font-size:11px;color:' + C.muted + ';margin-top:7px;">' + esc(cmpLbl || 'Sumatera') + ' <b style="color:' + C.body + ';">' + pct(c.cmp) + '</b></div>' : '')
         + '</td>';
@@ -429,15 +434,15 @@
   // Grafik batang horizontal: [{nama, v, sub}]
   function mBars(items) {
     return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">' + items.map(function (it) {
-      return '<tr><td style="' + F + 'font-size:12.5px;color:' + C.ink + ';padding:5px 10px 5px 0;white-space:nowrap;width:150px;">' + esc(it.nama) + (it.sub ? '<div style="font-size:10.5px;color:' + C.muted + ';">' + esc(it.sub) + '</div>' : '') + '</td>'
+      return '<tr><td width="150" style="' + F + 'font-size:12.5px;color:' + C.ink + ';padding:5px 10px 5px 0;white-space:nowrap;width:150px;">' + esc(it.nama) + (it.sub ? '<div style="font-size:10.5px;color:' + C.muted + ';">' + esc(it.sub) + '</div>' : '') + '</td>'
         + '<td style="padding:5px 0;">' + mBar(it.v, 10) + '</td>'
-        + '<td style="' + F + 'text-align:right;padding:5px 0 5px 10px;width:64px;white-space:nowrap;">' + pill(it.v) + '</td></tr>';
+        + '<td width="72" align="right" style="' + F + 'text-align:right;padding:5px 0 5px 10px;width:72px;white-space:nowrap;">' + pillBox(it.v, 12, 'right') + '</td></tr>';
     }).join('') + '</table>';
   }
   // Batang bertumpuk sebaran hijau/kuning/merah: [{nama, g, y, r, n}]
   function mStack(items) {
     return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">' + items.map(function (it) {
-      var seg = function (k, n) { return n ? '<td width="' + Math.max(1, Math.round(n / it.n * 100)) + '%" style="height:12px;font-size:1px;line-height:12px;background:' + BAR[k] + ';">&nbsp;</td>' : ''; };
+      var seg = function (k, n) { return n ? '<td width="' + Math.max(1, Math.round(n / it.n * 100)) + '%" height="12" style="height:12px;font-size:1px;line-height:12px;background:' + BAR[k] + ';">&nbsp;</td>' : ''; };
       return '<tr><td style="' + F + 'font-size:12.5px;color:' + C.ink + ';padding:5px 10px 5px 0;white-space:nowrap;width:150px;">' + esc(it.nama) + '</td>'
         + '<td style="padding:5px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>' + seg('g', it.g) + seg('y', it.y) + seg('r', it.r) + '</tr></table></td>'
         + '<td style="' + F + 'font-size:11.5px;color:' + C.muted + ';text-align:right;padding:5px 0 5px 10px;width:92px;white-space:nowrap;"><b style="color:' + INK.g + ';">' + it.g + '</b> · <b style="color:' + INK.y + ';">' + it.y + '</b> · <b style="color:' + INK.r + ';">' + it.r + '</b></td></tr>';
@@ -446,13 +451,13 @@
   // cols: [{label, get(row) -> value, kind: 'pct'|'num'|'text'}]
   function mTable(cols, rows) {
     var th = F + 'background:' + C.bg + ';color:' + C.muted + ';font-size:10.5px;font-weight:bold;text-transform:uppercase;letter-spacing:.4px;padding:9px 10px;text-align:left;border-bottom:1px solid ' + C.line + ';white-space:nowrap;';
-    var html = '<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:separate;border-spacing:0;border:1px solid ' + C.line + ';border-radius:12px;overflow:hidden;margin:0 0 6px 0;min-width:60%;"><tr>'
+    var html = '<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:separate;border-spacing:0;border:1px solid ' + C.line + ';border-radius:12px;margin:0 0 6px 0;"><tr>'
       + cols.map(function (c) { return '<th style="' + th + (c.kind && c.kind !== 'text' ? 'text-align:right;' : '') + '">' + esc(c.label) + '</th>'; }).join('') + '</tr>';
     rows.forEach(function (r, i) {
       var last = i === rows.length - 1;
       html += '<tr>' + cols.map(function (c) {
-        var v = c.get(r), st = F + 'font-size:12.5px;padding:7px 10px;white-space:nowrap;color:' + C.body + ';' + (last ? '' : 'border-bottom:1px solid #F0F0F4;') + (i % 2 ? 'background:#FAFAFC;' : 'background:#fff;');
-        if (c.kind === 'pct') return '<td style="' + st + 'text-align:right;">' + pill(v) + '</td>';
+        var v = c.get(r), st = F + 'font-size:12.5px;padding:7px 10px;white-space:nowrap;color:' + C.body + ';' + (last ? '' : 'border-bottom:1px solid #F0F0F4;') + (i % 2 ? 'background:#FAFAFC;' : 'background:#FFFFFF;');
+        if (c.kind === 'pct') return '<td align="right" style="' + st + 'text-align:right;">' + pillBox(v, 12, 'right') + '</td>';
         if (c.kind === 'num') return '<td style="' + st + 'text-align:right;">' + fmt(v) + '</td>';
         return '<td style="' + st + (c.bold ? 'font-weight:bold;color:' + C.ink + ';' : '') + '">' + esc(v) + '</td>';
       }).join('') + '</tr>';
@@ -465,14 +470,16 @@
     return '<p style="' + F + 'font-size:11.5px;color:' + C.muted + ';margin:10px 0 0 0;">Status:' + chip('g', 'Tercapai ' + LBL.g) + chip('y', 'Perlu Perhatian ' + LBL.y) + chip('r', 'Di Bawah Target ' + LBL.r) + '</p>';
   }
   // Kerangka email: header gelap ala SandraHub + kartu putih + footer.
-  function wrap(inner, head) {
+  function wrap(inner, head) { return outlookify(wrapRaw(inner, head)); }
+  function wrapRaw(inner, head) {
     head = head || {};
     var stripe = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>'
       + '<td width="34%" style="height:4px;font-size:1px;line-height:4px;background:' + C.teal + ';">&nbsp;</td>'
       + '<td width="33%" style="height:4px;font-size:1px;line-height:4px;background:' + C.yellow + ';">&nbsp;</td>'
       + '<td width="33%" style="height:4px;font-size:1px;line-height:4px;background:' + C.magenta + ';">&nbsp;</td></tr></table>';
     return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;background:' + C.bg + ';"><tr><td align="center" style="padding:24px 12px;">'
-      + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;max-width:820px;background:#fff;border:1px solid ' + C.line + ';border-radius:16px;overflow:hidden;">'
+      + '<!--[if mso]><table role="presentation" width="820" align="center" cellpadding="0" cellspacing="0"><tr><td><![endif]-->'
+      + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;max-width:820px;background:#FFFFFF;border:1px solid ' + C.line + ';border-radius:16px;">'
       + '<tr><td style="padding:0;">' + stripe + '</td></tr>'
       + '<tr><td style="' + F + 'background:' + C.dark + ';padding:22px 28px;">'
       + '<div style="font-size:11px;font-weight:bold;letter-spacing:1.2px;text-transform:uppercase;color:' + C.teal + ';">SandraHub · Smart Mail Sumatera</div>'
@@ -482,7 +489,16 @@
       + '<tr><td style="' + F + 'padding:26px 28px 10px 28px;">' + inner + '</td></tr>'
       + '<tr><td style="' + F + 'padding:16px 28px 22px 28px;border-top:1px solid ' + C.line + ';font-size:11.5px;color:' + C.muted + ';line-height:1.6;">'
       + 'Email ini dikirim otomatis dari SandraHub (Smart Mail Sumatera) — Sales &amp; Distribution, Indosat Circle Sumatera.</td></tr>'
-      + '</table></td></tr></table>';
+      + '</table>'
+      + '<!--[if mso]></td></tr></table><![endif]-->'
+      + '</td></tr></table>';
+  }
+  // Outlook Windows memakai mesin Word: warna latar CSS sering diabaikan. Tambahkan atribut bgcolor
+  // ke setiap td/th/table yang punya background warna hex.
+  function outlookify(html) {
+    return html.replace(/<(td|th|table)\b((?:(?!bgcolor)[^>])*?)style="([^"]*?)background:(#[0-9A-Fa-f]{6})/g, function (m, tag, pre, st, col) {
+      return '<' + tag + pre + 'bgcolor="' + col + '" style="' + st + 'background:' + col;
+    });
   }
 
   /* ======================= Bentuk penerima ======================= */
