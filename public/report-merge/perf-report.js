@@ -670,7 +670,7 @@
           unmatchedWhy: 'Partner "' + pt.partner + '" belum ada di Master_Mapping (TYPE MDI).',
           perf: {
             subject: 'Performance Report MDI ' + title(pt.partner) + ' — ' + P.periode,
-            html: wrap(mText(introFor({ name: pt.partner }, INTRO_DEF))
+            html: wrap(mText(introFor({ name: 'Pimpinan ' + title(pt.partner).replace(/^(.*),\s*PT$/, 'PT $1') }, INTRO_DEF))
               + mH(rows.length > 1 ? 'Ringkasan Kinerja (rata-rata ' + rows.length + ' area)' : 'Ringkasan Kinerja ' + esc(title(rows[0].area))) + mTiles(agg, null)
               + (rows.length > 1 ? mH('Status Area (' + rows.length + ' area)') + mStatus(rows, 'area') : '')
               + mInsight(ins, 'Insight Utama')
