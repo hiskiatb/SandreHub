@@ -1,6 +1,7 @@
 // POST /api/payout-docs/invoice-reminders
 // Pengingat "Invoice Not Submitted" ke partner/agency (Payout Tracker).
-// Hanya admin SPM & admin internal Indosat (APPROVAL_ADMIN_ROLES), dicek di sini (server).
+// Admin SPM, admin internal Indosat & role Region (REMINDER_ROLES), dicek di sini (server).
+// Import kontak & ubah template default: hanya APPROVAL_ADMIN_ROLES.
 //
 // Sumber email = sheet "Master Mapping" di Excel yang di-upload admin (lihat readContactsSheet di
 // PayoutTracker.jsx). Saat Publish, isinya disimpan ke tabel payout_partner_contacts (action "import").
@@ -18,7 +19,7 @@
 // Sengaja TIDAK memakai lib/resend.js (modul itu log API key & throw saat import).
 import { createClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
-import { partnerKey, APPROVAL_ADMIN_ROLES } from "../../../../lib/payoutPartnerDocs";
+import { partnerKey, APPROVAL_ADMIN_ROLES, REMINDER_ROLES } from "../../../../lib/payoutPartnerDocs";
 import {
   invoiceReminderEmail, cleanInvoiceItem, cleanReminderTemplate, invKey, isEmail, normEmail, MAX_REMINDER_ITEMS, MAX_REMINDER_TO,
 } from "../../../../lib/payoutInvoiceReminderEmail";
@@ -56,8 +57,8 @@ async function requireReminderAdmin(req) {
   const { data: { user } = {}, error } = await c.asUser.auth.getUser(token);
   if (error || !user) return { error: "Your session has expired. Please sign in again.", status: 401 };
   const { data: profile } = await c.db.from("profiles").select("role, full_name").eq("id", user.id).maybeSingle();
-  if (!APPROVAL_ADMIN_ROLES.includes(profile?.role)) return { error: "Hanya admin SPM atau admin internal Indosat yang bisa mengelola pengingat invoice.", status: 403 };
-  return { db: c.db, user, profile, email: normEmail(user.email) };
+  if (!REMINDER_ROLES.includes(profile?.role)) return { error: "Hanya admin SPM, admin internal Indosat atau Region yang bisa mengirim pengingat invoice.", status: 403 };
+  return { db: c.db, user, profile, email: normEmail(user.email), isAdmin: APPROVAL_ADMIN_ROLES.includes(profile?.role) };
 }
 
 function appUrl(req) {
@@ -213,6 +214,8 @@ export async function POST(req) {
   const auth = await requireReminderAdmin(req);
   if (auth.error) return jsonError(auth.error, auth.status);
   const body = await req.json().catch(() => ({}));
+  const adminOnly = body.action === "import" || (body.action === "template" && (body.op === "save" || body.op === "reset"));
+  if (adminOnly && !auth.isAdmin) return jsonError("Hanya admin SPM atau admin internal Indosat yang bisa mengubah kontak / template default.", 403);
   if (body.action === "import") return importContacts(auth, body);
   if (body.action === "recipients") return recipients(auth, body, req);
   if (body.action === "send") return send(auth, body, req);
