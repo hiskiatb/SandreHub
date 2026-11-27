@@ -691,7 +691,15 @@
         var area = d.areas.filter(function (a) { return norm(a.nama) === norm(r.AREA); })[0] || null;
         groups.push({
           key: 'is|' + normKey(r.nama), name: title(r.nama) + ' — ' + (r.CLUSTER || title(r.AREA)),
-          emails: m ? splitEmails(m.EMAIL_TO) : [], ccs: m ? splitEmails(m.EMAIL_CC) : [], rows: [flatIsRow(r)],
+          emails: m ? splitEmails(m.EMAIL_TO) : [],
+          // Cc = Cc di Master_Mapping (kalau ada) + HOA area sales tersebut (ikut alamat HOA yang tersimpan, kalau diubah).
+          ccs: (function () {
+            var to = m ? splitEmails(m.EMAIL_TO).map(function (e) { return e.toLowerCase(); }) : [];
+            var list = (m ? splitEmails(m.EMAIL_CC) : []).concat(splitEmails(leaderRow('hoa', r.AREA).to));
+            var seen = {};
+            return list.filter(function (e) { var k = e.toLowerCase(); if (seen[k] || to.indexOf(k) >= 0) return false; seen[k] = 1; return true; });
+          })(),
+          rows: [flatIsRow(r)],
           unmatched: !m || !splitEmails(m.EMAIL_TO).length,
           unmatchedWhy: 'Sales "' + r.nama + '" belum ada di Master_Mapping (TYPE INTERNAL SALES, PARTNER_NAME = nama sales) atau EMAIL_TO kosong.',
           perf: {
@@ -998,7 +1006,7 @@
       var ppl = (d.people || []).filter(function (r) { return !/VACANT/.test(norm(r.nama)); });
       var noIs = ppl.filter(function (r) { return !r.map || !splitEmails(r.map.EMAIL_TO).length; });
       bad = ppl.length ? noIs.length : 1;
-      txt = ppl.length ? (ppl.length - noIs.length) + ' dari ' + ppl.length + ' sales punya email di Master_Mapping (TYPE INTERNAL SALES, dicocokkan lewat nama). 1 email per sales.' + (vac ? ' ' + vac + ' posisi VACANT dilewati.' : '') + (noIs.length ? ' Belum ada: ' + noIs.slice(0, 8).map(function (r) { return title(r.nama); }).join(', ') + (noIs.length > 8 ? ', dan lainnya' : '') + '.' : '') : 'Sheet Internal Sales di file ini bukan format per orang (kolom NAME), jadi tidak bisa dikirim per sales.';
+      txt = ppl.length ? (ppl.length - noIs.length) + ' dari ' + ppl.length + ' sales punya email di Master_Mapping (TYPE INTERNAL SALES, dicocokkan lewat nama). 1 email per sales, Cc ke HOA area masing-masing.' + (vac ? ' ' + vac + ' posisi VACANT dilewati.' : '') + (noIs.length ? ' Belum ada: ' + noIs.slice(0, 8).map(function (r) { return title(r.nama); }).join(', ') + (noIs.length > 8 ? ', dan lainnya' : '') + '.' : '') : 'Sheet Internal Sales di file ini bukan format per orang (kolom NAME), jadi tidak bisa dikirim per sales.';
     } else if (P.jenis === 'mdi') {
       var ptMiss = d.mdiPartners.filter(function (pt) { return !pt.rows.some(function (r) { return r.map && splitEmails(r.map.EMAIL_TO).length; }); });
       bad = d.mdi.filter(function (r) { return !r.map; }).length;
