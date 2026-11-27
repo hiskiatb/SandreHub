@@ -18,7 +18,7 @@
  *              (disimpan di SandraHub), Cc = alamat Cc yang ada di SEMUA baris
  *              Master_Mapping region itu.
  *
- * Warna: hijau >= 100%, kuning 80-99%, merah < 80%.
+ * Warna (ubah di THRESHOLD): hijau >= 83%, kuning 78% s/d < 83%, merah < 78%.
  * Di luar ?flow=performance skrip ini tidak melakukan apa-apa.
  */
 (function () {
@@ -38,8 +38,12 @@
   };
   var pct = function (v) { return v == null ? '–' : (v * 100).toFixed(1).replace('.', ',') + '%'; };
   var fmt = function (v) { return v == null ? '–' : Math.round(v).toLocaleString('id-ID'); };
-  var band = function (v) { return v == null ? 'na' : v >= 1 ? 'g' : v >= 0.8 ? 'y' : 'r'; };
-  var BAND_TXT = { g: 'tercapai (≥100%)', y: 'mendekati target (80–99%)', r: 'di bawah 80%', na: 'tidak ada data' };
+  // Ambang warna — cukup ubah dua angka ini (dalam pecahan, 0.83 = 83%).
+  var THRESHOLD = { hijau: 0.83, kuning: 0.78 };
+  var tp = function (v) { return Math.round(v * 100) + '%'; };
+  var LBL = { g: '≥' + tp(THRESHOLD.hijau), y: tp(THRESHOLD.kuning) + '–<' + tp(THRESHOLD.hijau), r: '<' + tp(THRESHOLD.kuning) };
+  var band = function (v) { return v == null ? 'na' : v >= THRESHOLD.hijau ? 'g' : v >= THRESHOLD.kuning ? 'y' : 'r'; };
+  var BAND_TXT = { g: 'hijau (' + LBL.g + ')', y: 'kuning (' + LBL.y + ')', r: 'merah (' + LBL.r + ')', na: 'tidak ada data' };
   var MAIL = { g: ['#E3F5F2', '#1D8078'], y: ['#FFF4CC', '#8A6A00'], r: ['#FDE4E4', '#B3121A'], na: ['#F2F2F6', '#6B6B78'] };
   var title = function (s) { return String(s || '').toLowerCase().replace(/\b\w/g, function (c) { return c.toUpperCase(); }).replace(/\b(Pt|Cv|Sdp|Mdi|Mc)\b/g, function (w) { return w.toUpperCase(); }); };
   var avg = function (arr) { var a = arr.filter(function (x) { return x != null; }); return a.length ? a.reduce(function (s, x) { return s + x; }, 0) / a.length : null; };
@@ -254,7 +258,7 @@
     var sdps = d.sdpRows.filter(function (x) { return norm(x.area) === norm(r.area); });
     if (sdps.length) {
       var low = sdps.filter(function (x) { return band(x.score) === 'r'; }).length;
-      out.push(sdps.length + ' SDP di area ' + title(r.area) + ', ' + low + ' di antaranya score di bawah 80%.');
+      out.push(sdps.length + ' SDP di area ' + title(r.area) + ', ' + low + ' di antaranya merah (' + LBL.r + ').');
     }
     return out;
   }
@@ -292,20 +296,20 @@
       out.push('Area terbaik: ' + top.join(', ') + '.');
       out.push('Area yang perlu perhatian: ' + bot.join(', ') + '.');
       var under = p.areas.filter(function (a) { return band(a.score) === 'r'; });
-      out.push(under.length + ' dari ' + p.areas.length + ' area score di bawah 80%.');
+      out.push(under.length + ' dari ' + p.areas.length + ' area merah (' + LBL.r + ').');
       KPIS.forEach(function (k) {
         var low = p.areas.filter(function (a) { return a[k.id] && band(a[k.id].ach) === 'r'; });
-        if (low.length) out.push(k.label + ' di bawah 80% di ' + low.length + ' area: ' + low.slice(0, 6).map(function (a) { return title(a.nama); }).join(', ') + (low.length > 6 ? ', dll' : '') + '.');
+        if (low.length) out.push(k.label + ' merah (' + LBL.r + ') di ' + low.length + ' area: ' + low.slice(0, 6).map(function (a) { return title(a.nama); }).join(', ') + (low.length > 6 ? ', dll' : '') + '.');
       });
     }
     if (p.mdi.length) {
       var mr = p.mdi.filter(function (x) { return band(x.score) === 'r'; }).length;
-      out.push('MDI: ' + p.mdi.length + ' partner-area, ' + mr + ' dengan score di bawah 80%. Terendah: ' + p.mdi.slice(-1).map(function (x) { return title(x.partner) + ' (' + title(x.area) + ') ' + pct(x.score); })[0] + '.');
+      out.push('MDI: ' + p.mdi.length + ' partner-area, ' + mr + ' merah (' + LBL.r + '). Terendah: ' + p.mdi.slice(-1).map(function (x) { return title(x.partner) + ' (' + title(x.area) + ') ' + pct(x.score); })[0] + '.');
     }
     if (p.sdpRows.length) {
       var sr = p.sdpRows.filter(function (x) { return band(x.score) === 'r'; }).length;
       var sg = p.sdpRows.filter(function (x) { return band(x.score) === 'g'; }).length;
-      out.push('SDP: ' + p.sdpRows.length + ' SDP, rata-rata score ' + pct(avg(p.sdpRows.map(function (x) { return x.score; }))) + '; ' + sg + ' tercapai, ' + sr + ' (' + Math.round(sr / p.sdpRows.length * 100) + '%) di bawah 80%.');
+      out.push('SDP: ' + p.sdpRows.length + ' SDP, rata-rata score ' + pct(avg(p.sdpRows.map(function (x) { return x.score; }))) + '; ' + sg + ' hijau, ' + sr + ' (' + Math.round(sr / p.sdpRows.length * 100) + '%) merah (' + LBL.r + ').');
     }
     var unmapped = p.sdpEnt.filter(function (e) { return !e.map; });
     if (unmapped.length) out.push(unmapped.length + ' ID SDP belum ada di Master_Mapping (tidak menerima email): ' + unmapped.slice(0, 5).map(function (e) { return e.id; }).join(', ') + (unmapped.length > 5 ? ', dll' : '') + '.');
@@ -348,7 +352,7 @@
     return html + '</table>';
   }
   var achCols = function () { return KPIS.map(function (k) { return { label: k.short + ' Ach', kind: 'pct', get: function (r) { return r[k.id] && r[k.id].ach; } }; }).concat([{ label: 'Score', kind: 'pct', get: function (r) { return r.score; } }]); };
-  function mLegend() { return '<p style="' + F + 'font-size:11.5px;color:#6B6B78;margin:4px 0 14px 0;">Warna: <span style="color:#1D8078;font-weight:bold;">hijau ≥100%</span> · <span style="color:#8A6A00;font-weight:bold;">kuning 80–99%</span> · <span style="color:#B3121A;font-weight:bold;">merah &lt;80%</span></p>'; }
+  function mLegend() { return '<p style="' + F + 'font-size:11.5px;color:#6B6B78;margin:4px 0 14px 0;">Warna: <span style="color:#1D8078;font-weight:bold;">hijau ' + esc(LBL.g) + '</span> · <span style="color:#8A6A00;font-weight:bold;">kuning ' + esc(LBL.y) + '</span> · <span style="color:#B3121A;font-weight:bold;">merah ' + esc(LBL.r) + '</span></p>'; }
   function mSec(txt) { return '<div style="' + F + 'margin:26px 0 4px 0;padding:8px 12px;background:#32BCAD;color:#fff;font-size:15px;font-weight:bold;border-radius:8px;">' + esc(txt) + '</div>'; }
   function wrap(inner) { return '<div style="' + F + 'max-width:900px;">' + inner + '</div>'; }
 
@@ -394,9 +398,9 @@
             { label: 'Area', get: function (r) { return title(r.area); } },
             { label: 'Jumlah SDP', kind: 'num', get: function (r) { return r.n; } },
             { label: 'Rata-rata Score', kind: 'pct', get: function (r) { return r.avg; } },
-            { label: '≥100%', kind: 'num', get: function (r) { return r.g; } },
-            { label: '80–99%', kind: 'num', get: function (r) { return r.y; } },
-            { label: '<80%', kind: 'num', get: function (r) { return r.r; } },
+            { label: LBL.g, kind: 'num', get: function (r) { return r.g; } },
+            { label: LBL.y, kind: 'num', get: function (r) { return r.y; } },
+            { label: LBL.r, kind: 'num', get: function (r) { return r.r; } },
           ], p.sdpByArea) : '')
           + (p.sdpRows.length ? mH('10 SDP dengan Score Terendah') + mTable([
             { label: 'ID MIM3', get: function (r) { return r.idMim3; } },
@@ -552,7 +556,7 @@
     var c = d.circle;
     var html = '';
     html += '<div class="pf-toolbar"><div class="hint" style="margin:0;">Data per <b>' + esc(tanggalTxt()) + '</b> · ' + d.areas.length + ' area · ' + d.mdi.length + ' MDI · ' + d.sdpRows.length + ' SDP</div>'
-      + '<div class="pf-legend"><span class="g">≥100%</span><span class="y">80–99%</span><span class="r">&lt;80%</span></div></div>';
+      + '<div class="pf-legend"><span class="g">' + esc(LBL.g) + '</span><span class="y">' + esc(LBL.y) + '</span><span class="r">' + esc(LBL.r) + '</span></div></div>';
 
     // Kartu KPI Sumatera
     if (c) {
@@ -711,7 +715,7 @@
     step2.appendChild(box);
     document.getElementById('pfPeriodeInput').id = 'perfPeriode';
     document.getElementById('perfIntro').value = 'Yth. Bapak/Ibu {nama},\n\nBerikut kami sampaikan Performance Report periode {periode} (data per {tanggal}).';
-    document.getElementById('perfClosing').value = 'Mohon dapat dijadikan perhatian dan ditindaklanjuti, terutama untuk KPI yang masih di bawah 80%. Apabila ada pertanyaan terkait data di atas, silakan menghubungi kami.\n\nTerima kasih atas kerja samanya.\n\nWarm regards,\nSales & Distribution — Indosat Circle Sumatera';
+    document.getElementById('perfClosing').value = 'Mohon dapat dijadikan perhatian dan ditindaklanjuti, terutama untuk KPI yang masih merah. Apabila ada pertanyaan terkait data di atas, silakan menghubungi kami.\n\nTerima kasih atas kerja samanya.\n\nWarm regards,\nSales & Distribution — Indosat Circle Sumatera';
     document.querySelectorAll('#pfJenis input').forEach(function (r) { r.onchange = function () { setJenis(r.value); }; });
     document.querySelector('#pfJenis input[value="hoa"]').checked = true;
     setJenis('hoa');
