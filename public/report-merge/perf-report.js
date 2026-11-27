@@ -43,7 +43,7 @@
   var tp = function (v) { return Math.round(v * 100) + '%'; };
   var LBL = { g: '≥' + tp(THRESHOLD.hijau), y: tp(THRESHOLD.kuning) + '–<' + tp(THRESHOLD.hijau), r: '<' + tp(THRESHOLD.kuning) };
   var band = function (v) { return v == null ? 'na' : v >= THRESHOLD.hijau ? 'g' : v >= THRESHOLD.kuning ? 'y' : 'r'; };
-  var BAND_TXT = { g: 'hijau (' + LBL.g + ')', y: 'kuning (' + LBL.y + ')', r: 'merah (' + LBL.r + ')', na: 'tidak ada data' };
+  var BAND_TXT = { g: 'Tercapai (' + LBL.g + ')', y: 'Perlu Perhatian (' + LBL.y + ')', r: 'Di Bawah Target (' + LBL.r + ')', na: 'data tidak tersedia' };
   var MAIL = { g: ['#E3F5F2', '#1D8078'], y: ['#FFF4CC', '#8A6A00'], r: ['#FDE4E4', '#B3121A'], na: ['#F2F2F6', '#6B6B78'] };
   var title = function (s) { return String(s || '').toLowerCase().replace(/\b\w/g, function (c) { return c.toUpperCase(); }).replace(/\b(Pt|Cv|Sdp|Mdi|Mc)\b/g, function (w) { return w.toUpperCase(); }); };
   var avg = function (arr) { var a = arr.filter(function (x) { return x != null; }); return a.length ? a.reduce(function (s, x) { return s + x; }, 0) / a.length : null; };
@@ -303,32 +303,30 @@
     return { r: sorted.indexOf(item) + 1, n: sorted.length };
   }
 
+  // Insight memakai penanda: [[0.709]] = angka persen berwarna (pill), **teks** = tebal.
+  var Q = function (v) { return '[[' + (v == null ? 'null' : v) + ']]'; };
+  var kpiLine = function (o) { return KPIS.map(function (k) { return k.short + ' ' + Q(o[k.id] && o[k.id].ach); }).join(' · '); };
+  var countRed = function (list) { return list.filter(function (x) { return band(x.score) === 'r'; }).length; };
+  function sdpPairTxt(row) { return [row.idMim3, row.id3k].filter(Boolean).join(' / '); }
+
   function insightSdp(e) {
     var r = e.row, d = P.data, out = [];
-    out.push('Score ' + pct(r.score) + ', ' + BAND_TXT[band(r.score)] + '.');
-    var w = weakest(r), s = strongest(r);
-    if (w && band(w.v) !== 'g') out.push('KPI yang paling perlu dikejar: ' + w.k.label + ' (' + pct(w.v) + ').');
-    if (s && band(s.v) === 'g') out.push('KPI terbaik: ' + s.k.label + ' (' + pct(s.v) + ').');
+    out.push('**Score ' + Q(r.score) + '** (' + BAND_TXT[band(r.score)] + '). ' + kpiLine(r) + '.');
+    var w = weakest(r);
+    if (w && band(w.v) !== 'g') out.push('KPI dengan capaian terendah: **' + w.k.label + '** ' + Q(w.v) + ' — menjadi prioritas perbaikan.');
     var peers = d.sdpRows.filter(function (x) { return norm(x.area) === norm(r.area); });
-    if (peers.length > 1) {
-      var rk = rankIn(peers, r);
-      out.push('Peringkat ' + rk.r + ' dari ' + rk.n + ' SDP di area ' + title(r.area) + ' (rata-rata score area ' + pct(avg(peers.map(function (x) { return x.score; }))) + ').');
-    }
+    if (peers.length > 1) { var rk = rankIn(peers, r); out.push('Peringkat **' + rk.r + ' dari ' + rk.n + '** SDP di Area ' + title(r.area) + ' (rata-rata area ' + Q(avg(peers.map(function (x) { return x.score; }))) + ').'); }
     return out;
   }
   function insightMdi(r) {
     var d = P.data, out = [];
-    out.push('Score ' + pct(r.score) + ', ' + BAND_TXT[band(r.score)] + '.');
-    var w = weakest(r), s = strongest(r);
-    if (w && band(w.v) !== 'g') out.push('KPI yang paling perlu dikejar: ' + w.k.label + ' (' + pct(w.v) + ').');
-    if (s && band(s.v) === 'g') out.push('KPI terbaik: ' + s.k.label + ' (' + pct(s.v) + ').');
+    out.push('**Score ' + Q(r.score) + '** (' + BAND_TXT[band(r.score)] + '). ' + kpiLine(r) + '.');
+    var w = weakest(r);
+    if (w && band(w.v) !== 'g') out.push('KPI dengan capaian terendah: **' + w.k.label + '** ' + Q(w.v) + ' — menjadi prioritas perbaikan.');
     var peers = d.mdi.filter(function (x) { return norm(x.region) === norm(r.region); });
-    if (peers.length > 1) { var rk = rankIn(peers, r); out.push('Peringkat ' + rk.r + ' dari ' + rk.n + ' MDI di ' + title(r.region) + '.'); }
+    if (peers.length > 1) { var rk = rankIn(peers, r); out.push('Peringkat **' + rk.r + ' dari ' + rk.n + '** MDI di ' + title(r.region) + '.'); }
     var sdps = d.sdpRows.filter(function (x) { return norm(x.area) === norm(r.area); });
-    if (sdps.length) {
-      var low = sdps.filter(function (x) { return band(x.score) === 'r'; }).length;
-      out.push(sdps.length + ' SDP di area ' + title(r.area) + ', ' + low + ' di antaranya merah (' + LBL.r + ').');
-    }
+    if (sdps.length) out.push('SDP area ' + title(r.area) + ': **' + countRed(sdps) + ' dari ' + sdps.length + '** SDP di bawah target.');
     return out;
   }
   function regionPack(region) {
@@ -354,34 +352,25 @@
   function insightRegion(p) {
     var d = P.data, out = [], reg = p.reg;
     if (reg) {
-      var vs = d.circle && d.circle.score != null && reg.score != null ? (reg.score >= d.circle.score ? ' (di atas' : ' (di bawah') + ' Sumatera ' + pct(d.circle.score) + ')' : '';
-      out.push('Score ' + title(p.region) + ' ' + pct(reg.score) + vs + ', ' + BAND_TXT[band(reg.score)] + '.');
+      var vs = d.circle && d.circle.score != null ? ' vs Sumatera ' + Q(d.circle.score) : '';
+      out.push('**Score ' + title(p.region) + ' ' + Q(reg.score) + '**' + vs + (p.areas.length ? ' — **' + countRed(p.areas) + ' dari ' + p.areas.length + ' area di bawah target**.' : '.'));
       var w = weakest(reg);
-      if (w) out.push('KPI terlemah di region: ' + w.k.label + ' ' + pct(w.v) + '.');
+      out.push(kpiLine(reg) + (w ? ' — KPI terendah: **' + w.k.label + '**.' : '.'));
     }
     if (p.areas.length) {
-      var top = p.areas.slice(0, 3).map(function (a) { return title(a.nama) + ' ' + pct(a.score); });
-      var bot = p.areas.slice(-3).reverse().map(function (a) { return title(a.nama) + ' ' + pct(a.score); });
-      out.push('Area terbaik: ' + top.join(', ') + '.');
-      out.push('Area yang perlu perhatian: ' + bot.join(', ') + '.');
-      var under = p.areas.filter(function (a) { return band(a.score) === 'r'; });
-      out.push(under.length + ' dari ' + p.areas.length + ' area merah (' + LBL.r + ').');
-      KPIS.forEach(function (k) {
-        var low = p.areas.filter(function (a) { return a[k.id] && band(a[k.id].ach) === 'r'; });
-        if (low.length) out.push(k.label + ' merah (' + LBL.r + ') di ' + low.length + ' area: ' + low.slice(0, 6).map(function (a) { return title(a.nama); }).join(', ') + (low.length > 6 ? ', dll' : '') + '.');
-      });
+      var top = p.areas.slice(0, 2).map(function (a) { return title(a.nama) + ' ' + Q(a.score); });
+      var bot = p.areas.slice(-3).reverse().map(function (a) { return title(a.nama) + ' ' + Q(a.score); });
+      out.push('Capaian tertinggi: ' + top.join(', ') + '. Area yang memerlukan perhatian: **' + bot.join(', ') + '**.');
     }
     if (p.mdi.length) {
-      var mr = p.mdi.filter(function (x) { return band(x.score) === 'r'; }).length;
-      out.push('MDI: ' + p.mdi.length + ' partner-area, ' + mr + ' merah (' + LBL.r + '). Terendah: ' + p.mdi.slice(-1).map(function (x) { return title(x.partner) + ' (' + title(x.area) + ') ' + pct(x.score); })[0] + '.');
+      var lo = p.mdi[p.mdi.length - 1];
+      out.push('MDI: **' + countRed(p.mdi) + ' dari ' + p.mdi.length + '** partner di bawah target; capaian terendah ' + title(lo.partner) + ' (' + title(lo.area) + ') ' + Q(lo.score) + '.');
     }
     if (p.sdpRows.length) {
-      var sr = p.sdpRows.filter(function (x) { return band(x.score) === 'r'; }).length;
-      var sg = p.sdpRows.filter(function (x) { return band(x.score) === 'g'; }).length;
-      out.push('SDP: ' + p.sdpRows.length + ' SDP, rata-rata score ' + pct(avg(p.sdpRows.map(function (x) { return x.score; }))) + '; ' + sg + ' hijau, ' + sr + ' (' + Math.round(sr / p.sdpRows.length * 100) + '%) merah (' + LBL.r + ').');
+      out.push('SDP: **' + countRed(p.sdpRows) + ' dari ' + p.sdpRows.length + '** SDP di bawah target; rata-rata ' + Q(avg(p.sdpRows.map(function (x) { return x.score; }))) + '.');
     }
-    var unmapped = p.sdpEnt.filter(function (e) { return !e.map; });
-    if (unmapped.length) out.push(unmapped.length + ' ID SDP belum ada di Master_Mapping (tidak menerima email): ' + unmapped.slice(0, 5).map(function (e) { return e.id; }).join(', ') + (unmapped.length > 5 ? ', dll' : '') + '.');
+    var unmapped = p.sdpRows.filter(function (r) { return !P.data.mapById[normKey(r.idMim3)] && !P.data.mapById[normKey(r.id3k)]; });
+    if (unmapped.length) out.push('**' + unmapped.length + ' SDP** belum terdaftar di Master_Mapping: ' + unmapped.slice(0, 4).map(sdpPairTxt).join(', ') + (unmapped.length > 4 ? ', dan lainnya' : '') + '.');
     return out;
   }
 
@@ -425,12 +414,16 @@
         + '</td>';
     }).join('') + '</tr></table>';
   }
+  function insHtml(t) {
+    return esc(t).replace(/\[\[(null|-?[\d.e-]+)\]\]/g, function (_, v) { return pill(v === 'null' ? null : Number(v)); }).replace(/\*\*(.+?)\*\*/g, '<b style="color:' + C.ink + ';">$1</b>');
+  }
+  function insPlain(list) { return list.map(function (t) { return t.replace(/\[\[(null|-?[\d.e-]+)\]\]/g, function (_, v) { return pct(v === 'null' ? null : Number(v)); }).replace(/\*\*/g, ''); }).join('\n'); }
   function mInsight(list, judul) {
     return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:14px 0 6px 0;"><tr>'
       + '<td width="4" style="width:4px;background:' + C.teal + ';border-radius:4px;">&nbsp;</td>'
       + '<td style="' + F + 'background:#EEF9F7;padding:14px 18px;border-radius:0 12px 12px 0;">'
       + '<div style="font-size:12px;font-weight:bold;color:' + C.tealDk + ';text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">' + esc(judul || 'Insight') + '</div>'
-      + list.map(function (t) { return '<div style="font-size:13.5px;color:' + C.body + ';line-height:1.55;margin:0 0 6px 0;">•&nbsp; ' + esc(t) + '</div>'; }).join('')
+      + list.map(function (t) { return '<div style="font-size:13.5px;color:' + C.body + ';line-height:1.9;margin:0 0 4px 0;">•&nbsp; ' + insHtml(t) + '</div>'; }).join('')
       + '</td></tr></table>';
   }
   // Grafik batang horizontal: [{nama, v, sub}]
@@ -469,7 +462,7 @@
   var achCols = function () { return KPIS.map(function (k) { return { label: k.short, kind: 'pct', get: function (r) { return r[k.id] && r[k.id].ach; } }; }).concat([{ label: 'Score', kind: 'pct', get: function (r) { return r.score; } }]); };
   function mLegend() {
     var chip = function (k, t) { return '<span style="display:inline-block;background:' + PILL[k][0] + ';color:' + PILL[k][1] + ';font-weight:bold;font-size:11px;padding:3px 10px;border-radius:999px;margin-left:6px;">' + esc(t) + '</span>'; };
-    return '<p style="' + F + 'font-size:11.5px;color:' + C.muted + ';margin:10px 0 0 0;">Status:' + chip('g', 'Hijau ' + LBL.g) + chip('y', 'Kuning ' + LBL.y) + chip('r', 'Merah ' + LBL.r) + '</p>';
+    return '<p style="' + F + 'font-size:11.5px;color:' + C.muted + ';margin:10px 0 0 0;">Status:' + chip('g', 'Tercapai ' + LBL.g) + chip('y', 'Perlu Perhatian ' + LBL.y) + chip('r', 'Di Bawah Target ' + LBL.r) + '</p>';
   }
   // Kerangka email: header gelap ala SandraHub + kartu putih + footer.
   function wrap(inner, head) {
@@ -543,14 +536,14 @@
               { label: 'Partner', get: function (r) { return r.partner; } },
             ].concat(achCols()), p.mdi) : '')
           + mSec('3', 'SDP', p.sdpRows.length + ' SDP · rata-rata score ' + pct(avg(p.sdpRows.map(function (x) { return x.score; }))))
-          + (p.sdpByArea.length ? mH('Sebaran Score SDP per Area (hijau · kuning · merah)') + mStack(p.sdpByArea.map(function (x) { return { nama: title(x.area), g: x.g, y: x.y, r: x.r, n: x.n }; }))
+          + (p.sdpByArea.length ? mH('Sebaran Score SDP per Area (Tercapai · Perlu Perhatian · Di Bawah Target)') + mStack(p.sdpByArea.map(function (x) { return { nama: title(x.area), g: x.g, y: x.y, r: x.r, n: x.n }; }))
             + mH('Rekap per Area') + mTable([
               { label: 'Area', bold: true, get: function (r) { return title(r.area); } },
               { label: 'SDP', kind: 'num', get: function (r) { return r.n; } },
               { label: 'Rata-rata', kind: 'pct', get: function (r) { return r.avg; } },
-              { label: 'Hijau', kind: 'num', get: function (r) { return r.g; } },
-              { label: 'Kuning', kind: 'num', get: function (r) { return r.y; } },
-              { label: 'Merah', kind: 'num', get: function (r) { return r.r; } },
+              { label: 'Tercapai', kind: 'num', get: function (r) { return r.g; } },
+              { label: 'Perlu Perhatian', kind: 'num', get: function (r) { return r.y; } },
+              { label: 'Di Bawah Target', kind: 'num', get: function (r) { return r.r; } },
             ], p.sdpByArea) : '')
           + (p.sdpRows.length ? mH('10 SDP dengan Score Terendah') + mTable([
             { label: 'Nama', bold: true, get: function (r) { return r.namaMim3; } },
@@ -569,7 +562,7 @@
           unmatchedWhy: 'HOR untuk ' + title(region) + ' belum ada di Master_Mapping (TYPE INTERNAL SALES, ROLE HOR).',
           perf: {
             subject: 'Performance Report ' + title(region) + ' — ' + P.periode,
-            html: html, insight: ins.join('\n'),
+            html: html, insight: insPlain(ins),
             attName: 'Performance Report ' + title(region) + ' ' + P.periode,
             sheets: [['Internal Sales', isRows], ['MDI', p.mdi.map(flatRow)], ['SDP', p.sdpRows.map(flatSdpRow)]],
           },
@@ -592,7 +585,7 @@
               + mH('Detail') + mTable([{ label: 'Area', bold: true, get: function (x) { return title(x.area); } }, { label: 'Partner', get: function (x) { return x.partner; } }].concat(achCols()), [r])
               + '<div style="height:14px;"></div>' + mText(closingTxt()),
               { title: title(r.partner), sub: subHead('MDI ' + title(r.area)) }),
-            insight: ins.join('\n'),
+            insight: insPlain(ins),
             attName: 'Performance Report ' + title(r.partner) + ' ' + title(r.area),
             sheets: [['MDI', [flatRow(r)]]],
           },
@@ -611,10 +604,10 @@
             html: wrap(mText(introFor({ name: e.nama }, INTRO_DEF))
               + mH('Pencapaian') + mTiles(r, null) + mLegend()
               + mInsight(ins)
-              + mH('Detail') + mTable([{ label: 'ID', bold: true, get: function () { return e.id; } }, { label: 'Area', get: function (x) { return title(x.area); } }, { label: 'Microcluster', get: function (x) { return x.mc; } }].concat(achCols()), [r])
+              + mH('Detail') + mTable([{ label: 'ID MIM3 / ID 3KIOSK', bold: true, get: function (x) { return sdpPairTxt(x); } }, { label: 'Area', get: function (x) { return title(x.area); } }, { label: 'Microcluster', get: function (x) { return x.mc; } }].concat(achCols()), [r])
               + '<div style="height:14px;"></div>' + mText(closingTxt()),
-              { title: e.nama, sub: subHead('SDP ' + e.id + ' · ' + title(r.area)) }),
-            insight: ins.join('\n'),
+              { title: e.nama, sub: subHead('SDP ' + sdpPairTxt(r) + ' · ' + title(r.area)) }),
+            insight: insPlain(ins),
             attName: 'Performance Report ' + e.id,
             sheets: [['SDP', [flatSdpRow(r)]]],
           },
@@ -635,7 +628,9 @@
       var sdp = d.sdpRows.filter(function (x) { return norm(x.area) === A; }).sort(byScoreDesc);
       var hm = d.hoaMap[A];
       var to = hm ? splitEmails(hm.EMAIL_TO) : [];
-      var cc = hm ? splitEmails(hm.EMAIL_CC).filter(function (e) { return to.indexOf(e) < 0; }) : [];
+      var hor = d.hor[norm(area.REGION)];
+      // Cc = Cc baris HOA (kalau ada) + HOR region-nya.
+      var cc = Array.from(new Set((hm ? splitEmails(hm.EMAIL_CC) : []).concat(hor ? splitEmails(hor.EMAIL_TO) : []).map(function (e) { return e.toLowerCase(); }))).filter(function (e) { return to.map(function (x) { return x.toLowerCase(); }).indexOf(e) < 0; });
       var nmHoa = hm ? title(hm.PARTNER_NAME) : 'Head of Area';
       var ins = insightArea(area, reg, people, mdi, sdp);
       var mcAvg = {};
@@ -656,7 +651,7 @@
         + mSec('2', 'MDI', mdi.length + ' partner')
         + (mdi.length ? mTable([{ label: 'Partner', bold: true, get: function (r) { return r.partner; } }].concat(achCols()), mdi) : mP('Tidak ada data MDI untuk area ini.'))
         + mSec('3', 'SDP', sdp.length + ' SDP · rata-rata score ' + pct(avg(sdp.map(function (x) { return x.score; }))))
-        + (sdp.length ? mH('Sebaran Score SDP (hijau · kuning · merah)') + mStack([{ nama: title(area.nama), g: sdp.filter(function (x) { return band(x.score) === 'g'; }).length, y: sdp.filter(function (x) { return band(x.score) === 'y'; }).length, r: sdp.filter(function (x) { return band(x.score) === 'r'; }).length, n: sdp.length }])
+        + (sdp.length ? mH('Sebaran Score SDP (Tercapai · Perlu Perhatian · Di Bawah Target)') + mStack([{ nama: title(area.nama), g: sdp.filter(function (x) { return band(x.score) === 'g'; }).length, y: sdp.filter(function (x) { return band(x.score) === 'y'; }).length, r: sdp.filter(function (x) { return band(x.score) === 'r'; }).length, n: sdp.length }])
           + mH('Detail SDP (score terendah di atas)') + mTable([
             { label: 'Nama', bold: true, get: function (r) { return r.namaMim3; } },
             { label: 'Microcluster', get: function (r) { return r.mc; } },
@@ -674,7 +669,7 @@
         unmatchedWhy: 'HOA untuk area ' + title(area.nama) + ' belum ada di Master_Mapping (TYPE INTERNAL SALES, ROLE HOA, BRANCH = nama area).',
         perf: {
           subject: 'Performance Report Area ' + title(area.nama) + ' — ' + P.periode,
-          html: html, insight: ins.join('\n'),
+          html: html, insight: insPlain(ins),
           attName: 'Performance Report Area ' + title(area.nama) + ' ' + P.periode,
           sheets: [['Internal Sales', isRows], ['MDI', mdi.map(flatRow)], ['SDP', sdp.map(flatSdpRow)]],
         },
@@ -683,20 +678,17 @@
   }
   function insightArea(area, reg, people, mdi, sdp) {
     var out = [];
-    out.push('Score area ' + title(area.nama) + ' ' + pct(area.score) + (reg && reg.score != null ? ' (' + (area.score >= reg.score ? 'di atas' : 'di bawah') + ' rata-rata ' + title(reg.nama) + ' ' + pct(reg.score) + ')' : '') + ', ' + BAND_TXT[band(area.score)] + '.');
     var peers = P.data.areas.filter(function (x) { return norm(x.REGION) === norm(area.REGION); });
-    if (peers.length > 1) { var rk = rankIn(peers, area); out.push('Peringkat ' + rk.r + ' dari ' + rk.n + ' area di ' + title(area.REGION) + '.'); }
+    var rk = peers.length > 1 ? rankIn(peers, area) : null;
+    out.push('**Score ' + title(area.nama) + ' ' + Q(area.score) + '**' + (reg ? ' vs ' + title(reg.nama) + ' ' + Q(reg.score) : '') + (rk ? ' — peringkat **' + rk.r + ' dari ' + rk.n + '** area.' : '.'));
     var w = weakest(area);
-    if (w) out.push('KPI terlemah: ' + w.k.label + ' ' + pct(w.v) + '.');
+    out.push(kpiLine(area) + (w ? ' — KPI terendah: **' + w.k.label + '**.' : '.'));
     if (people.length) {
       var red = people.filter(function (x) { return band(x.score) === 'r'; });
-      out.push(people.length + ' sales: ' + people.filter(function (x) { return band(x.score) === 'g'; }).length + ' hijau, ' + red.length + ' merah' + (red.length ? ' (' + red.slice(-3).reverse().map(function (x) { return title(x.nama) + ' ' + pct(x.score); }).join(', ') + (red.length > 3 ? ', dll' : '') + ')' : '') + '.');
+      out.push('Sales: **' + red.length + ' dari ' + people.length + '** di bawah target' + (red.length ? '; capaian terendah ' + red.slice(-2).reverse().map(function (x) { return title(x.nama) + ' ' + Q(x.score); }).join(', ') : '') + '.');
     }
-    if (mdi.length) out.push('MDI: ' + mdi.map(function (x) { return title(x.partner) + ' ' + pct(x.score); }).join(', ') + '.');
-    if (sdp.length) {
-      var sr = sdp.filter(function (x) { return band(x.score) === 'r'; }).length;
-      out.push('SDP: ' + sdp.length + ' SDP, rata-rata ' + pct(avg(sdp.map(function (x) { return x.score; }))) + ', ' + sr + ' merah. Terendah: ' + sdp[sdp.length - 1].namaMim3 + ' ' + pct(sdp[sdp.length - 1].score) + '.');
-    }
+    if (mdi.length) out.push('MDI: ' + mdi.map(function (x) { return title(x.partner) + ' ' + Q(x.score); }).join(', ') + '.');
+    if (sdp.length) out.push('SDP: **' + countRed(sdp) + ' dari ' + sdp.length + '** SDP di bawah target; rata-rata ' + Q(avg(sdp.map(function (x) { return x.score; }))) + '; capaian terendah ' + sdp[sdp.length - 1].namaMim3 + ' ' + Q(sdp[sdp.length - 1].score) + '.');
     return out;
   }
   var r4 = function (v) { return v == null ? '' : Math.round(v * 10000) / 10000; };
@@ -862,7 +854,8 @@
     } else if (P.jenis === 'sdp') {
       var miss = d.sdp.filter(function (e) { return !e.map; });
       bad = miss.length;
-      txt = (d.sdp.length - bad) + ' dari ' + d.sdp.length + ' ID SDP (MIM3 & 3KIOSK) cocok dengan Master_Mapping.' + (bad ? ' Belum ada: ' + miss.slice(0, 8).map(function (e) { return e.id; }).join(', ') + (bad > 8 ? ', dll' : '') + '. Tidak akan dikirim.' : '');
+      var missPair = d.sdpRows.filter(function (r) { return !d.mapById[normKey(r.idMim3)] || !d.mapById[normKey(r.id3k)]; });
+      txt = (d.sdpRows.length - missPair.length) + ' dari ' + d.sdpRows.length + ' SDP (pasangan ID MIM3 / ID 3KIOSK) cocok dengan Master_Mapping → ' + (d.sdp.length - bad) + ' email (1 per ID).' + (missPair.length ? ' Belum ada: ' + missPair.slice(0, 6).map(sdpPairTxt).join(', ') + (missPair.length > 6 ? ', dan lainnya' : '') + '. Tidak akan dikirim.' : '');
     } else if (P.jenis === 'hor') {
       var noHor = d.regionNames.filter(function (r) { var m = d.hor[norm(r)]; return !m || !splitEmails(m.EMAIL_TO).length; });
       bad = noHor.length;
@@ -956,7 +949,7 @@
     step2.appendChild(box);
     document.getElementById('pfPeriodeInput').id = 'perfPeriode';
     document.getElementById('perfIntro').value = 'Yth. Bapak/Ibu {nama},\n\nBerikut kami sampaikan Performance Report periode {periode} (data per {tanggal}).';
-    document.getElementById('perfClosing').value = 'Mohon dapat dijadikan perhatian dan ditindaklanjuti, terutama untuk KPI yang masih merah. Apabila ada pertanyaan terkait data di atas, silakan menghubungi kami.\n\nTerima kasih atas kerja samanya.\n\nWarm regards,\nSales & Distribution — Indosat Circle Sumatera';
+    document.getElementById('perfClosing').value = 'Mohon dapat dijadikan perhatian dan ditindaklanjuti, khususnya untuk KPI yang belum mencapai target. Apabila ada pertanyaan terkait data di atas, silakan menghubungi kami.\n\nTerima kasih atas kerja samanya.\n\nWarm regards,\nSales & Distribution — Indosat Circle Sumatera';
     document.querySelectorAll('#pfJenis input').forEach(function (r) { r.onchange = function () { setJenis(r.value); }; });
     document.querySelector('#pfJenis input[value="hor"]').checked = true;
     setJenis('hor');
