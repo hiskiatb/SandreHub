@@ -1382,7 +1382,8 @@
     if (!mb || !mb.firstElementChild || !mb.clientWidth) return;
     var inner = mb.firstElementChild;
     inner.style.zoom = '';
-    var z = (mb.clientWidth - 8) / Math.max(1, inner.scrollWidth);
+    // Lebar email = 820px + padding bingkai abu-abu 2 x 12px (+ ruang scrollbar).
+    var z = (mb.clientWidth - 24) / 870;
     if (z > 0 && z < 1) inner.style.zoom = z.toFixed(3);
   }
   window.addEventListener('resize', fitPreview);
