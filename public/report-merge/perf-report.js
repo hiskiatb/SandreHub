@@ -18,7 +18,7 @@
  *              (disimpan di SandraHub), Cc = alamat Cc yang ada di SEMUA baris
  *              Master_Mapping region itu.
  *
- * Warna (ubah di THRESHOLD): hijau >= 83%, kuning 78% s/d < 83%, merah < 78%.
+ * Status (ubah di THRESHOLD): ON TRACK >= 90%, PUSH 80-89%, WARNING 70-79%, CRITICAL < 70%.
  * Di luar ?flow=performance skrip ini tidak melakukan apa-apa.
  */
 (function () {
@@ -39,11 +39,14 @@
   var pct = function (v) { return v == null ? '–' : (v * 100).toFixed(1).replace('.', ',') + '%'; };
   var fmt = function (v) { return v == null ? '–' : Math.round(v).toLocaleString('id-ID'); };
   // Ambang warna — cukup ubah dua angka ini (dalam pecahan, 0.83 = 83%).
-  var THRESHOLD = { hijau: 0.83, kuning: 0.78 };
+  var THRESHOLD = { onTrack: 0.90, push: 0.80, warning: 0.70 };
   var tp = function (v) { return Math.round(v * 100) + '%'; };
-  var LBL = { g: '≥' + tp(THRESHOLD.hijau), y: tp(THRESHOLD.kuning) + '–<' + tp(THRESHOLD.hijau), r: '<' + tp(THRESHOLD.kuning) };
-  var band = function (v) { return v == null ? 'na' : v >= THRESHOLD.hijau ? 'g' : v >= THRESHOLD.kuning ? 'y' : 'r'; };
-  var BAND_TXT = { g: 'Tercapai (' + LBL.g + ')', y: 'Perlu Perhatian (' + LBL.y + ')', r: 'Di Bawah Target (' + LBL.r + ')', na: 'data tidak tersedia' };
+  var LBL = { g: '≥' + tp(THRESHOLD.onTrack), y: tp(THRESHOLD.push) + '–' + (Math.round(THRESHOLD.onTrack * 100) - 1) + '%', o: tp(THRESHOLD.warning) + '–' + (Math.round(THRESHOLD.push * 100) - 1) + '%', r: '<' + tp(THRESHOLD.warning) };
+  // g = ON TRACK, y = PUSH, o = WARNING, r = CRITICAL
+  var band = function (v) { return v == null ? 'na' : v >= THRESHOLD.onTrack ? 'g' : v >= THRESHOLD.push ? 'y' : v >= THRESHOLD.warning ? 'o' : 'r'; };
+  var BKEYS = ['g', 'y', 'o', 'r'];
+  var BAND_TXT = { g: 'On Track (' + LBL.g + ')', y: 'Push (' + LBL.y + ')', o: 'Warning (' + LBL.o + ')', r: 'Critical (' + LBL.r + ')', na: 'data tidak tersedia' };
+  var countBands = function (list) { var n = { g: 0, y: 0, o: 0, r: 0 }; list.forEach(function (x) { var b = band(x.score); if (n[b] != null) n[b]++; }); return n; };
   var MAIL = { g: ['#E3F5F2', '#1D8078'], y: ['#FFF4CC', '#8A6A00'], r: ['#FDE4E4', '#B3121A'], na: ['#F2F2F6', '#6B6B78'] };
   var title = function (s) { return String(s || '').toLowerCase().replace(/\b\w/g, function (c) { return c.toUpperCase(); }).replace(/\b(Pt|Cv|Sdp|Mdi|Mc)\b/g, function (w) { return w.toUpperCase(); }); };
   var avg = function (arr) { var a = arr.filter(function (x) { return x != null; }); return a.length ? a.reduce(function (s, x) { return s + x; }, 0) / a.length : null; };
@@ -306,7 +309,8 @@
   // Insight memakai penanda: [[0.709]] = angka persen berwarna (pill), **teks** = tebal.
   var Q = function (v) { return '[[' + (v == null ? 'null' : v) + ']]'; };
   var kpiLine = function (o) { return KPIS.map(function (k) { return k.short + ' ' + Q(o[k.id] && o[k.id].ach); }).join(' · '); };
-  var countRed = function (list) { return list.filter(function (x) { return band(x.score) === 'r'; }).length; };
+  // Jumlah berstatus Warning/Critical (di bawah batas Push).
+  var countRed = function (list) { return list.filter(function (x) { var b = band(x.score); return b === 'o' || b === 'r'; }).length; };
   function sdpPairTxt(row) { return [row.idMim3, row.id3k].filter(Boolean).join(' / '); }
 
   function insightSdp(e) {
@@ -328,7 +332,7 @@
     var peers = d.mdi.filter(function (x) { return norm(x.region) === norm(r.region); });
     if (peers.length > 1) { var rk = rankIn(peers, r); out.push('Peringkat::**' + rk.r + ' dari ' + rk.n + '** MDI di ' + title(r.region) + '.'); }
     var sdps = d.sdpRows.filter(function (x) { return norm(x.area) === norm(r.area); });
-    if (sdps.length) out.push('SDP Area::**' + countRed(sdps) + ' dari ' + sdps.length + '** SDP di Area ' + title(r.area) + ' di bawah target.');
+    if (sdps.length) out.push('SDP Area::**' + countRed(sdps) + ' dari ' + sdps.length + '** SDP di Area ' + title(r.area) + ' berstatus Warning/Critical.');
     return out;
   }
   function regionPack(region) {
@@ -344,11 +348,10 @@
       var list = sdpRows.filter(function (x) { return norm(x.area) === norm(a); });
       return {
         area: a, n: list.length, avg: avg(list.map(function (x) { return x.score; })),
-        g: list.filter(function (x) { return band(x.score) === 'g'; }).length,
-        y: list.filter(function (x) { return band(x.score) === 'y'; }).length,
-        r: list.filter(function (x) { return band(x.score) === 'r'; }).length,
       };
-    }).filter(function (x) { return x.n; }).sort(function (a, b) { return (b.r / b.n) - (a.r / a.n); });
+    }).filter(function (x) { return x.n; }).map(function (x) {
+      return Object.assign(x, countBands(sdpRows.filter(function (r) { return norm(r.area) === norm(x.area); })));
+    }).sort(function (a, b) { return ((b.o + b.r) / b.n) - ((a.o + a.r) / a.n); });
     return { region: region, reg: reg, areas: areas, clusters: clusters, mdi: mdi, sdpRows: sdpRows, sdpEnt: sdpEnt, sdpByArea: sdpByArea };
   }
   function insightRegion(p) {
@@ -361,13 +364,13 @@
     if (p.areas.length) {
       var top = p.areas.slice(0, 2).map(function (a) { return title(a.nama) + ' ' + Q(a.score); });
       var bot = p.areas.slice(-3).reverse().map(function (a) { return title(a.nama) + ' ' + Q(a.score); });
-      out.push('Area::**' + countRed(p.areas) + ' dari ' + p.areas.length + '** area di bawah target. Capaian tertinggi: ' + top.join(', ') + '. Memerlukan perhatian: **' + bot.join(', ') + '**.');
+      out.push('Area::**' + countRed(p.areas) + ' dari ' + p.areas.length + '** area berstatus Warning/Critical. Capaian tertinggi: ' + top.join(', ') + '. Memerlukan perhatian: **' + bot.join(', ') + '**.');
     }
     if (p.mdi.length) {
       var lo = p.mdi[p.mdi.length - 1];
-      out.push('MDI::**' + countRed(p.mdi) + ' dari ' + p.mdi.length + '** partner di bawah target. Capaian terendah: ' + title(lo.partner) + ' (' + title(lo.area) + ') ' + Q(lo.score) + '.');
+      out.push('MDI::**' + countRed(p.mdi) + ' dari ' + p.mdi.length + '** partner berstatus Warning/Critical. Capaian terendah: ' + title(lo.partner) + ' (' + title(lo.area) + ') ' + Q(lo.score) + '.');
     }
-    if (p.sdpRows.length) out.push('SDP::**' + countRed(p.sdpRows) + ' dari ' + p.sdpRows.length + '** SDP di bawah target, rata-rata ' + Q(avg(p.sdpRows.map(function (x) { return x.score; }))) + '.');
+    if (p.sdpRows.length) out.push('SDP::**' + countRed(p.sdpRows) + ' dari ' + p.sdpRows.length + '** SDP berstatus Warning/Critical, rata-rata ' + Q(avg(p.sdpRows.map(function (x) { return x.score; }))) + '.');
     var unmapped = p.sdpRows.filter(function (r) { return !P.data.mapById[normKey(r.idMim3)] && !P.data.mapById[normKey(r.id3k)]; });
     if (unmapped.length) out.push('Data::**' + unmapped.length + ' SDP** belum terdaftar di Master_Mapping: ' + unmapped.slice(0, 4).map(sdpPairTxt).join(', ') + (unmapped.length > 4 ? ', dan lainnya' : '') + '.');
     return out;
@@ -377,30 +380,30 @@
   var F = 'font-family:Arial,Helvetica,sans-serif;';
   var C = { ink: '#1F1F24', body: '#4D4D4F', muted: '#6B6B78', line: '#E6E6EC', bg: '#F4F4F7', card: '#FFFFFF', dark: '#16161B', teal: '#32BCAD', tealDk: '#1E8C80', magenta: '#C6168D', yellow: '#FFCB05', red: '#ED1C24' };
   // Warna status standar laporan performa (RAG): isi solid hijau / kuning-amber / merah.
-  var BAR = { g: '#00A651', y: '#FFC000', r: '#E3000F', na: '#D5D5DD' };
+  var BAR = { g: '#12A150', y: '#E0A100', o: '#EE6A1F', r: '#E03A2F', na: '#D5D5DD' };
   // Gaya status mengikuti contoh Saila: latar lembut + teks/titik berwarna tegas.
-  var PILL = { g: ['#E2F3E8', '#0E7A3E'], y: ['#FBF0CC', '#A67600'], r: ['#F9DEDA', '#C42318'], na: ['#EEEEF2', '#6B6B78'] };
-  var INK = { g: '#0E7A3E', y: '#A67600', r: '#C42318', na: '#6B6B78' };
-  var DOT = { g: '#12A150', y: '#E0A100', r: '#E03A2F', na: '#B5B5C0' };
+  var PILL = { g: ['#E2F3E8', '#0E7A3E'], y: ['#FBF0CC', '#A67600'], o: ['#FCE3D3', '#C2560F'], r: ['#F9DEDA', '#C42318'], na: ['#EEEEF2', '#6B6B78'] };
+  var INK = { g: '#0E7A3E', y: '#A67600', o: '#C2560F', r: '#C42318', na: '#6B6B78' };
+  var DOT = { g: '#12A150', y: '#E0A100', o: '#EE6A1F', r: '#E03A2F', na: '#B5B5C0' };
   var STATUS = {
-    g: { label: 'TERCAPAI', aksi: 'Pertahankan momentum dan dorong capaian hingga 100%.' },
-    y: { label: 'PERLU PERHATIAN', aksi: 'Percepat KPI yang tertinggal agar segera mencapai target.' },
-    r: { label: 'DI BAWAH TARGET', aksi: 'Diperlukan rencana perbaikan dan monitoring intensif.' },
+    g: { label: 'ON TRACK', aksi: 'Jaga momentum, dorong capaian hingga 100%.' },
+    y: { label: 'PUSH', aksi: 'Dorong KPI yang tertinggal agar naik ke On Track.' },
+    o: { label: 'WARNING', aksi: 'Fokus mengejar KPI terendah untuk keluar dari zona Warning.' },
+    r: { label: 'CRITICAL', aksi: 'Perlu intervensi dan review harian.' },
   };
   // Kartu ringkasan status: jumlah item per status (mis. area, sales, SDP).
   function mStatus(list, unit) {
-    var n = { g: 0, y: 0, r: 0 };
-    list.forEach(function (x) { var b = band(x.score); if (n[b] != null) n[b]++; });
+    var n = countBands(list);
     var cell = function (k) {
-      return '<td width="32%" valign="top" bgcolor="' + PILL[k][0] + '" style="' + F + 'background:' + PILL[k][0] + ';border-radius:14px;padding:14px 16px;">'
+      return '<td width="23.5%" valign="top" bgcolor="' + PILL[k][0] + '" style="' + F + 'background:' + PILL[k][0] + ';border-radius:14px;padding:12px 14px;">'
         + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>'
-        + '<td valign="middle" style="' + F + 'font-size:12.5px;white-space:nowrap;"><span style="color:' + DOT[k] + ';font-size:16px;">&#9679;</span>&nbsp;<b style="color:' + INK[k] + ';letter-spacing:.3px;">' + STATUS[k].label + '</b>&nbsp; <span style="color:' + C.muted + ';">' + esc(LBL[k]) + '</span></td>'
+        + '<td valign="middle" style="' + F + 'font-size:12px;line-height:1.35;"><span style="color:' + DOT[k] + ';font-size:14px;">&#9679;</span>&nbsp;<b style="color:' + INK[k] + ';letter-spacing:.3px;">' + STATUS[k].label + '</b><br><span style="color:' + C.muted + ';">' + esc(LBL[k]) + '</span></td>'
         + '<td align="right" valign="middle" style="' + F + 'white-space:nowrap;"><b style="font-size:26px;color:' + INK[k] + ';">' + n[k] + '</b> <span style="font-size:12px;color:' + C.muted + ';">' + esc(unit) + '</span></td>'
         + '</tr></table>'
         + '<div style="' + F + 'font-size:12px;color:' + C.body + ';margin-top:6px;line-height:1.45;">' + STATUS[k].aksi + '</div></td>';
     };
     return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:4px 0 8px 0;"><tr>'
-      + cell('g') + '<td width="2%" style="font-size:1px;">&nbsp;</td>' + cell('y') + '<td width="2%" style="font-size:1px;">&nbsp;</td>' + cell('r') + '</tr></table>';
+      + BKEYS.map(cell).join('<td width="2%" style="font-size:1px;">&nbsp;</td>') + '</tr></table>';
   }
   function mP(txt) { return '<p style="' + F + 'font-size:14px;color:' + C.body + ';line-height:1.65;margin:0 0 14px 0;">' + txt + '</p>'; }
   function mText(raw) { return String(raw || '').split(/\n\s*\n/).filter(function (b) { return b.trim(); }).map(function (b) { return mP(esc(b).replace(/\n/g, '<br>')); }).join(''); }
@@ -469,8 +472,8 @@
     return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">' + items.map(function (it) {
       var seg = function (k, n) { return n ? '<td width="' + Math.max(1, Math.round(n / it.n * 100)) + '%" height="12" style="height:12px;font-size:1px;line-height:12px;background:' + BAR[k] + ';">&nbsp;</td>' : ''; };
       return '<tr><td style="' + F + 'font-size:12.5px;color:' + C.ink + ';padding:5px 10px 5px 0;white-space:nowrap;width:150px;">' + esc(it.nama) + '</td>'
-        + '<td style="padding:5px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>' + seg('g', it.g) + seg('y', it.y) + seg('r', it.r) + '</tr></table></td>'
-        + '<td style="' + F + 'font-size:11.5px;color:' + C.muted + ';text-align:right;padding:5px 0 5px 10px;width:92px;white-space:nowrap;"><b style="color:' + INK.g + ';">' + it.g + '</b> · <b style="color:' + INK.y + ';">' + it.y + '</b> · <b style="color:' + INK.r + ';">' + it.r + '</b></td></tr>';
+        + '<td style="padding:5px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>' + BKEYS.map(function (k) { return seg(k, it[k] || 0); }).join('') + '</tr></table></td>'
+        + '<td style="' + F + 'font-size:11.5px;color:' + C.muted + ';text-align:right;padding:5px 0 5px 10px;width:110px;white-space:nowrap;">' + BKEYS.map(function (k) { return '<b style="color:' + INK[k] + ';">' + (it[k] || 0) + '</b>'; }).join(' · ') + '</td></tr>';
     }).join('') + '</table>';
   }
   // cols: [{label, get(row) -> value, kind: 'pct'|'num'|'text'}]
@@ -492,7 +495,7 @@
   var achCols = function () { return KPIS.map(function (k) { return { label: k.short, kind: 'pct', get: function (r) { return r[k.id] && r[k.id].ach; } }; }).concat([{ label: 'Score', kind: 'pct', get: function (r) { return r.score; } }]); };
   function mLegend() {
     var chip = function (k, t) { return '<span style="display:inline-block;background-color:' + PILL[k][0] + ';border:2px solid ' + PILL[k][0] + ';color:' + PILL[k][1] + ';font-weight:bold;font-size:11px;padding:1px 8px;border-radius:999px;margin-left:6px;"><span style="color:' + DOT[k] + ';">&#9679;</span>&nbsp;' + esc(t) + '</span>'; };
-    return '<p style="' + F + 'font-size:11.5px;color:' + C.muted + ';margin:10px 0 0 0;">Status:' + chip('g', 'Tercapai ' + LBL.g) + chip('y', 'Perlu Perhatian ' + LBL.y) + chip('r', 'Di Bawah Target ' + LBL.r) + '</p>';
+    return '<p style="' + F + 'font-size:11.5px;color:' + C.muted + ';margin:10px 0 0 0;">Status:' + BKEYS.map(function (k) { return chip(k, STATUS[k].label + ' ' + LBL[k]); }).join('') + '</p>';
   }
   // Kerangka email: header gelap ala SandraHub + kartu putih + footer.
   function wrap(inner, head) { return outlookify(wrapRaw(inner, head)); }
@@ -578,14 +581,15 @@
               { label: 'Partner', get: function (r) { return r.partner; } },
             ].concat(achCols()), p.mdi) : '')
           + mSec('3', 'SDP', p.sdpRows.length + ' SDP · rata-rata score ' + pct(avg(p.sdpRows.map(function (x) { return x.score; }))))
-          + (p.sdpByArea.length ? mH('Sebaran Score SDP per Area (Tercapai · Perlu Perhatian · Di Bawah Target)') + mStack(p.sdpByArea.map(function (x) { return { nama: title(x.area), g: x.g, y: x.y, r: x.r, n: x.n }; }))
+          + (p.sdpByArea.length ? mH('Sebaran Status SDP per Area (On Track · Push · Warning · Critical)') + mStack(p.sdpByArea.map(function (x) { return { nama: title(x.area), n: x.n, g: x.g, y: x.y, o: x.o, r: x.r }; }))
             + mH('Rekap per Area') + mTable([
               { label: 'Area', bold: true, get: function (r) { return title(r.area); } },
               { label: 'SDP', kind: 'num', get: function (r) { return r.n; } },
               { label: 'Rata-rata', kind: 'pct', get: function (r) { return r.avg; } },
-              { label: 'Tercapai', kind: 'num', get: function (r) { return r.g; } },
-              { label: 'Perlu Perhatian', kind: 'num', get: function (r) { return r.y; } },
-              { label: 'Di Bawah Target', kind: 'num', get: function (r) { return r.r; } },
+              { label: 'On Track', kind: 'num', get: function (r) { return r.g; } },
+              { label: 'Push', kind: 'num', get: function (r) { return r.y; } },
+              { label: 'Warning', kind: 'num', get: function (r) { return r.o; } },
+              { label: 'Critical', kind: 'num', get: function (r) { return r.r; } },
             ], p.sdpByArea) : '')
           + (p.sdpRows.length ? mH('10 SDP dengan Score Terendah') + mTable([
             { label: 'Nama', bold: true, get: function (r) { return r.namaMim3; } },
@@ -692,7 +696,7 @@
         + mSec('2', 'MDI', mdi.length + ' partner')
         + (mdi.length ? mTable([{ label: 'Partner', bold: true, get: function (r) { return r.partner; } }].concat(achCols()), mdi) : mP('Tidak ada data MDI untuk area ini.'))
         + mSec('3', 'SDP', sdp.length + ' SDP · rata-rata score ' + pct(avg(sdp.map(function (x) { return x.score; }))))
-        + (sdp.length ? mH('Sebaran Score SDP (Tercapai · Perlu Perhatian · Di Bawah Target)') + mStack([{ nama: title(area.nama), g: sdp.filter(function (x) { return band(x.score) === 'g'; }).length, y: sdp.filter(function (x) { return band(x.score) === 'y'; }).length, r: sdp.filter(function (x) { return band(x.score) === 'r'; }).length, n: sdp.length }])
+        + (sdp.length ? mH('Sebaran Status SDP (On Track · Push · Warning · Critical)') + mStack([Object.assign({ nama: title(area.nama), n: sdp.length }, countBands(sdp))])
           + mH('Detail SDP (score terendah di atas)') + mTable([
             { label: 'Nama', bold: true, get: function (r) { return r.namaMim3; } },
             { label: 'Microcluster', get: function (r) { return r.mc; } },
@@ -725,11 +729,11 @@
     var w = weakest(area);
     out.push('KPI::' + kpiLine(area) + (w ? '. KPI terendah: **' + w.k.label + '**.' : '.'));
     if (people.length) {
-      var red = people.filter(function (x) { return band(x.score) === 'r'; });
-      out.push('Sales::**' + red.length + ' dari ' + people.length + '** sales di bawah target' + (red.length ? '. Capaian terendah: ' + red.slice(-2).reverse().map(function (x) { return title(x.nama) + ' ' + Q(x.score); }).join(', ') : '') + '.');
+      var red = people.filter(function (x) { var b = band(x.score); return b === 'o' || b === 'r'; });
+      out.push('Sales::**' + red.length + ' dari ' + people.length + '** sales berstatus Warning/Critical' + (red.length ? '. Capaian terendah: ' + red.slice(-2).reverse().map(function (x) { return title(x.nama) + ' ' + Q(x.score); }).join(', ') : '') + '.');
     }
     if (mdi.length) out.push('MDI::' + mdi.map(function (x) { return title(x.partner) + ' ' + Q(x.score); }).join(', ') + '.');
-    if (sdp.length) out.push('SDP::**' + countRed(sdp) + ' dari ' + sdp.length + '** SDP di bawah target, rata-rata ' + Q(avg(sdp.map(function (x) { return x.score; }))) + '. Capaian terendah: ' + sdp[sdp.length - 1].namaMim3 + ' ' + Q(sdp[sdp.length - 1].score) + '.');
+    if (sdp.length) out.push('SDP::**' + countRed(sdp) + ' dari ' + sdp.length + '** SDP berstatus Warning/Critical, rata-rata ' + Q(avg(sdp.map(function (x) { return x.score; }))) + '. Capaian terendah: ' + sdp[sdp.length - 1].namaMim3 + ' ' + Q(sdp[sdp.length - 1].score) + '.');
     return out;
   }
   var r4 = function (v) { return v == null ? '' : Math.round(v * 10000) / 10000; };
@@ -762,9 +766,10 @@
     '.pf-card .v{ font-size:26px; font-weight:800; margin-top:4px; font-family:var(--font-brand); }',
     '.pf-card .s{ font-size:12px; color:var(--muted); margin-top:2px; }',
     '.pf-g{ color:#00A651; } .pf-y{ color:#E0A800; } .pf-r{ color:#FF3B3B; } .pf-na{ color:var(--muted); }',
+    '.pf-bg-o{ background:#FCE3D3 !important; color:#C2560F !important; } .pf-pill.pf-bg-o::before{ color:#EE6A1F; } .pf-st.o{ background:#FCE3D3; color:#C2560F; } .pf-st.o .k::before{ color:#EE6A1F; } .pf-s-o{ background:#EE6A1F; } .pf-o{ color:#EE6A1F; } .pf-legend .o{ background:#FCE3D3; color:#C2560F; }',
     '.pf-bg-g{ background:#E2F3E8 !important; color:#0E7A3E !important; } .pf-bg-y{ background:#FBF0CC !important; color:#A67600 !important; } .pf-bg-r{ background:#F9DEDA !important; color:#C42318 !important; } .pf-bg-na{ color:var(--muted); }',
     '.pf-pill::before{ content:"\\25CF"; margin-right:5px; } .pf-pill.pf-bg-g::before{ color:#12A150; } .pf-pill.pf-bg-y::before{ color:#E0A100; } .pf-pill.pf-bg-r::before{ color:#E03A2F; }',
-    '.pf-status{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }',
+    '.pf-status{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }',
     '.pf-st{ border-radius:14px; padding:14px 16px; }',
     '.pf-st .h{ display:flex; align-items:baseline; justify-content:space-between; gap:8px; }',
     '.pf-st .k{ font-weight:800; letter-spacing:.03em; font-size:13px; } .pf-st .k::before{ content:"\\25CF"; margin-right:7px; font-size:15px; }',
@@ -783,8 +788,8 @@
     '.pf-bar .t i{ position:absolute; left:0; top:0; bottom:0; border-radius:6px; }',
     '.pf-bar .t b{ position:absolute; top:-2px; bottom:-2px; width:2px; background:var(--ink2); opacity:.45; }',
     '.pf-bar .p{ text-align:right; font-weight:700; font-variant-numeric:tabular-nums; }',
-    '.pf-i-g, .pf-i-y, .pf-i-r{ background:var(--ioh-teal); } .pf-i-na{ background:var(--line); }',
-    '.pf-s-g{ background:#00A651; } .pf-s-y{ background:#FFC000; } .pf-s-r{ background:#E3000F; }',
+    '.pf-i-g, .pf-i-y, .pf-i-o, .pf-i-r{ background:var(--ioh-teal); } .pf-i-na{ background:var(--line); }',
+    '.pf-s-g{ background:#12A150; } .pf-s-y{ background:#E0A100; } .pf-s-r{ background:#E03A2F; }',
     '.pf-card .v .pf-pill{ font-size:24px; padding:4px 12px; border-radius:10px; }',
     '.pf-reg{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }',
     '.pf-reg .pf-bar{ grid-template-columns:78px 1fr 64px; }',
@@ -798,7 +803,7 @@
     '.pf-legend{ display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:var(--muted); }',
     '.pf-legend span::before{ content:""; display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:-1px; }',
     '.pf-legend span{ padding:3px 10px; border-radius:999px; font-weight:700; } .pf-legend span::before{ display:none; }',
-    '.pf-legend .g{ background:#00A651; color:#fff; } .pf-legend .y{ background:#FFC000; color:#3B2C00; } .pf-legend .r{ background:#E3000F; color:#fff; }',
+    '.pf-legend .g{ background:#E2F3E8; color:#0E7A3E; } .pf-legend .y{ background:#FBF0CC; color:#A67600; } .pf-legend .r{ background:#F9DEDA; color:#C42318; }',
     '.pf-toolbar{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; }',
     '.pf-toolbar select{ width:auto; min-width:200px; }',
     '.pf-jenis{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }',
@@ -836,7 +841,7 @@
     var c = d.circle;
     var html = '';
     html += '<div class="pf-toolbar"><div class="hint" style="margin:0;">' + (d.tanggal ? 'Data per <b>' + esc(tanggalTxt()) + '</b> · ' : '') + (d.people ? d.people.length + ' sales · ' : '') + d.areas.length + ' area · ' + d.mdi.length + ' MDI · ' + d.sdpRows.length + ' SDP</div>'
-      + '<div class="pf-legend"><span class="g">' + esc(LBL.g) + '</span><span class="y">' + esc(LBL.y) + '</span><span class="r">' + esc(LBL.r) + '</span></div></div>';
+      + '<div class="pf-legend">' + BKEYS.map(function (k) { return '<span class="' + k + '">' + STATUS[k].label + ' ' + esc(LBL[k]) + '</span>'; }).join('') + '</div></div>';
 
     // Kartu KPI Sumatera
     if (c) {
@@ -848,9 +853,8 @@
 
     // Status area (gaya kartu status)
     if (d.areas.length) {
-      var cnt = { g: 0, y: 0, r: 0 };
-      d.areas.forEach(function (a) { var b = band(a.score); if (cnt[b] != null) cnt[b]++; });
-      html += '<div class="pf-sec"><div class="field-group-label">Status Area (' + d.areas.length + ' area)</div><div class="pf-status">' + ['g', 'y', 'r'].map(function (k) {
+      var cnt = countBands(d.areas);
+      html += '<div class="pf-sec"><div class="field-group-label">Status Area (' + d.areas.length + ' area)</div><div class="pf-status">' + BKEYS.map(function (k) {
         return '<div class="pf-st ' + k + '"><div class="h"><span class="k">' + STATUS[k].label + '<span class="rg">' + esc(LBL[k]) + '</span></span><span><span class="n">' + cnt[k] + '</span><span class="u">area</span></span></div><div class="a">' + STATUS[k].aksi + '</div></div>';
       }).join('') + '</div></div>';
     }
@@ -886,15 +890,14 @@
     var areaNames = Array.from(new Set(sdp.map(function (r) { return r.area; })));
     var dist = areaNames.map(function (a) {
       var l = sdp.filter(function (r) { return r.area === a; });
-      return { a: a, n: l.length, g: l.filter(function (r) { return band(r.score) === 'g'; }).length, y: l.filter(function (r) { return band(r.score) === 'y'; }).length, r: l.filter(function (r) { return band(r.score) === 'r'; }).length, avg: avg(l.map(function (r) { return r.score; })) };
-    }).sort(function (x, y) { return (y.r / y.n) - (x.r / x.n); });
-    var tot = { g: 0, y: 0, r: 0 };
-    sdp.forEach(function (r) { var b = band(r.score); if (tot[b] != null) tot[b]++; });
+      return Object.assign({ a: a, n: l.length, avg: avg(l.map(function (r) { return r.score; })) }, countBands(l));
+    }).sort(function (x, y) { return ((y.o + y.r) / y.n) - ((x.o + x.r) / x.n); });
+    var tot = countBands(sdp);
     html += '<div class="pf-sec pf-grid2">';
-    html += '<div class="pf-box"><h4>Sebaran Score SDP per Area <span class="hint" style="float:right;margin:0;">' + sdp.length + ' SDP · <span class="pf-g">' + tot.g + '</span> / <span class="pf-y">' + tot.y + '</span> / <span class="pf-r">' + tot.r + '</span></span></h4><div class="pf-scroll"><table class="pf-tbl"><thead><tr><th>Area</th><th>SDP</th><th style="width:45%">Sebaran</th><th>Rata-rata</th></tr></thead><tbody>'
+    html += '<div class="pf-box"><h4>Sebaran Score SDP per Area <span class="hint" style="float:right;margin:0;">' + sdp.length + ' SDP · ' + BKEYS.map(function (k) { return '<span class="pf-' + k + '">' + tot[k] + '</span>'; }).join(' / ') + '</span></h4><div class="pf-scroll"><table class="pf-tbl"><thead><tr><th>Area</th><th>SDP</th><th style="width:45%">Sebaran</th><th>Rata-rata</th></tr></thead><tbody>'
       + dist.map(function (x) {
         var seg = function (k, n) { return n ? '<i class="pf-s-' + k + '" style="width:' + (n / x.n * 100) + '%" title="' + n + ' SDP"></i>' : ''; };
-        return '<tr><td>' + esc(title(x.a)) + '</td><td>' + x.n + '</td><td><div class="pf-stack">' + seg('g', x.g) + seg('y', x.y) + seg('r', x.r) + '</div></td><td class="c pf-bg-' + band(x.avg) + '">' + pct(x.avg) + '</td></tr>';
+        return '<tr><td>' + esc(title(x.a)) + '</td><td>' + x.n + '</td><td><div class="pf-stack">' + BKEYS.map(function (k) { return seg(k, x[k]); }).join('') + '</div></td><td class="c pf-bg-' + band(x.avg) + '">' + pct(x.avg) + '</td></tr>';
       }).join('') + '</tbody></table></div></div>';
     var low = sdp.slice().sort(byScoreDesc).reverse().slice(0, 10);
     html += '<div class="pf-box"><h4>10 SDP Score Terendah</h4><div class="pf-scroll"><table class="pf-tbl"><thead><tr><th>SDP</th><th>Area</th>' + KPIS.map(function (k) { return '<th>' + esc(k.short) + '</th>'; }).join('') + '<th>Score</th></tr></thead><tbody>'
