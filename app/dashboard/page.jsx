@@ -64,6 +64,8 @@ import CombinedEmailExport from "./components/CombinedEmailExport";
 import RoleAccessMatrix from "./components/RoleAccessMatrix";
 import RoleDebugLookup from "./components/RoleDebugLookup";
 import DSE_ProdAR, { CATEGORY_OPTIONS as DSE_CATEGORY_OPTIONS, getCategoryOptionsForRoles, hasRole, hasAnyRole } from "./components/DSE_ProdAR";
+import AdminDseSellinCompare from "./components/AdminDseSellinCompare"; // BARU (permintaan user - fitur upload file DSE PROD xlsx utk dibandingkan dgn input DSE, khusus spm_sumatera)
+import PNL_SdmLevelConfig from "./components/PNL_SdmLevelConfig"; // BARU (permintaan user - "apakah memungkinkan semuanya menjadi drag and drop... yang bisa digeser geser itu hanya yang di sdm"): admin atur level tiap item SDM (Partner/Region/Area/MC/Depo) via drag & drop, khusus spm_sumatera
 
 // ─── Role Maps ────────────────────────────────────────────────────────────────
 const IOH_ROLE_REGION_MAP = {
@@ -277,7 +279,9 @@ const getCurrentYear      = () => CURRENT_YEAR.toString();
 // sendiri (lihat DSE_ProdAR.jsx) - date picker bulan/tahun di header jadi
 // redundan & membingungkan kalau tetap tampil di halaman ini.
 const DATA_PROVIDED_BULK_VIEW = "data-provided-bulk-v2"; // dideklarasikan di sini (BUKAN di dekat PNL_VIEWS_V2 di bawah) krn dipakai duluan oleh HIDE_DATE_PICKER_VIEWS tepat di bawah ini - const harus sudah ada sebelum dipakai (TDZ).
-const HIDE_DATE_PICKER_VIEWS    = new Set(["overview","control-center","pivot-summary","pnl-mpx-v2","control-center-v2","pivot-summary-v2","payout-tracker","admin-panel","import-wizard","sdp-status","sdp2","mc-cluster","kode-otoritas","mfts","menu-access","promotor-tracking","pnl-mpx","dse-prod-ar","user-management","summary-v2","pendapatan-v2","pengeluaran-v2",DATA_PROVIDED_BULK_VIEW]); // UPDATE (permintaan user - "pindahkan period selector yg sebelumnya disamping navbar, jadi di sebelah kanan button pengeluaran, rata kanan"): date picker global di navbar disembunyikan khusus utk 3 tab Summary/Pendapatan/Pengeluaran V2 - gantinya dipasang ulang di baris tab (lihat blok "Laporan P&L" V2 di bawah).
+const DSE_SELLIN_COMPARE_VIEW = "dse-sellin-compare"; // BARU (permintaan user - "fitur upload file ini... khusus utk tampilan spm_sumatera dulu... dibandingkan dengan data penjualan dse")
+const SDM_LEVEL_CONFIG_VIEW = "sdm-level-config"; // BARU - admin atur level tiap item SDM via drag & drop (lihat PNL_SdmLevelConfig.jsx)
+const HIDE_DATE_PICKER_VIEWS    = new Set(["overview","control-center","pivot-summary","pnl-mpx-v2","control-center-v2","pivot-summary-v2","payout-tracker","admin-panel","import-wizard","sdp-status","sdp2","mc-cluster","kode-otoritas","mfts","menu-access","promotor-tracking","pnl-mpx","dse-prod-ar","user-management","summary-v2","pendapatan-v2","pengeluaran-v2",DATA_PROVIDED_BULK_VIEW,DSE_SELLIN_COMPARE_VIEW,SDM_LEVEL_CONFIG_VIEW]); // UPDATE (permintaan user - "pindahkan period selector yg sebelumnya disamping navbar, jadi di sebelah kanan button pengeluaran, rata kanan"): date picker global di navbar disembunyikan khusus utk 3 tab Summary/Pendapatan/Pengeluaran V2 - gantinya dipasang ulang di baris tab (lihat blok "Laporan P&L" V2 di bawah).
 
 // Daftar role di tabel profiles, dipakai dropdown "Pilih Role" di menu
 // User Management (permintaan user - "beda beda untuk detailnya"). ready:
@@ -1434,8 +1438,15 @@ export default function DashboardPage() {
                       tab "District Admin" (Mapping MC) di dalam halaman
                       Mapping & User Management, biar ga perlu buka
                       dropdown "Pilih Role" dulu. */}
+                  {/* BARU (permintaan user - "lah kenapa disitu, ini kan untuk
+                      menu DSE prod & AR"): dipindah dari dalam grup "MDI
+                      P&L Report" ke sini, jadi sibling langsung di bawah
+                      grup "Prod. & AR" - lebih kontekstual krn fitur ini
+                      membandingkan upload sellin dgn data Prod & AR DSE. */}
+                  {isTrueSPM && <SNavItem icon={<FileSpreadsheet size={14} />} label="Upload Sellin DSE (Bandingkan)" active={view === DSE_SELLIN_COMPARE_VIEW} onClick={() => navigate(DSE_SELLIN_COMPARE_VIEW)} />}
                   {isTrueSPM    && <SNavItem icon={<MapPin size={14} />}       label="Mapping MC"               active={view === "user-management" && umRole === "admin_mc"} onClick={() => { setUmRole("admin_mc"); navigate("user-management"); }} />}
                   {isTrueSPM    && <SNavItem icon={<UserRoundCog size={14} />}   label="Mapping & User Management" active={view === "user-management"} onClick={() => navigate("user-management")} />}
+                  {isTrueSPM    && <SNavItem icon={<Layers size={14} />}         label="Pengaturan Level SDM"      active={view === SDM_LEVEL_CONFIG_VIEW} onClick={() => navigate(SDM_LEVEL_CONFIG_VIEW)} />}
 
                   {/* Archive — menu lama, dipertimbangkan dihapus ke depannya;
                       code TIDAK dihapus, cuma dikumpulkan & collapsed di sini.
@@ -1930,6 +1941,24 @@ export default function DashboardPage() {
               </motion.div>
             )}
 
+            {/* ── Upload & Bandingkan Sellin DSE (BARU - permintaan user:
+                upload file DSE PROD [sheet IM3 & 3ID], dijumlahkan per DSE,
+                dibandingkan dgn input DSE di app [SP/Voucher/Saldo saja,
+                FWA tidak dibandingkan]. Khusus spm_sumatera dulu.) ── */}
+            {view === DSE_SELLIN_COMPARE_VIEW && isTrueSPM && (
+              <motion.div key="dsesellin" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("pnl-mpx-v2")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke MDI P&amp;L Report</button>
+                <AdminDseSellinCompare theme={d ? "dark" : "light"} />
+              </motion.div>
+            )}
+
+            {view === SDM_LEVEL_CONFIG_VIEW && isTrueSPM && (
+              <motion.div key="sdmlevelconfig" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("pnl-mpx-v2")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke MDI P&amp;L Report</button>
+                <PNL_SdmLevelConfig theme={d ? "dark" : "light"} />
+              </motion.div>
+            )}
+
             {/* ── Payout Tracker ── */}
             {view === "payout-tracker" && !isSDPMember && !isMPX && (!isAdminArea || isAdminLevel) && !viewUnderMaint && (
               <motion.div key="pt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
@@ -2311,94 +2340,6 @@ export default function DashboardPage() {
                         datepicker-nya nempel ke kanan, rata sama tepi
                         kanan card "Laporan P&L" di bawahnya (sama2 dalam
                         parent maxWidth:920 yg sama). */}
-                    {/* BARU (permintaan user - "region dan nama partner juga
-                        buat diatas tombol summary/pendapatan/pengeluaran"):
-                        filter Region + Nama Partner (+ Tipe kalau partner
-                        punya >1 tipe MPC/MP3) dipindah dari sidebar ke
-                        sini, baris horizontal persis di atas tab. */}
-                    {/* FIX (permintaan user - "rapikan row pertama"): 4 field
-                        (Nama Partner/Region/Area/Tipe) dulu punya
-                        min/maxWidth beda2 (320/260/260/220) jadi lebarnya
-                        timpang & kelihatan berantakan begitu wrap ke baris
-                        baru di layar sempit - disamain semua jadi
-                        min 200 / max 280 / basis 220px spy rapi sejajar. */}
-                    <div style={{ display: "flex", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
-                      {/* FIX (permintaan user - "lebarkan bagian nama
-                          partner agar tidak ketutupan"): nama partner bisa
-                          panjang (co: "PT INDOCEN SYSTEM TELECOMUNICATION")
-                          & kepotong kalau samain lebar dgn Region/Area/Tipe
-                          - dikasih porsi lebih lega (flex-grow 2x, maxWidth
-                          lebih besar) drpd 3 field lainnya. */}
-                      <div style={{ flex: "2 1 280px", minWidth: 240, maxWidth: 440 }}>
-                        <FilterSelect label="Nama Partner" icon={<Building2 size={12} />} value={activePartner} displayValue={activePartner}
-                          onChange={v => { setActivePartner(v); setActiveBranch(""); setActiveType("ALL"); }} t={t} d={d} disabled={isMPX}>
-                          <option value="" disabled>Pilih Partner</option>
-                          {filteredPartners.map(p => <option key={p} value={p} style={{ color: t.hi }}>{partnerOptionLabel(p)}</option>)}
-                        </FilterSelect>
-                      </div>
-                      {(isSPM || isIOHAny) && (
-                        <div style={{ flex: "1 1 220px", minWidth: 200, maxWidth: 280 }}>
-                          <FilterSelect label={iohLockedRegion ? "Region (terkunci)" : (isIOHAny ? "Region View" : "Region")} icon={<Globe size={12} />} value={activeRegion}
-                            onChange={v => {
-                              if (iohLockedRegion) return;
-                              // FIX (user - "harusnya tetap bisa dipilih
-                              // regionnya ... tetap bisa otomatis akan
-                              // pilih salah satu area di region baru yang
-                              // dipilih"): partner multi-region - Region
-                              // tetap bisa diganti TANPA clear Partner,
-                              // cukup clear Cabang (auto-pick effect di
-                              // atas akan milih cabang lain di region baru).
-                              if (activePartner) { setActiveRegion(v); setActiveBranch(""); return; }
-                              setActiveRegion(v); setActivePartner(""); setActiveBranch("");
-                            }}
-                            t={t} d={d} disabled={!!iohLockedRegion || (!!activePartner && partnerRegions.length <= 1)}>
-                            {!activePartner && <option value="SUMATERA">Seluruh Sumatera</option>}
-                            {(activePartner ? partnerRegions : regions).map(r => <option key={r} value={r}>{r}</option>)}
-                          </FilterSelect>
-                        </div>
-                      )}
-                      {/* BARU (permintaan user - "buat pemilihan area itu
-                          di kanan pemilihan region, agar period picker
-                          bisa tetap sebelah kanan row 2"): dropdown Area
-                          dipindah dari row 2 (dulu di tengah, antara tab &
-                          date picker) ke row 1, persis di kanan Region -
-                          row 2 jadi cuma tab (kiri) + date picker (kanan)
-                          lagi, rapi spt semula. */}
-                      <div style={{ flex: "1 1 220px", minWidth: 200, maxWidth: 280 }}>
-                        <FilterSelect label={activePartner ? (availableBranches.length > 1 ? "Area (pilih salah satu)" : "Area") : "Area (bisa pilih langsung)"}
-                          icon={<Store size={12} />} value={activePartner ? activeBranch : ""} onChange={handleBranchPickerChange}
-                          t={t} d={d} disabled={!activePartner && branchPickerGroups.length === 0}>
-                          <option value="" disabled>Pilih Area</option>
-                          {activePartner
-                            ? (availableBranchGroups.length > 1
-                                ? availableBranchGroups.map(g => (
-                                    <optgroup key={g.region} label={g.region}>
-                                      {g.branches.map(b => <option key={b} value={b}>{b}</option>)}
-                                    </optgroup>
-                                  ))
-                                : availableBranches.map(b => <option key={b} value={b}>{b}</option>))
-                            : branchPickerGroups.map(g => (
-                                <optgroup key={g.region} label={g.region}>
-                                  {g.items.map(it => (
-                                    <option key={`${it.partner_name}${BRANCH_PICKER_SEP}${it.branch_name}`} value={`${it.partner_name}${BRANCH_PICKER_SEP}${it.branch_name}`}>
-                                      {it.partner_name} — {it.branch_name}
-                                    </option>
-                                  ))}
-                                </optgroup>
-                              ))}
-                        </FilterSelect>
-                      </div>
-                      {activePartner && availableTypes.length > 1 && (
-                        <div style={{ flex: "1 1 220px", minWidth: 200, maxWidth: 280 }}>
-                          <FilterSelect label="Tipe (MPC / MP3)" icon={<SlidersHorizontal size={12} />} value={activeType}
-                            onChange={v => { setActiveType(v); setActiveBranch(""); }} t={t} d={d}>
-                            <option value="ALL">Semua Tipe</option>
-                            {availableTypes.map(tp => <option key={tp} value={tp}>{tp}</option>)}
-                          </FilterSelect>
-                        </div>
-                      )}
-                    </div>
-
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 22, flexWrap: "wrap" }}>
                       <div style={{ display: "inline-flex", gap: 2, padding: 4, borderRadius: 10, border: `1px solid ${t.line}`, background: t.card }}>
                         {[
@@ -2411,32 +2352,58 @@ export default function DashboardPage() {
                           </button>
                         ))}
                       </div>
-                      {/* BARU (permintaan user - "buat pemilihan area itu
-                          di kanan pemilihan region, agar period picker
-                          bisa tetap sebelah kanan row 2"): dropdown Area
-                          pindah ke row 1 (lihat di atas, persis di kanan
-                          Region) - row 2 ini sekarang cuma tab (kiri) +
-                          date picker (kanan), justifyContent:"space-between"
-                          otomatis menaruh date picker rata kanan lagi. */}
-                      <div style={{ display: "flex", alignItems: "center", border: `1px solid ${t.inputBd}`, borderRadius: 8, background: t.inputBg, height: 36, overflow: "hidden", flexShrink: 0, minWidth: 0 }}>
-                        <div style={{ display: "flex", alignItems: "center", borderRight: `1px solid ${t.inputBd}`, height: "100%", position: "relative", minWidth: 0 }}>
-                          <Calendar size={13} style={{ color: t.blue, marginLeft: 11, flexShrink: 0 }} />
-                          <div style={{ position: "relative", display: "flex", alignItems: "center", minWidth: 0 }}>
-                            <select value={activeMonth} onChange={e => setActiveMonth(e.target.value)}
-                              style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", background: "transparent", border: "none", fontSize: 13.5, fontWeight: 500, color: t.hi, cursor: "pointer", paddingLeft: 7, paddingRight: 24, height: 36, fontFamily: "inherit", minWidth: 0 }}>
-                              {availableMonths.map(m => (
-                                <option key={m} value={m} disabled={activeContextDisabledMonths.has(m)}>{m}{activeContextDisabledMonths.has(m) ? " (nonaktif)" : ""}</option>
-                              ))}
-                            </select>
-                            <ChevronDown size={12} style={{ position: "absolute", right: 6, pointerEvents: "none", color: t.lo }} />
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        {/* BARU (permintaan user - "pemilihan nama partner
+                            dipindah ke posisi pemilihan periode saat
+                            ini"): pill Nama Partner (+ Tipe kalau partner
+                            punya >1 tipe MPC/MP3), gaya sama persis dgn
+                            pill date picker di sebelahnya biar senada. */}
+                        <div style={{ display: "flex", alignItems: "center", border: `1px solid ${t.inputBd}`, borderRadius: 8, background: t.inputBg, height: 36, overflow: "hidden", flexShrink: 0, minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", borderRight: (activePartner && availableTypes.length > 1) ? `1px solid ${t.inputBd}` : "none", height: "100%", position: "relative", minWidth: 0 }}>
+                            <Building2 size={13} style={{ color: t.blue, marginLeft: 11, flexShrink: 0 }} />
+                            <div style={{ position: "relative", display: "flex", alignItems: "center", minWidth: 0 }}>
+                              <select value={activePartner} disabled={isMPX}
+                                onChange={e => { setActivePartner(e.target.value); setActiveBranch(""); setActiveType("ALL"); }}
+                                style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", background: "transparent", border: "none", fontSize: 13.5, fontWeight: 600, color: t.hi, cursor: isMPX ? "default" : "pointer", paddingLeft: 7, paddingRight: 24, height: 36, fontFamily: "inherit" }}>
+                                <option value="" disabled>Pilih Partner</option>
+                                {filteredPartners.map(pn => <option key={pn} value={pn}>{pn}</option>)}
+                              </select>
+                              {!isMPX && <ChevronDown size={12} style={{ position: "absolute", right: 6, pointerEvents: "none", color: t.lo }} />}
+                            </div>
                           </div>
+                          {activePartner && availableTypes.length > 1 && (
+                            <div style={{ position: "relative", display: "flex", alignItems: "center", minWidth: 0 }}>
+                              <select value={activeType} onChange={e => { setActiveType(e.target.value); setActiveBranch(""); }}
+                                style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", background: "transparent", border: "none", fontSize: 13.5, fontWeight: 500, color: t.hi, cursor: "pointer", paddingLeft: 12, paddingRight: 28, height: 36, fontFamily: "inherit", minWidth: 0 }}>
+                                <option value="ALL">Semua Tipe</option>
+                                {availableTypes.map(tp => <option key={tp} value={tp}>{tp}</option>)}
+                              </select>
+                              <ChevronDown size={12} style={{ position: "absolute", right: 9, pointerEvents: "none", color: t.lo }} />
+                            </div>
+                          )}
                         </div>
-                        <div style={{ position: "relative", display: "flex", alignItems: "center", minWidth: 0 }}>
-                          <select value={activeYear} onChange={e => setActiveYear(e.target.value)} style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", background: "transparent", border: "none", fontSize: 13.5, fontWeight: 500, color: t.hi, cursor: "pointer", paddingLeft: 12, paddingRight: 28, height: 36, fontFamily: "inherit", minWidth: 0 }}>
-                            {availableYears.map(year => <option key={year} value={year}>{year}</option>)}
-                          </select>
-                          <ChevronDown size={12} style={{ position: "absolute", right: 9, pointerEvents: "none", color: t.lo }} />
-                        </div>
+                        {view !== "pengeluaran-v2" && view !== "pendapatan-v2" && (
+                          <div style={{ display: "flex", alignItems: "center", border: `1px solid ${t.inputBd}`, borderRadius: 8, background: t.inputBg, height: 36, overflow: "hidden", flexShrink: 0, minWidth: 0 }}>
+                            <div style={{ display: "flex", alignItems: "center", borderRight: `1px solid ${t.inputBd}`, height: "100%", position: "relative", minWidth: 0 }}>
+                              <Calendar size={13} style={{ color: t.blue, marginLeft: 11, flexShrink: 0 }} />
+                              <div style={{ position: "relative", display: "flex", alignItems: "center", minWidth: 0 }}>
+                                <select value={activeMonth} onChange={e => setActiveMonth(e.target.value)}
+                                  style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", background: "transparent", border: "none", fontSize: 13.5, fontWeight: 500, color: t.hi, cursor: "pointer", paddingLeft: 7, paddingRight: 24, height: 36, fontFamily: "inherit", minWidth: 0 }}>
+                                  {availableMonths.map(m => (
+                                    <option key={m} value={m} disabled={activeContextDisabledMonths.has(m)}>{m}{activeContextDisabledMonths.has(m) ? " (nonaktif)" : ""}</option>
+                                  ))}
+                                </select>
+                                <ChevronDown size={12} style={{ position: "absolute", right: 6, pointerEvents: "none", color: t.lo }} />
+                              </div>
+                            </div>
+                            <div style={{ position: "relative", display: "flex", alignItems: "center", minWidth: 0 }}>
+                              <select value={activeYear} onChange={e => setActiveYear(e.target.value)} style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", background: "transparent", border: "none", fontSize: 13.5, fontWeight: 500, color: t.hi, cursor: "pointer", paddingLeft: 12, paddingRight: 28, height: 36, fontFamily: "inherit", minWidth: 0 }}>
+                                {availableYears.map(year => <option key={year} value={year}>{year}</option>)}
+                              </select>
+                              <ChevronDown size={12} style={{ position: "absolute", right: 9, pointerEvents: "none", color: t.lo }} />
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
@@ -2457,6 +2424,37 @@ export default function DashboardPage() {
                                 canEditPendapatan={isMPX || isAdminArea || isSPM}
                                 activeContext={{ branch: activeBranch, month: activeMonth, year: activeYear, mpxName: activePartner, mpxType }}
                                 masterData={masterData}
+                                showRegionPicker={isSPM || isIOHAny}
+                                regionLabel={iohLockedRegion ? "Region (terkunci)" : (isIOHAny ? "Region View" : "Region")}
+                                activeRegion={activeRegion}
+                                regionOptions={partnerRegions}
+                                regionLocked={!!iohLockedRegion || partnerRegions.length <= 1}
+                                onRegionChange={iohLockedRegion ? undefined : (v) => { setActiveRegion(v); setActiveBranch(""); }}
+                                areaOptions={availableBranches}
+                                onAreaChange={isReadOnly ? undefined : setActiveBranch}
+                                periodControl={(
+                                  <div style={{ display: "flex", alignItems: "center", border: `1px solid ${t.inputBd}`, borderRadius: 8, background: t.inputBg, height: 34, overflow: "hidden", flexShrink: 0 }}>
+                                    <div style={{ display: "flex", alignItems: "center", borderRight: `1px solid ${t.inputBd}`, height: "100%", position: "relative" }}>
+                                      <Calendar size={12} style={{ color: t.blue, marginLeft: 10, flexShrink: 0 }} />
+                                      <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                                        <select value={activeMonth} onChange={e => setActiveMonth(e.target.value)}
+                                          style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", background: "transparent", border: "none", fontSize: 12.5, fontWeight: 600, color: t.hi, cursor: "pointer", paddingLeft: 6, paddingRight: 22, height: 34, fontFamily: "inherit" }}>
+                                          {availableMonths.map(m => (
+                                            <option key={m} value={m} disabled={activeContextDisabledMonths.has(m)}>{m}{activeContextDisabledMonths.has(m) ? " (nonaktif)" : ""}</option>
+                                          ))}
+                                        </select>
+                                        <ChevronDown size={11} style={{ position: "absolute", right: 5, pointerEvents: "none", color: t.lo }} />
+                                      </div>
+                                    </div>
+                                    <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                                      <select value={activeYear} onChange={e => setActiveYear(e.target.value)}
+                                        style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", background: "transparent", border: "none", fontSize: 12.5, fontWeight: 600, color: t.hi, cursor: "pointer", paddingLeft: 10, paddingRight: 26, height: 34, fontFamily: "inherit" }}>
+                                        {availableYears.map(year => <option key={year} value={year}>{year}</option>)}
+                                      </select>
+                                      <ChevronDown size={11} style={{ position: "absolute", right: 8, pointerEvents: "none", color: t.lo }} />
+                                    </div>
+                                  </div>
+                                )}
                               />
                             </motion.div>
                           )}
@@ -2469,6 +2467,31 @@ export default function DashboardPage() {
                                 readOnly={isReadOnly}
                                 canEdit={isMPX || isAdminArea || isSPM}
                                 activeContext={{ branch: activeBranch, month: activeMonth, year: activeYear, mpxName: activePartner, mpxType }}
+                                areaOptions={availableBranches}
+                                onAreaChange={isReadOnly ? undefined : setActiveBranch}
+                                periodControl={(
+                                  <div style={{ display: "flex", alignItems: "center", border: `1px solid ${t.inputBd}`, borderRadius: 8, background: t.inputBg, height: 34, overflow: "hidden", flexShrink: 0 }}>
+                                    <div style={{ display: "flex", alignItems: "center", borderRight: `1px solid ${t.inputBd}`, height: "100%", position: "relative" }}>
+                                      <Calendar size={12} style={{ color: t.blue, marginLeft: 10, flexShrink: 0 }} />
+                                      <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                                        <select value={activeMonth} onChange={e => setActiveMonth(e.target.value)}
+                                          style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", background: "transparent", border: "none", fontSize: 12.5, fontWeight: 600, color: t.hi, cursor: "pointer", paddingLeft: 6, paddingRight: 22, height: 34, fontFamily: "inherit" }}>
+                                          {availableMonths.map(m => (
+                                            <option key={m} value={m} disabled={activeContextDisabledMonths.has(m)}>{m}{activeContextDisabledMonths.has(m) ? " (nonaktif)" : ""}</option>
+                                          ))}
+                                        </select>
+                                        <ChevronDown size={11} style={{ position: "absolute", right: 5, pointerEvents: "none", color: t.lo }} />
+                                      </div>
+                                    </div>
+                                    <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                                      <select value={activeYear} onChange={e => setActiveYear(e.target.value)}
+                                        style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", background: "transparent", border: "none", fontSize: 12.5, fontWeight: 600, color: t.hi, cursor: "pointer", paddingLeft: 10, paddingRight: 26, height: 34, fontFamily: "inherit" }}>
+                                        {availableYears.map(year => <option key={year} value={year}>{year}</option>)}
+                                      </select>
+                                      <ChevronDown size={11} style={{ position: "absolute", right: 8, pointerEvents: "none", color: t.lo }} />
+                                    </div>
+                                  </div>
+                                )}
                               />
                             </motion.div>
                           )}

@@ -1,0 +1,45 @@
+path = "app/dashboard/components/AdminDseSellinCompare.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# FIX BUG (laporan user - "banyak id dse yang tidak terdeteksi, padahal
+# saya check ada kok acehbada[2103-2106] dst"): query master mf_dse_
+# database TIDAK di-paginate - Supabase/PostgREST default batas 1000
+# baris per query, sedangkan total DSE di 3 region Sumatera = 1085
+# (sudah dicek via SQL) - jadi ~85 DSE paling belakang (termasuk
+# ACEHBADA2103-2106) kepotong dari byCode/byCode3id, lalu salah dianggap
+# "DSE Tidak Dikenali" padahal datanya ADA. BUG LAMA, bukan dari fitur
+# mapping - skrng di-page pakai .range() per 1000 baris sampai hasilnya
+# lebih pendek dari page size (artinya sudah halaman terakhir).
+do(
+    '''  const { data: master, error: eMaster } = await supabase
+    .from("mf_dse_database")
+    .select("dse_code, dse_code_3id, mdi, region, circle, branch, mc")
+    .in("region", ["NORTH SUMATERA", "CENTRAL SUMATERA", "SOUTH SUMATERA"]);
+  if (eMaster) throw eMaster;''',
+    '''  const MASTER_PAGE = 1000;
+  const master = [];
+  for (let from = 0; ; from += MASTER_PAGE) {
+    const { data: page, error: eMaster } = await supabase
+      .from("mf_dse_database")
+      .select("dse_code, dse_code_3id, mdi, region, circle, branch, mc")
+      .in("region", ["NORTH SUMATERA", "CENTRAL SUMATERA", "SOUTH SUMATERA"])
+      .range(from, from + MASTER_PAGE - 1);
+    if (eMaster) throw eMaster;
+    master.push(...(page || []));
+    if (!page || page.length < MASTER_PAGE) break;
+  }''',
+    label="pagination master mf_dse_database",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - master mf_dse_database di-paginate, semua baris kebaca")

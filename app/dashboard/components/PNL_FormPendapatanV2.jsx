@@ -23,7 +23,7 @@
 // Disimpan ke tabel `pnl_reports_v2` (terpisah dari pnl_reports V1),
 // 1 baris per partner+branch+mpc_mp3+month+year.
 import { useEffect, useMemo, useState, useCallback } from "react";
-import { ArrowUpRight, Banknote, Gauge, Info, Lock, Save, ShieldCheck } from "lucide-react";
+import { ArrowUpRight, Banknote, ChevronDown, Gauge, Globe2, Info, Lock, MapPin, Save, ShieldCheck } from "lucide-react";
 import supabase from "../../../lib/supabase";
 import {
   FONT, GRAD, mk, V2Styles, NumInput, Card, Body, SecLabel, TH, FormHeader, SecHero,
@@ -106,7 +106,7 @@ const MARGIN_COL_ACCENT = {
   id3: { solid: "#C6168D" },
 };
 
-export default function PNL_FormPendapatanV2({ theme, profile, activeContext, canEditPendapatan, setIsFormDirty, readOnly, masterData }) {
+export default function PNL_FormPendapatanV2({ theme, profile, activeContext, canEditPendapatan, setIsFormDirty, readOnly, masterData, showRegionPicker, regionLabel, activeRegion, regionOptions, regionLocked, onRegionChange, areaOptions, onAreaChange, periodControl }) {
   const d = theme === "dark";
   const t = useMemo(() => mk(d), [d]);
 
@@ -213,14 +213,68 @@ export default function PNL_FormPendapatanV2({ theme, profile, activeContext, ca
   return (
     <div style={{ width: "100%", margin: "0 auto", paddingBottom: canSave ? 80 : 0, fontFamily: FONT, WebkitFontSmoothing: "antialiased", color: t.hi }}>
       <V2Styles d={d} t={t} />
-      <FormHeader icon={ArrowUpRight} title="Form Pendapatan" activeContext={activeContext} readOnly={!canSave} t={t} />
+      <FormHeader icon={ArrowUpRight} title="Form Pendapatan" activeContext={activeContext} readOnly={!canSave} t={t} headerRight={periodControl} />
 
       {loading ? <LoadingBlock label="Memuat Form Pendapatan V2..." t={t} /> : (
         <>
           {/* ── Form Pendapatan (Area Level) — diisi Partner ── */}
-          <SecHero icon={Banknote} title="Form Pendapatan (Area Level)" t={t}>
-            {!canEditIncome && <LockNote t={t}>Hanya lihat</LockNote>}
-          </SecHero>
+          {/* FIX (permintaan user - "region dan area buat di dalam
+              container yang sama dengan form pendapatan area level"):
+              banner judul + picker Region/Area digabung jadi SATU
+              kartu (judul lalu divider lalu baris kontrol) - gaya sama
+              persis dgn StepHeroDepo di Form Pengeluaran biar senada. */}
+          <div style={{ padding: "14px 18px", borderRadius: 10, border: `1px solid ${t.blueBd}`, background: t.blueBg, marginBottom: 18, boxShadow: t.sm }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", rowGap: 10 }}>
+              <div style={{ width: 38, height: 38, borderRadius: 9, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: GRAD, color: "#fff" }}><Banknote size={18} /></div>
+              <div style={{ flex: 1, minWidth: 180 }}>
+                <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-0.03em", color: t.hi, lineHeight: 1.2 }}>Form Pendapatan (Area Level)</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", flexShrink: 0 }}>
+                {!canEditIncome && <LockNote t={t}>Hanya lihat</LockNote>}
+                {showRegionPicker && (
+                  <div style={{ position: "relative", display: "inline-flex" }}>
+                    <select
+                      value={activeRegion || ""}
+                      disabled={!!regionLocked}
+                      onChange={(e) => onRegionChange?.(e.target.value)}
+                      title={regionLabel || "Region"}
+                      style={{
+                        appearance: "none", WebkitAppearance: "none",
+                        fontSize: 11.5, fontWeight: 700, color: t.hi, background: t.card,
+                        border: `1px solid ${t.line}`, borderRadius: 999, padding: "6px 28px 6px 30px",
+                        cursor: regionLocked ? "default" : "pointer", fontFamily: "inherit", boxShadow: t.sm,
+                        opacity: regionLocked ? 0.65 : 1,
+                      }}
+                    >
+                      {(regionOptions || []).map((r) => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                    <Globe2 size={12} color={t.blue} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+                    {!regionLocked && <ChevronDown size={12} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", color: t.lo, pointerEvents: "none" }} />}
+                  </div>
+                )}
+                {areaOptions && areaOptions.length > 0 && (
+                  <div style={{ position: "relative", display: "inline-flex" }}>
+                    <select
+                      value={activeContext?.branch || ""}
+                      onChange={(e) => onAreaChange?.(e.target.value)}
+                      title="Area"
+                      style={{
+                        appearance: "none", WebkitAppearance: "none",
+                        fontSize: 11.5, fontWeight: 700, color: t.hi, background: t.card,
+                        border: `1px solid ${t.line}`, borderRadius: 999, padding: "6px 28px 6px 30px",
+                        cursor: "pointer", fontFamily: "inherit", boxShadow: t.sm,
+                      }}
+                    >
+                      {!activeContext?.branch && <option value="" disabled>Pilih Area</option>}
+                      {areaOptions.map((a) => <option key={a} value={a}>{a}</option>)}
+                    </select>
+                    <MapPin size={12} color={t.blue} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+                    <ChevronDown size={12} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", color: t.lo, pointerEvents: "none" }} />
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 28 }}>
             <Card t={t}><Body>
               <SecLabel t={t}>Total Margin Penjualan</SecLabel>
@@ -327,7 +381,7 @@ export default function PNL_FormPendapatanV2({ theme, profile, activeContext, ca
               </Body>
             </Card>
 
-            <SubtotalBanner label={`Total Pendapatan Area ${activeContext?.branch || "—"}`} value={totals.partner} />
+            <SubtotalBanner label="Total Pencatatan Pendapatan" value={totals.partner} />
           </div>
 
           {/* ── Distribution Fee & Rewards (dulu "Data Provided (Area Level)") — diisi SPM ── */}

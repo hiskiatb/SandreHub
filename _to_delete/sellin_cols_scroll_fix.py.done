@@ -1,0 +1,41 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# FIX (permintaan user - "pastikan rapi, biarkan kita scroll ke kanan
+# asalkan rapi"): screenshot nunjukkin header/kolom numpuk tumpang-tindih
+# ("TOTAL"/"TOTAL PENJUALAN" dempet) krn 12 kolom 1fr dipaksa muat di lebar
+# kontainer yg sama (grid fr unit nyusut sampai tumpang tindih, ga ada
+# scroll). Fix: kontainer tabel Ringkasan dikasih overflowX:auto, dan
+# KHUSUS kombinasi tab Penjualan + Full Month (12 kolom baru) grid-nya
+# pindah dari "repeat(12, 1fr)" (nyusut) ke lebar PIXEL TETAP per kolom +
+# minWidth total di header/row-nya - begitu kontainer lebih sempit dari
+# total itu, browser kasih scrollbar horizontal (bukan numpuk/kepotong).
+# Mode Daily (6 kolom lama) TIDAK diubah - itu sudah rapi dari sebelumnya.
+ROLLUP_FULLMONTH_COLS = "44px 200px 130px 130px 130px 130px 130px 140px 160px 130px 150px 140px 130px 130px"
+ROLLUP_FULLMONTH_MINWIDTH = 1874
+
+do(
+    '<div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden", marginTop: 14 }}>',
+    '<div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflowX: "auto", overflowY: "hidden", marginTop: 14 }}>',
+    label="outer wrapper overflowX",
+)
+
+do(
+    'gridTemplateColumns: tab === "ar" ? "44px 1.5fr 1fr 1fr 1fr 1fr" : (periodMode === "bulan" ? "44px 1.3fr repeat(12, 1fr)" : "44px 1.3fr repeat(6, 1fr)")',
+    f'gridTemplateColumns: tab === "ar" ? "44px 1.5fr 1fr 1fr 1fr 1fr" : (periodMode === "bulan" ? "{ROLLUP_FULLMONTH_COLS}" : "44px 1.3fr repeat(6, 1fr)"), minWidth: (tab !== "ar" && periodMode === "bulan") ? {ROLLUP_FULLMONTH_MINWIDTH} : undefined',
+    n=2,
+    label="grid cols fixed width + minWidth",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - scroll horizontal rollup diperbaiki")

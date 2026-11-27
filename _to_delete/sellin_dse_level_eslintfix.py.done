@@ -1,0 +1,27 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# Fix regresi eslint baru (react-hooks/set-state-in-effect) dari early-return
+# useEffect sellin level DSE - satu baris disable persis spt pola yg sudah
+# ada di file ini (bukan nambah lint rule baru, cuma nahan baseline tetap).
+do(
+    '''    if (!isSPM || tab !== "input" || periodMode !== "bulan" || !dseList.length) {
+      setSellinUploadByDseCode({});''',
+    '''    if (!isSPM || tab !== "input" || periodMode !== "bulan" || !dseList.length) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset saat syarat tidak terpenuhi, bukan loop
+      setSellinUploadByDseCode({});''',
+    label="disable set-state-in-effect",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - eslint regresi diperbaiki")

@@ -1,0 +1,27 @@
+path = "app/dashboard/page.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+
+orig = src
+
+# 1) Hapus item dari dalam grup "MDI P&L Report"
+old_nav_line = '\n                          {isTrueSPM && <SNavItem icon={<FileSpreadsheet size={13} />} label="Upload Sellin DSE (Bandingkan)" active={view === DSE_SELLIN_COMPARE_VIEW} onClick={() => navigate(DSE_SELLIN_COMPARE_VIEW)} />}'
+assert src.count(old_nav_line) == 1, "old nav line not found/not unique"
+src = src.replace(old_nav_line, "", 1)
+
+# 2) Sisipkan sbg sibling tepat di bawah grup "Prod. & AR" (sebelum item "Mapping MC")
+anchor = '''                  {isTrueSPM    && <SNavItem icon={<MapPin size={14} />}       label="Mapping MC"               active={view === "user-management" && umRole === "admin_mc"} onClick={() => { setUmRole("admin_mc"); navigate("user-management"); }} />}'''
+assert src.count(anchor) == 1, "anchor not found/not unique"
+new_block = '''                  {/* BARU (permintaan user - "lah kenapa disitu, ini kan untuk
+                      menu DSE prod & AR"): dipindah dari dalam grup "MDI
+                      P&L Report" ke sini, jadi sibling langsung di bawah
+                      grup "Prod. & AR" - lebih kontekstual krn fitur ini
+                      membandingkan upload sellin dgn data Prod & AR DSE. */}
+                  {isTrueSPM && <SNavItem icon={<FileSpreadsheet size={14} />} label="Upload Sellin DSE (Bandingkan)" active={view === DSE_SELLIN_COMPARE_VIEW} onClick={() => navigate(DSE_SELLIN_COMPARE_VIEW)} />}
+''' + anchor
+src = src.replace(anchor, new_block, 1)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - menu dipindahkan")

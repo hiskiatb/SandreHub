@@ -1,0 +1,38 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# Kirim prop sellinUpload/sellinUploadAvailable ke KEDUA pemanggilan
+# <DseInputRow> (mobile card & desktop table) - komponennya sendiri sudah
+# terima prop ini (lihat sellin_cols_dse_level.py), tinggal disupply.
+do(
+    '''                <DseInputRow key={dse.dse_code} t={t} profile={profile} isCardView dse={dse} mode={dseInputMode} rank={dseIdx + 1} isToday={periodMode === "tanggal" && entryDate === todayISO()}
+                  entryDate={entryDate}''',
+    '''                <DseInputRow key={dse.dse_code} t={t} profile={profile} isCardView dse={dse} mode={dseInputMode} rank={dseIdx + 1} isToday={periodMode === "tanggal" && entryDate === todayISO()}
+                  sellinUpload={sellinUploadByDseCode[dse.dse_code]}
+                  sellinUploadAvailable={sellinUploadRosterAvailable}
+                  entryDate={entryDate}''',
+    label="prop mobile card",
+)
+
+do(
+    '''                      <DseInputRow key={dse.dse_code} t={t} profile={profile} isCardView={false} dse={dse} mode={dseInputMode} rank={dseIdx + 1} isToday={periodMode === "tanggal" && entryDate === todayISO()}
+                        entryDate={entryDate}''',
+    '''                      <DseInputRow key={dse.dse_code} t={t} profile={profile} isCardView={false} dse={dse} mode={dseInputMode} rank={dseIdx + 1} isToday={periodMode === "tanggal" && entryDate === todayISO()}
+                        sellinUpload={sellinUploadByDseCode[dse.dse_code]}
+                        sellinUploadAvailable={sellinUploadRosterAvailable}
+                        entryDate={entryDate}''',
+    label="prop desktop table",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - prop sellinUpload/sellinUploadAvailable disupply ke 2 callsite")

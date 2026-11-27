@@ -1,0 +1,387 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# BESAR (permintaan user - "jangan langsung tampilan pembanding namun
+# ditrigger dengan tombol khusus bandingkan data, nanti juga posisinya
+# bersebelahan langsung exclude fwa juga, di perbandingan ini dan datanya
+# dibuat sama sama as of tanggal terakhir data tersedia"): REDESIGN
+# tampilan perbandingan Sell-in vs App:
+# 1) Kolom pembanding TIDAK LAGI selalu tampil - sekarang disembunyikan
+#    default, muncul kalau tombol "Bandingkan Data" diklik (independen di
+#    tabel Ringkasan vs tabel level DSE, sesuai pilihan user).
+# 2) Di tabel RINGKASAN (Partner/Region/Area/District): kalau mode
+#    Bandingkan AKTIF, layout jadi BERPASANGAN per metrik (SP app
+#    bersebelahan Sell-in SP, Voucher app bersebelahan Sell-in Voucher,
+#    Saldo app bersebelahan Sell-in Saldo, lalu Total Excl FWA app
+#    bersebelahan Total OSA & Selisih) - FWA DIKELUARKAN TOTAL dari
+#    tampilan ini (sesuai instruksi "exclude fwa juga di perbandingan
+#    ini"), & SEMUA angka app di mode ini (SP/Voucher/Saldo/Total)
+#    dibatasi sampai tanggal as of upload yg SAMA (pakai r.asOfSp/
+#    asOfVoucher/asOfSaldo yg sudah ada, bukan r.nilaiSp dkk lagi). Kalau
+#    mode Bandingkan MATI, tabel balik ke tampilan baseline awal (SP/FWA/
+#    Voucher/Saldo/Total Penjualan biasa, as of hari ini, TANPA kolom
+#    sellin sama sekali).
+# 3) Di tabel level DSE (roster): kolom input SP/FWA/Voucher/Saldo/Total
+#    Penjualan (editable, trigger popup edit) TETAP SELALU tampil apa
+#    adanya (TIDAK ikut dibatasi as of upload - ini kolom input asli,
+#    bukan laporan, jadi harus tetap nunjukin angka bulan berjalan utuh
+#    biar ga membingungkan pas admin mau edit). Yang di-toggle cuma blok
+#    6 kolom pembanding (Total Excl FWA/Sell-in SP/Voucher/Saldo/Total
+#    OSA/Selisih) yg SUDAH posisinya nempel/bersebelahan dgn kolom app
+#    aslinya di baris yg sama.
+
+# ---------------------------------------------------------------------
+# 1) State baru: compareRollup & compareRoster (independen), + auto-reset
+# kalau periodMode pindah ke Daily (fitur ini cuma relevan Full Month).
+do(
+    '  const [sellinAppAsOfByDseCode, setSellinAppAsOfByDseCode] = useState({});\n',
+    '''  const [sellinAppAsOfByDseCode, setSellinAppAsOfByDseCode] = useState({});
+  // BARU (permintaan user - "jangan langsung tampilan pembanding namun
+  // ditrigger dengan tombol khusus bandingkan data"): kolom pembanding
+  // Sell-in vs App TIDAK LAGI otomatis tampil - sekarang disembunyikan
+  // sampai tombol "Bandingkan Data" diklik. compareRollup = tabel
+  // Ringkasan (Partner/Region/Area/District), compareRoster = tabel
+  // level DSE - independen satu sama lain sesuai permintaan user.
+  const [compareRollup, setCompareRollup] = useState(false);
+  const [compareRoster, setCompareRoster] = useState(false);
+  useEffect(() => {
+    if (periodMode !== "bulan") { setCompareRollup(false); setCompareRoster(false); }
+  }, [periodMode]);
+''',
+    label="state compareRollup/compareRoster + effect reset",
+)
+
+# ---------------------------------------------------------------------
+# 2) Tombol "Bandingkan Data" di toolbar (sebelah tombol Upload Sellin
+# DSE / Export XLSX yg sudah ada) - cuma tampil mode Full Month, toggle
+# state yg relevan tergantung level yg lagi dilihat (summaryGroupBy
+# "dse" -> compareRoster, selain itu -> compareRollup).
+do(
+    '''              <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                <button onClick={() => setSellinCompareOpen(true)} title="Upload file DSE PROD (IM3 & 3ID) & bandingkan dgn penjualan di app"''',
+    '''              <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                {periodMode === "bulan" && (() => {
+                  const isCompareOn = summaryGroupBy === "dse" ? compareRoster : compareRollup;
+                  const toggleCompare = () => (summaryGroupBy === "dse" ? setCompareRoster((v) => !v) : setCompareRollup((v) => !v));
+                  return (
+                    <button onClick={toggleCompare} title="Tampilkan/sembunyikan kolom perbandingan Sell-in (S100) vs data app, bersebelahan per metrik"
+                      style={{ display: "flex", alignItems: "center", gap: 6, height: 32, padding: "0 10px", borderRadius: 8, border: `1px solid ${isCompareOn ? t.teal : t.inputBd}`, background: isCompareOn ? t.tealBg : t.inputBg, color: isCompareOn ? t.teal : t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap" }}>
+                      <GitCompare size={13} /> {width >= 700 && "Bandingkan Data"}
+                    </button>
+                  );
+                })()}
+                <button onClick={() => setSellinCompareOpen(true)} title="Upload file DSE PROD (IM3 & 3ID) & bandingkan dgn penjualan di app"''',
+    label="tombol Bandingkan Data toolbar",
+)
+
+# 2b) Tambah import ikon GitCompare (dipakai tombol Bandingkan Data).
+do(
+    '  SlidersHorizontal, Crown, Medal, MapPin, ArrowUpDown, Plus, RotateCcw, Copy, Printer, EyeOff, Eye, Minus, Layers,\n',
+    '  SlidersHorizontal, Crown, Medal, MapPin, ArrowUpDown, Plus, RotateCcw, Copy, Printer, EyeOff, Eye, Minus, Layers, GitCompare,\n',
+    label="import GitCompare",
+)
+
+# ---------------------------------------------------------------------
+# 3) HEADER tabel Ringkasan (Partner/Region/Area/District): ganti 5 tombol
+# rank-metric + blok 6 kolom lama jadi render kondisional compareRollup.
+do(
+    '''                        {["sp", "fwa", "voucher", "saldo", "total"].map((v) => RANK_METRIC_OPTIONS.find((o) => o.v === v)).map((opt) => (
+                          <button key={opt.v} type="button" onClick={() => setRankMetric(opt.v)} title={`Urutkan Rank berdasarkan ${opt.label}`}
+                            style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: FONT, color: rankMetric === opt.v ? t.teal : t.mid }}>
+                            <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                              <ArrowUpDown size={10} />
+                              {opt.label}
+                            </span>
+                            <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{periodColumnSubtitle}</span>
+                          </button>
+                        ))}
+                        {/* BARU (permintaan user - "tambah kolom Total
+                            Penjualan (SP+VC+Saldo)" [exclude FWA, dari
+                            inputan app] + "SELL-IN SP/VOUCHER/SALDO (S100)"
+                            + "TOTAL OSA (S100)" [dari file upload admin] +
+                            "Selisih" - semua SELALU tampil, "–" kalau
+                            upload belum ada utk periode ini). */}
+                        {/* BARU (permintaan user - "ini semua hanya
+                            untuk full month ya, daily jangan tampilkan,
+                            karena data yang akan saya upload reguler itu
+                            MTD bukan data daily"): 6 kolom upload sellin
+                            CUMA tampil di mode Full Month (periodMode ===
+                            "bulan") - di mode Daily kolomnya disembunyikan
+                            TOTAL (bukan cuma isinya di-dash-in), krn
+                            perbandingan MTD vs 1 hari memang ga relevan. */}
+                        {periodMode === "bulan" && (
+                          <>
+                            <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                              <span>Total Penjualan (Excl FWA)</span>
+                              <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{sellinUploadAsOfDt ? `as of ${sellinUploadAsOfDt}` : periodColumnSubtitle}</span>
+                            </div>
+                            <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                              <span>Sell-in SP (S100)</span>
+                              <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{sellinUploadAsOfDt ? `as of ${sellinUploadAsOfDt}` : "–"}</span>
+                            </div>
+                            <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                              <span>Sell-in Voucher (S100)</span>
+                              <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{sellinUploadAsOfDt ? `as of ${sellinUploadAsOfDt}` : "–"}</span>
+                            </div>
+                            <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                              <span>Sell-in Saldo (S100)</span>
+                              <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{sellinUploadAsOfDt ? `as of ${sellinUploadAsOfDt}` : "–"}</span>
+                            </div>
+                            <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                              <span>Total OSA (S100)</span>
+                              <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{sellinUploadAsOfDt ? `as of ${sellinUploadAsOfDt}` : "–"}</span>
+                            </div>
+                            <div style={{ textAlign: "right", display: "flex", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>Selisih</div>
+                          </>
+                        )}''',
+    '''                        {/* UPDATE (permintaan user - "jangan langsung
+                            tampilan pembanding namun ditrigger dengan
+                            tombol khusus bandingkan data, nanti juga
+                            posisinya bersebelahan langsung exclude fwa
+                            juga, di perbandingan ini dan datanya dibuat
+                            sama sama as of tanggal terakhir data
+                            tersedia"): compareRollup MATI -> balik ke
+                            tampilan baseline (5 tombol rank-metric SP/FWA/
+                            Voucher/Saldo/Total, as of hari ini, TANPA
+                            kolom sellin). compareRollup NYALA -> FWA
+                            dikeluarkan total, SP/Voucher/Saldo/Total app
+                            DIBATASI sampai tanggal as of upload (asOfSp/
+                            asOfVoucher/asOfSaldo, SAMA PERSIS cutoff yg
+                            dipakai Sell-in), & tiap metrik app langsung
+                            bersebelahan sama pasangan Sell-in-nya. */}
+                        {!compareRollup ? (
+                          <>
+                            {["sp", "fwa", "voucher", "saldo", "total"].map((v) => RANK_METRIC_OPTIONS.find((o) => o.v === v)).map((opt) => (
+                              <button key={opt.v} type="button" onClick={() => setRankMetric(opt.v)} title={`Urutkan Rank berdasarkan ${opt.label}`}
+                                style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: FONT, color: rankMetric === opt.v ? t.teal : t.mid }}>
+                                <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                                  <ArrowUpDown size={10} />
+                                  {opt.label}
+                                </span>
+                                <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{periodColumnSubtitle}</span>
+                              </button>
+                            ))}
+                          </>
+                        ) : (
+                          <>
+                            {(() => {
+                              const asOfSub = sellinUploadAsOfDt ? `as of ${sellinUploadAsOfDt}` : periodColumnSubtitle;
+                              const spOpt = RANK_METRIC_OPTIONS.find((o) => o.v === "sp");
+                              const voucherOpt = RANK_METRIC_OPTIONS.find((o) => o.v === "voucher");
+                              const saldoOpt = RANK_METRIC_OPTIONS.find((o) => o.v === "saldo");
+                              const rankBtn = (opt) => (
+                                <button key={opt.v} type="button" onClick={() => setRankMetric(opt.v)} title={`Urutkan Rank berdasarkan ${opt.label}`}
+                                  style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: FONT, color: rankMetric === opt.v ? t.teal : t.mid }}>
+                                  <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                                    <ArrowUpDown size={10} />
+                                    {opt.label}
+                                  </span>
+                                  <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{asOfSub}</span>
+                                </button>
+                              );
+                              const plainCol = (label, sub) => (
+                                <div key={label} style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                                  <span>{label}</span>
+                                  <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{sub}</span>
+                                </div>
+                              );
+                              const sellinSub = sellinUploadAsOfDt ? `as of ${sellinUploadAsOfDt}` : "–";
+                              return (
+                                <>
+                                  {rankBtn(spOpt)}
+                                  {plainCol("Sell-in SP (S100)", sellinSub)}
+                                  {rankBtn(voucherOpt)}
+                                  {plainCol("Sell-in Voucher (S100)", sellinSub)}
+                                  {rankBtn(saldoOpt)}
+                                  {plainCol("Sell-in Saldo (S100)", sellinSub)}
+                                  {plainCol("Total Penjualan (Excl FWA)", asOfSub)}
+                                  {plainCol("Total OSA (S100)", sellinSub)}
+                                  <div style={{ textAlign: "right", display: "flex", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>Selisih</div>
+                                </>
+                              );
+                            })()}
+                          </>
+                        )}''',
+    label="header rollup compareRollup kondisional",
+)
+
+# ---------------------------------------------------------------------
+# 4) ROW tabel Ringkasan: nilai kolom ikut kondisional compareRollup
+# (SAMA PERSIS logic header di atas - OFF pakai r.nilaiX, ON pakai
+# r.asOfX dibatasi tanggal upload + dipasangkan sama r.uploadX).
+do(
+    '''                          <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiSp)}</div>
+                          <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiFwa)}</div>
+                          <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiVoucher)}</div>
+                          <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiSaldo)}</div>
+                          <div style={{ textAlign: "right", fontWeight: 800, color: t.teal }}>Rp {fmtID(r.nilaiSp + r.nilaiFwa + r.nilaiVoucher + r.nilaiSaldo)}</div>
+                          {/* BARU (permintaan user - "tambah kolom Total
+                              Penjualan (SP+VC+Saldo)" dari inputan [FWA
+                              exclude] + breakdown upload admin (Sell-in SP/
+                              Voucher/Saldo/Total OSA) + Selisih, sampai ke
+                              level DSE). Total Penjualan excl-FWA SELALU
+                              ada (dari inputan, ga butuh upload). Kolom
+                              upload "–" kalau memang belum ada upload sama
+                              sekali utk periode bulan ini. */}
+                          {periodMode === "bulan" && (
+                            <>
+                              <div style={{ textAlign: "right", fontWeight: 700, color: t.hi }}>Rp {fmtID(sellinUploadAvailable ? (r.asOfSp + r.asOfVoucher + r.asOfSaldo) : (r.nilaiSp + r.nilaiVoucher + r.nilaiSaldo))}</div>
+                              {sellinUploadAvailable ? (
+                                <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.uploadSp)}</div>
+                              ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                              {sellinUploadAvailable ? (
+                                <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.uploadVou)}</div>
+                              ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                              {sellinUploadAvailable ? (
+                                <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.uploadSaldo)}</div>
+                              ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                              {sellinUploadAvailable ? (
+                                <div style={{ textAlign: "right", fontWeight: 800, color: t.hi }}>Rp {fmtID(r.uploadSp + r.uploadVou + r.uploadSaldo)}</div>
+                              ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                              {sellinUploadAvailable ? (() => {
+                                const selisih = (r.asOfSp + r.asOfVoucher + r.asOfSaldo) - (r.uploadSp + r.uploadVou + r.uploadSaldo);
+                                return <div style={{ textAlign: "right", fontWeight: 700, color: selisih !== 0 ? t.red : t.mid }}>Rp {fmtID(selisih)}</div>;
+                              })() : (
+                                <div style={{ textAlign: "right", color: t.lo }}>–</div>
+                              )}
+                            </>
+                          )}''',
+    '''                          {/* UPDATE (permintaan user - "bandingkan
+                              data" dipicu tombol, bersebelahan per
+                              metrik, exclude FWA, as of tanggal sama):
+                              compareRollup MATI -> 5 kolom baseline
+                              (SP/FWA/Voucher/Saldo/Total, as of hari ini).
+                              compareRollup NYALA -> FWA dikeluarkan, tiap
+                              metrik app (dibatasi as of tanggal upload)
+                              langsung bersebelahan sama Sell-in-nya,
+                              ditutup trio Total Excl FWA | Total OSA |
+                              Selisih (SEMUA as of tanggal yg sama). */}
+                          {!compareRollup ? (
+                            <>
+                              <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiSp)}</div>
+                              <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiFwa)}</div>
+                              <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiVoucher)}</div>
+                              <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiSaldo)}</div>
+                              <div style={{ textAlign: "right", fontWeight: 800, color: t.teal }}>Rp {fmtID(r.nilaiSp + r.nilaiFwa + r.nilaiVoucher + r.nilaiSaldo)}</div>
+                            </>
+                          ) : (
+                            <>
+                              <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(sellinUploadAvailable ? r.asOfSp : r.nilaiSp)}</div>
+                              {sellinUploadAvailable ? (
+                                <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.uploadSp)}</div>
+                              ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                              <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(sellinUploadAvailable ? r.asOfVoucher : r.nilaiVoucher)}</div>
+                              {sellinUploadAvailable ? (
+                                <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.uploadVou)}</div>
+                              ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                              <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(sellinUploadAvailable ? r.asOfSaldo : r.nilaiSaldo)}</div>
+                              {sellinUploadAvailable ? (
+                                <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.uploadSaldo)}</div>
+                              ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                              <div style={{ textAlign: "right", fontWeight: 800, color: t.hi }}>Rp {fmtID(sellinUploadAvailable ? (r.asOfSp + r.asOfVoucher + r.asOfSaldo) : (r.nilaiSp + r.nilaiVoucher + r.nilaiSaldo))}</div>
+                              {sellinUploadAvailable ? (
+                                <div style={{ textAlign: "right", fontWeight: 800, color: t.hi }}>Rp {fmtID(r.uploadSp + r.uploadVou + r.uploadSaldo)}</div>
+                              ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                              {sellinUploadAvailable ? (() => {
+                                const selisih = (r.asOfSp + r.asOfVoucher + r.asOfSaldo) - (r.uploadSp + r.uploadVou + r.uploadSaldo);
+                                return <div style={{ textAlign: "right", fontWeight: 700, color: selisih !== 0 ? t.red : t.mid }}>Rp {fmtID(selisih)}</div>;
+                              })() : (
+                                <div style={{ textAlign: "right", color: t.lo }}>–</div>
+                              )}
+                            </>
+                          )}''',
+    label="row rollup compareRollup kondisional",
+)
+
+# ---------------------------------------------------------------------
+# 5) Grid template columns tabel Ringkasan (2 tempat - header & row):
+# OFF (compareRollup false) balik ke 8 kolom baseline (#, label, DSEAV,
+# SP, FWA, Voucher, Saldo, Total); ON (compareRollup true) jadi 12 kolom
+# berpasangan (#, label, DSEAV, SP, SellinSP, Voucher, SellinVoucher,
+# Saldo, SellinSaldo, TotalExclFwa, TotalOsa, Selisih).
+OLD_GRID = '"44px 200px 130px 130px 130px 130px 130px 195px 195px 130px 150px 140px 130px 130px"'
+NEW_GRID = '(compareRollup ? "44px 200px 130px 130px 150px 130px 150px 130px 150px 195px 150px 130px" : "44px 200px 130px 130px 130px 130px 130px 195px")'
+assert src.count(OLD_GRID) == 2, f"expected 2, found {src.count(OLD_GRID)}"
+src = src.replace(OLD_GRID, NEW_GRID)
+
+OLD_MINW = '(tab !== "ar" && periodMode === "bulan") ? 1964 : undefined'
+NEW_MINW = '(tab !== "ar" && periodMode === "bulan") ? (compareRollup ? 1689 : 1089) : undefined'
+assert src.count(OLD_MINW) == 2, f"expected 2, found {src.count(OLD_MINW)}"
+src = src.replace(OLD_MINW, NEW_MINW)
+
+# ---------------------------------------------------------------------
+# 6) Header kolom tabel level DSE (roster): 6 kolom pembanding cuma
+# muncul kalau compareRoster aktif (sebelumnya SELALU muncul asal
+# periodMode === "bulan"). Kolom input SP/FWA/Voucher/Saldo/Total
+# Penjualan TIDAK disentuh (tetap selalu tampil apa adanya).
+do(
+    '''                          ...(periodMode === "bulan" ? [
+                            { key: "totalPenjualanExclFwa", label: "Total Penjualan (Excl FWA)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : periodColumnSubtitle },''',
+    '''                          // UPDATE (permintaan user - "jangan langsung
+                          // tampilan pembanding namun ditrigger dengan
+                          // tombol khusus bandingkan data"): 6 kolom
+                          // pembanding ini sekarang CUMA muncul kalau
+                          // compareRoster aktif (tombol "Bandingkan Data"
+                          // di toolbar atas, independen dari compareRollup
+                          // di tabel Ringkasan) - sebelumnya selalu
+                          // tampil asal Full Month.
+                          ...(periodMode === "bulan" && compareRoster ? [
+                            { key: "totalPenjualanExclFwa", label: "Total Penjualan (Excl FWA)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : periodColumnSubtitle },''',
+    label="header roster gate compareRoster",
+)
+
+# ---------------------------------------------------------------------
+# 7) <td> block di DseInputRow (level DSE): 6 kolom pembanding cuma
+# dirender kalau compareRoster aktif - sama persis gate di header di
+# atas. Kolom input SP/FWA/Voucher/Saldo/Total Penjualan TIDAK disentuh.
+do(
+    '''          {periodMode === "bulan" && (() => {
+            const totalExclFwa = fRaw(e.nilai_sp) + fRaw(e.nilai_voucher) + fRaw(e.nilai_saldo);
+            const totalExclFwaDisplay = sellinUploadAvailable ? (sellinAppAsOfTotal ?? 0) : totalExclFwa;''',
+    '''          {periodMode === "bulan" && compareRoster && (() => {
+            const totalExclFwa = fRaw(e.nilai_sp) + fRaw(e.nilai_voucher) + fRaw(e.nilai_saldo);
+            const totalExclFwaDisplay = sellinUploadAvailable ? (sellinAppAsOfTotal ?? 0) : totalExclFwa;''',
+    label="td roster gate compareRoster",
+)
+
+# 7b) DseInputRow butuh prop compareRoster baru (component function ada
+# di luar scope compareRoster state, jadi harus dikirim via props - SAMA
+# POLA sellinUpload/sellinUploadAvailable yg sudah ada).
+do(
+    ", sellinUpload, sellinUploadAvailable, sellinAppAsOfTotal }) {",
+    ", sellinUpload, sellinUploadAvailable, sellinAppAsOfTotal, compareRoster }) {",
+    label="DseInputRow prop signature compareRoster",
+)
+do(
+    '''                  sellinUpload={sellinUploadByDseCode[dse.dse_code]}
+                  sellinUploadAvailable={sellinUploadRosterAvailable}
+                  sellinAppAsOfTotal={sellinAppAsOfByDseCode[dse.dse_code]}''',
+    '''                  sellinUpload={sellinUploadByDseCode[dse.dse_code]}
+                  sellinUploadAvailable={sellinUploadRosterAvailable}
+                  sellinAppAsOfTotal={sellinAppAsOfByDseCode[dse.dse_code]}
+                  compareRoster={compareRoster}''',
+    label="prop mobile card compareRoster",
+)
+do(
+    '''                        sellinUpload={sellinUploadByDseCode[dse.dse_code]}
+                        sellinUploadAvailable={sellinUploadRosterAvailable}
+                        sellinAppAsOfTotal={sellinAppAsOfByDseCode[dse.dse_code]}''',
+    '''                        sellinUpload={sellinUploadByDseCode[dse.dse_code]}
+                        sellinUploadAvailable={sellinUploadRosterAvailable}
+                        sellinAppAsOfTotal={sellinAppAsOfByDseCode[dse.dse_code]}
+                        compareRoster={compareRoster}''',
+    label="prop desktop table compareRoster",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - state + tombol Bandingkan Data ditambahkan")

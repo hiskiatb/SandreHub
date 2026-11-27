@@ -1,0 +1,72 @@
+path = "app/dashboard/components/AdminDseSellinCompare.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# BARU (permintaan user - "saya paham kenapa masih ada yang belum, untuk
+# partner yang diawali SDP atau kiosk itu tidak dihitung, jadi tidak
+# perlu dibilang bahwa dse tidak ditemukan"): baris dgn partner_name
+# diawali "SDP" atau mengandung "KIOSK" BUKAN DSE asli (bukan gap
+# pencocokan yg perlu diperbaiki) - exclude TOTAL dari proses (jangan
+# dihitung ke agregasi ATAUPUN ditampilkan sbg "DSE Tidak Dikenali"),
+# bukan cuma disembunyikan dari tampilan.
+do(
+    '''const norm = (s) => String(s ?? "").trim().toUpperCase();
+const numOrZero = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };''',
+    '''const norm = (s) => String(s ?? "").trim().toUpperCase();
+const numOrZero = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+// BARU (permintaan user - "partner yang diawali SDP atau kiosk itu
+// tidak dihitung, jadi tidak perlu dibilang DSE tidak ditemukan"):
+// baris begini BUKAN DSE asli - exclude total dari proses pencocokan
+// (bukan cuma disembunyikan dari tampilan "DSE Tidak Dikenali").
+const isExcludedPartner = (partnerName) => {
+  const p = norm(partnerName);
+  return p.startsWith("SDP") || p.includes("KIOSK");
+};''',
+    label="helper isExcludedPartner",
+)
+
+do(
+    '''  const im3Agg = new Map(); // id pilihan user (sheet IM3) -> agg
+  (im3?.rows || []).forEach((r) => {
+    if (!SUMATERA_REGIONS.has(norm(r.region))) return;
+    if (asOf == null) asOf = numOrZero(r.as_of_dt);
+    const key = norm(r[mapping.im3.id]);
+    if (!key) return;''',
+    '''  const im3Agg = new Map(); // id pilihan user (sheet IM3) -> agg
+  (im3?.rows || []).forEach((r) => {
+    if (!SUMATERA_REGIONS.has(norm(r.region))) return;
+    if (isExcludedPartner(r.partner_name)) return;
+    if (asOf == null) asOf = numOrZero(r.as_of_dt);
+    const key = norm(r[mapping.im3.id]);
+    if (!key) return;''',
+    label="exclude sheet IM3",
+)
+
+do(
+    '''  const tidAgg = new Map(); // id pilihan user (sheet 3ID) -> agg
+  (tid?.rows || []).forEach((r) => {
+    if (!SUMATERA_REGIONS.has(norm(r.region))) return;
+    if (asOf == null) asOf = numOrZero(r.as_of_dt);
+    const key = norm(r[mapping.tid.id]);
+    if (!key) return;''',
+    '''  const tidAgg = new Map(); // id pilihan user (sheet 3ID) -> agg
+  (tid?.rows || []).forEach((r) => {
+    if (!SUMATERA_REGIONS.has(norm(r.region))) return;
+    if (isExcludedPartner(r.partner_name)) return;
+    if (asOf == null) asOf = numOrZero(r.as_of_dt);
+    const key = norm(r[mapping.tid.id]);
+    if (!key) return;''',
+    label="exclude sheet 3ID",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - partner SDP/Kiosk di-exclude total dari pencocokan")

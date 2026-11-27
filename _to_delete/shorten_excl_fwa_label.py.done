@@ -1,0 +1,31 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# UPDATE (permintaan user - "singkat saja jadi exc fwa", screenshot header
+# kolom "TOTAL PENJUALAN (SP+VC+SALDO)" masih kepanjangan/ga muat): label
+# kolom disingkat jadi "Total Penjualan (Excl FWA)" - di header rollup
+# (Partner/Region/Area/District) & header roster (level DSE). Logic/value
+# TIDAK berubah, cuma teks labelnya.
+do(
+    '<span>Total Penjualan (SP+VC+Saldo)</span>',
+    '<span>Total Penjualan (Excl FWA)</span>',
+    label="label header rollup",
+)
+do(
+    '{ key: "totalPenjualanExclFwa", label: "Total Penjualan (SP+VC+Saldo)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : periodColumnSubtitle },',
+    '{ key: "totalPenjualanExclFwa", label: "Total Penjualan (Excl FWA)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : periodColumnSubtitle },',
+    label="label header roster",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - label kolom disingkat jadi 'Total Penjualan (Excl FWA)'")

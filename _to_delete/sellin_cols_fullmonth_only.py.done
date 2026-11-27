@@ -1,0 +1,151 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# 1) Grid: 12 kolom cuma kalau Full Month, Daily tetap 6 kolom lama (6 kolom
+#    baru dari fitur upload sellin DISEMBUNYIKAN TOTAL di mode Daily -
+#    permintaan user: "data yang akan saya upload regular itu MTD bukan
+#    data daily", jadi perbandingan ga relevan/valid kalau lagi mode Daily).
+do(
+    'tab === "ar" ? "44px 1.5fr 1fr 1fr 1fr 1fr" : "44px 1.3fr repeat(12, 1fr)"',
+    'tab === "ar" ? "44px 1.5fr 1fr 1fr 1fr 1fr" : (periodMode === "bulan" ? "44px 1.3fr repeat(12, 1fr)" : "44px 1.3fr repeat(6, 1fr)")',
+    n=2,
+    label="grid conditional periodMode",
+)
+
+# 2) Header: bungkus 6 header kolom baru dgn periodMode==="bulan"
+old2 = '''                        <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                          <span>Total Penjualan (SP+VC+Saldo)</span>
+                          <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{periodColumnSubtitle}</span>
+                        </div>
+                        <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                          <span>Sell-in SP (S100)</span>
+                          <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{sellinUploadAsOfDt ? `as of ${sellinUploadAsOfDt}` : "–"}</span>
+                        </div>
+                        <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                          <span>Sell-in Voucher (S100)</span>
+                          <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{sellinUploadAsOfDt ? `as of ${sellinUploadAsOfDt}` : "–"}</span>
+                        </div>
+                        <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                          <span>Sell-in Saldo (S100)</span>
+                          <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{sellinUploadAsOfDt ? `as of ${sellinUploadAsOfDt}` : "–"}</span>
+                        </div>
+                        <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                          <span>Total OSA (S100)</span>
+                          <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{sellinUploadAsOfDt ? `as of ${sellinUploadAsOfDt}` : "–"}</span>
+                        </div>
+                        <div style={{ textAlign: "right", display: "flex", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>Selisih</div>
+                      </>
+                    )}
+                  </div>'''
+new2 = '''                        {/* BARU (permintaan user - "ini semua hanya
+                            untuk full month ya, daily jangan tampilkan,
+                            karena data yang akan saya upload reguler itu
+                            MTD bukan data daily"): 6 kolom upload sellin
+                            CUMA tampil di mode Full Month (periodMode ===
+                            "bulan") - di mode Daily kolomnya disembunyikan
+                            TOTAL (bukan cuma isinya di-dash-in), krn
+                            perbandingan MTD vs 1 hari memang ga relevan. */}
+                        {periodMode === "bulan" && (
+                          <>
+                            <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                              <span>Total Penjualan (SP+VC+Saldo)</span>
+                              <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{periodColumnSubtitle}</span>
+                            </div>
+                            <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                              <span>Sell-in SP (S100)</span>
+                              <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{sellinUploadAsOfDt ? `as of ${sellinUploadAsOfDt}` : "–"}</span>
+                            </div>
+                            <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                              <span>Sell-in Voucher (S100)</span>
+                              <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{sellinUploadAsOfDt ? `as of ${sellinUploadAsOfDt}` : "–"}</span>
+                            </div>
+                            <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                              <span>Sell-in Saldo (S100)</span>
+                              <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{sellinUploadAsOfDt ? `as of ${sellinUploadAsOfDt}` : "–"}</span>
+                            </div>
+                            <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                              <span>Total OSA (S100)</span>
+                              <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{sellinUploadAsOfDt ? `as of ${sellinUploadAsOfDt}` : "–"}</span>
+                            </div>
+                            <div style={{ textAlign: "right", display: "flex", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>Selisih</div>
+                          </>
+                        )}
+                      </>
+                    )}
+                  </div>'''
+do(old2, new2, label="header gated periodMode")
+
+# 3) Row: bungkus 6 cell data baru dgn periodMode==="bulan" juga
+old3 = '''                          <div style={{ textAlign: "right", fontWeight: 700, color: t.hi }}>Rp {fmtID(r.nilaiSp + r.nilaiVoucher + r.nilaiSaldo)}</div>
+                          {sellinUploadAvailable ? (
+                            <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.uploadSp)}</div>
+                          ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                          {sellinUploadAvailable ? (
+                            <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.uploadVou)}</div>
+                          ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                          {sellinUploadAvailable ? (
+                            <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.uploadSaldo)}</div>
+                          ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                          {sellinUploadAvailable ? (
+                            <div style={{ textAlign: "right", fontWeight: 800, color: t.hi }}>Rp {fmtID(r.uploadSp + r.uploadVou + r.uploadSaldo)}</div>
+                          ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                          {sellinUploadAvailable ? (() => {
+                            const selisih = (r.nilaiSp + r.nilaiVoucher + r.nilaiSaldo) - (r.uploadSp + r.uploadVou + r.uploadSaldo);
+                            return <div style={{ textAlign: "right", fontWeight: 700, color: selisih !== 0 ? t.red : t.mid }}>Rp {fmtID(selisih)}</div>;
+                          })() : (
+                            <div style={{ textAlign: "right", color: t.lo }}>–</div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  ))}'''
+new3 = '''                          {periodMode === "bulan" && (
+                            <>
+                              <div style={{ textAlign: "right", fontWeight: 700, color: t.hi }}>Rp {fmtID(r.nilaiSp + r.nilaiVoucher + r.nilaiSaldo)}</div>
+                              {sellinUploadAvailable ? (
+                                <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.uploadSp)}</div>
+                              ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                              {sellinUploadAvailable ? (
+                                <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.uploadVou)}</div>
+                              ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                              {sellinUploadAvailable ? (
+                                <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.uploadSaldo)}</div>
+                              ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                              {sellinUploadAvailable ? (
+                                <div style={{ textAlign: "right", fontWeight: 800, color: t.hi }}>Rp {fmtID(r.uploadSp + r.uploadVou + r.uploadSaldo)}</div>
+                              ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                              {sellinUploadAvailable ? (() => {
+                                const selisih = (r.nilaiSp + r.nilaiVoucher + r.nilaiSaldo) - (r.uploadSp + r.uploadVou + r.uploadSaldo);
+                                return <div style={{ textAlign: "right", fontWeight: 700, color: selisih !== 0 ? t.red : t.mid }}>Rp {fmtID(selisih)}</div>;
+                              })() : (
+                                <div style={{ textAlign: "right", color: t.lo }}>–</div>
+                              )}
+                            </>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  ))}'''
+do(old3, new3, label="row gated periodMode")
+
+# 4) Fetch mf_dse_admin_sellin_upload: ga perlu jalan sama sekali di mode Daily
+#    (hemat 1 query per load pas Daily, konsisten dgn kolomnya yg disembunyikan
+#    total) - tambah guard periodMode === "bulan" di pengecekan tab === "input".
+do(
+    'if (tab === "input") {\n        const uploadPeriod = calViewMonth.slice(0, 7);',
+    'if (tab === "input" && periodMode === "bulan") {\n        const uploadPeriod = calViewMonth.slice(0, 7);',
+    label="guard fetch periodMode",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - kolom sellin cuma tampil di Full Month")

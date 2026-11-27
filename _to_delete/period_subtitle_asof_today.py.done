@@ -1,0 +1,35 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# UPDATE (permintaan user - "untuk penjualan sp - total penjualan, buat
+# di bawahnya as of 25 Nov 2026" + "kalo total penjualan semua memang as
+# of hari ini"): subtitle Penjualan SP/FWA/Voucher/Saldo/Total Penjualan
+# (FULL MONTH, termasuk FWA) dulu cuma nama bulan ("November 2026") -
+# skrng "as of <tanggal>" biar jelas ini MTD bukan 1 bulan penuh final.
+# Tanggalnya diambil dari TANGGAL TERAKHIR yg beneran ke-pilih
+# (sortedSelectedDates, dari monthDatesUpTo) - BUKAN hardcode hari ini -
+# krn kalau user lagi liat bulan yg SUDAH LEWAT, "as of"-nya harus akhir
+# bulan itu, bukan hari ini (monthDatesUpTo sendiri sudah otomatis isi
+# s.d. akhir bulan kalau bulan itu bukan bulan berjalan).
+do(
+    '''  const periodColumnSubtitle = periodMode === "bulan"
+    ? `${MONTH_NAMES[Number(calViewMonth.slice(5, 7)) - 1]} ${calViewMonth.slice(0, 4)}`
+    : fmtDayMonth(entryDate);''',
+    '''  const periodColumnSubtitle = periodMode === "bulan"
+    ? `as of ${fmtDayMonth(sortedSelectedDates[sortedSelectedDates.length - 1] || calViewMonth + "-01")}`
+    : fmtDayMonth(entryDate);''',
+    label="periodColumnSubtitle as of tanggal terakhir",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - periodColumnSubtitle (Penjualan SP/.../Total Penjualan) jadi as of tanggal")

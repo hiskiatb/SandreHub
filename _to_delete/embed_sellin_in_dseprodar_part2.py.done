@@ -1,0 +1,157 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# 1) Handler: export XLSX (rollup Partner/Region/Area/District ATAU roster DSE,
+#    tergantung summaryGroupBy saat ini) + buka modal upload - ditaruh persis
+#    sebelum loadRegionSummary biar deket state2 yg dipakai (sellinUploadAvailable dst).
+anchor1 = "  const loadRegionSummary = useCallback(async () => {"
+new1 = '''  // BARU (permintaan user - "dan ada fitur datanya export as xlsx nya"):
+  // export tabel yg SEDANG TAMPIL - kalau lagi di level Partner/Region/
+  // Area/District (rollup), export regionSummary apa adanya (termasuk
+  // kolom Sellin Upload/Selisih kalau sellinUploadAvailable); kalau lagi
+  // di level DSE (roster penuh), export filteredDseList + fetch cepat
+  // mf_dse_admin_sellin_upload utk periode yg sama (cuma pas export, ga
+  // disimpan sbg state permanen - hindari nambah beban render roster yg
+  // sudah sangat kompleks).
+  const [exportingSellinXlsx, setExportingSellinXlsx] = useState(false);
+  const handleExportSellinXlsx = async () => {
+    setExportingSellinXlsx(true);
+    try {
+      const periodeLabel = `${MONTH_NAMES[Number(calViewMonth.slice(5, 7)) - 1]}_${calViewMonth.slice(0, 4)}`;
+      if (summaryGroupBy !== "dse") {
+        const head = ["#", summaryGroupLabel, "DSE Active", "DSE Vacant", "Penjualan SP", "Penjualan FWA", "Penjualan Voucher", "Penjualan Saldo", "Total Penjualan", "Sellin Upload (SP+Vou+Saldo)", "Selisih"];
+        const body = regionSummary.map((r, i) => [
+          i + 1, r.label, r.totalActive, r.totalVacant,
+          r.nilaiSp, r.nilaiFwa, r.nilaiVoucher, r.nilaiSaldo, r.nilaiSp + r.nilaiFwa + r.nilaiVoucher + r.nilaiSaldo,
+          sellinUploadAvailable ? (r.uploadSp + r.uploadVou + r.uploadSaldo) : "",
+          sellinUploadAvailable ? ((r.nilaiSp + r.nilaiVoucher + r.nilaiSaldo) - (r.uploadSp + r.uploadVou + r.uploadSaldo)) : "",
+        ]);
+        const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
+        ws["!freeze"] = { xSplit: 0, ySplit: 1 };
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, summaryGroupLabel);
+        XLSX.writeFile(wb, `Ringkasan_${summaryGroupLabel}_${periodeLabel}.xlsx`);
+        showToast(`Export selesai — ${body.length} baris.`, "ok");
+      } else {
+        const codes = filteredDseList.map((x) => x.r.dse_code).filter(Boolean);
+        let uploadByCode = {};
+        if (codes.length) {
+          const uploadPeriod = calViewMonth.slice(0, 7);
+          const UP_CHUNK = 500;
+          for (let i = 0; i < codes.length; i += UP_CHUNK) {
+            const chunk = codes.slice(i, i + UP_CHUNK);
+            const { data: upRows } = await supabase.from("mf_dse_admin_sellin_upload")
+              .select("dse_code, sellin_sp, sellin_vou, sellin_saldo")
+              .eq("period", uploadPeriod).eq("matched", true).in("dse_code", chunk);
+            (upRows || []).forEach((u) => { uploadByCode[u.dse_code] = u; });
+          }
+        }
+        const hasUpload = Object.keys(uploadByCode).length > 0;
+        const head = ["#", "Kode DSE", "Partner", "Region", "Area", "District", "Nama DSE", "Status", "Penjualan SP", "Penjualan FWA", "Penjualan Voucher", "Penjualan Saldo", "Total Penjualan", "Sellin Upload (SP+Vou+Saldo)", "Selisih"];
+        const body = filteredDseList.map((x, i) => {
+          const u = uploadByCode[x.r.dse_code];
+          const uploadTotal = u ? (fRaw(u.sellin_sp) + fRaw(u.sellin_vou) + fRaw(u.sellin_saldo)) : null;
+          return [
+            i + 1, x.r.dse_code, x.partnerVal || "", x.regionVal || "", x.branchVal || "", x.mcVal || "", x.namaVal || "", x.statusVal || "",
+            x.nilaiSp, x.nilaiFwa, x.nilaiVoucher, x.nilaiSaldo, x.totalPenjualan,
+            hasUpload ? (uploadTotal ?? "") : "",
+            hasUpload && u ? ((x.nilaiSp + x.nilaiVoucher + x.nilaiSaldo) - uploadTotal) : "",
+          ];
+        });
+        const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
+        ws["!freeze"] = { xSplit: 0, ySplit: 1 };
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "DSE");
+        XLSX.writeFile(wb, `Roster_DSE_${periodeLabel}.xlsx`);
+        showToast(`Export selesai — ${body.length} baris.`, "ok");
+      }
+    } catch (e) {
+      showToast(e.message || "Gagal export.", "error");
+    } finally {
+      setExportingSellinXlsx(false);
+    }
+  };
+
+  const loadRegionSummary = useCallback(async () => {'''
+do(anchor1, new1, label="handler export xlsx")
+
+# 2) Tombol "Upload Sellin DSE" & "Export XLSX" di kanan pills Partner/Region/Area/District/DSE.
+#    Keduanya khusus tab "input" (Penjualan) - fitur ini tidak relevan di tab AR.
+old2 = '''            <div style={{ display: "flex", gap: 3, padding: 3, borderRadius: 9, background: t.sub, border: `1px solid ${t.line}`, flexShrink: showCombinedTabsToggle ? 0 : 1, width: showCombinedTabsToggle ? "auto" : "100%" }}>
+              {[{ v: "partner", label: "Partner" }, { v: "region", label: "Region" }, { v: "branch", label: "Area" }, { v: "mc", label: "District" }, { v: "dse", label: "DSE" }].map((o) => (
+                <button key={o.v} onClick={() => goToLevel(HIERARCHY.indexOf(o.v))}
+                  style={{ flex: showCombinedTabsToggle ? "none" : 1, minWidth: showCombinedTabsToggle ? "auto" : 0, padding: showCombinedTabsToggle ? "6px 10px" : (width < 400 ? "6px 4px" : "6px 8px"), borderRadius: 7, border: "none", background: summaryGroupBy === o.v ? t.card : "transparent", color: summaryGroupBy === o.v ? t.hi : t.mid, fontSize: showCombinedTabsToggle ? 11.5 : (width < 400 ? 11 : 12), fontWeight: 700, cursor: "pointer", boxShadow: summaryGroupBy === o.v ? t.shadowSm : "none", whiteSpace: "nowrap", textAlign: "center", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}'''
+new2 = '''            <div style={{ display: "flex", gap: 3, padding: 3, borderRadius: 9, background: t.sub, border: `1px solid ${t.line}`, flexShrink: showCombinedTabsToggle ? 0 : 1, width: showCombinedTabsToggle ? "auto" : "100%" }}>
+              {[{ v: "partner", label: "Partner" }, { v: "region", label: "Region" }, { v: "branch", label: "Area" }, { v: "mc", label: "District" }, { v: "dse", label: "DSE" }].map((o) => (
+                <button key={o.v} onClick={() => goToLevel(HIERARCHY.indexOf(o.v))}
+                  style={{ flex: showCombinedTabsToggle ? "none" : 1, minWidth: showCombinedTabsToggle ? "auto" : 0, padding: showCombinedTabsToggle ? "6px 10px" : (width < 400 ? "6px 4px" : "6px 8px"), borderRadius: 7, border: "none", background: summaryGroupBy === o.v ? t.card : "transparent", color: summaryGroupBy === o.v ? t.hi : t.mid, fontSize: showCombinedTabsToggle ? 11.5 : (width < 400 ? 11 : 12), fontWeight: 700, cursor: "pointer", boxShadow: summaryGroupBy === o.v ? t.shadowSm : "none", whiteSpace: "nowrap", textAlign: "center", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+            {/* BARU (permintaan user - "buat langsung disini saja untuk
+                perbandingannya", "ada fitur datanya export as xlsx nya,
+                buat sejajar ini namun di sebelah kanan"): khusus tab
+                Penjualan (upload sellin ga relevan di AR/Piutang). */}
+            {tab === "input" && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                <button onClick={() => setSellinCompareOpen(true)} title="Upload file DSE PROD (IM3 & 3ID) & bandingkan dgn penjualan di app"
+                  style={{ display: "flex", alignItems: "center", gap: 6, height: 32, padding: "0 10px", borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap" }}>
+                  <Upload size={13} /> {width >= 700 && "Upload Sellin DSE"}
+                </button>
+                <button onClick={handleExportSellinXlsx} disabled={exportingSellinXlsx} title="Export tabel yg sedang tampil ke Excel"
+                  style={{ display: "flex", alignItems: "center", gap: 6, height: 32, padding: "0 10px", borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: exportingSellinXlsx ? "default" : "pointer", fontFamily: FONT, whiteSpace: "nowrap", opacity: exportingSellinXlsx ? 0.6 : 1 }}>
+                  {exportingSellinXlsx ? <Loader2 size={13} className="spin" /> : <FileDown size={13} />} {width >= 700 && "Export XLSX"}
+                </button>
+              </div>
+            )}
+          </div>
+        </>
+      )}'''
+do(old2, new2, label="tombol upload+export")
+
+# 3) Modal popup (portal) utk AdminDseSellinCompare - persis sebelum createPortal
+#    ArCetakBulkModal di akhir file (sibling, pola sama).
+anchor3 = '''      {showCetakBulk && typeof document !== "undefined" && createPortal(
+        <ArCetakBulkModal t={t} arMonth={calViewMonth} list={bulkList} profile={profile} onClose={() => setShowCetakBulk(false)} />,
+        document.body
+      )}'''
+new3 = anchor3 + '''
+      {/* BARU (permintaan user - "buat langsung disini saja untuk
+          perbandingannya"): modal upload & bandingkan sellin DSE, dibuka
+          dari tombol "Upload Sellin DSE" di baris Partner/Region/Area/
+          District/DSE. Habis upload sukses, regionSummary di-refresh
+          biar kolom "Sellin Upload"/"Selisih" di tabel langsung update. */}
+      {sellinCompareOpen && typeof document !== "undefined" && createPortal(
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,32,0.6)", zIndex: 9950, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setSellinCompareOpen(false)}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 1400, maxHeight: "92vh", overflowY: "auto", borderRadius: 16, background: t.card, boxShadow: "0 24px 60px rgba(0,0,0,0.4)", padding: 22, position: "relative" }}>
+            <button onClick={() => setSellinCompareOpen(false)} title="Tutup"
+              style={{ position: "absolute", top: 16, right: 16, width: 32, height: 32, borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <X size={16} />
+            </button>
+            <AdminDseSellinCompare theme={d ? "dark" : "light"} onUploaded={() => loadRegionSummary()} />
+          </div>
+        </div>,
+        document.body
+      )}'''
+do(anchor3, new3, label="modal portal")
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - bagian 2/2 selesai (tombol + export + modal)")

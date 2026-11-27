@@ -38,6 +38,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
+import AdminDseSellinCompare from "./AdminDseSellinCompare"; // BARU (permintaan user - upload & bandingkan sellin DSE LANGSUNG di layar Prod & AR ini, bukan menu terpisah)
 import supabase from "../../../lib/supabase";
 import * as XLSX from "xlsx";
 // UPDATE (permintaan user - "animasi berhasilnya apakah bisa sperti
@@ -55,7 +56,7 @@ import {
   Search, RefreshCw, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, Wallet, TrendingUp, Calendar, Info,
   Pencil, Save, ListChecks, History, Database, Trash2,
   Users, UserCheck, UserX, Ticket, CircleDollarSign, Clock, Router,
-  SlidersHorizontal, Crown, Medal, MapPin, ArrowUpDown, Plus, RotateCcw, Copy, Printer, EyeOff, Eye, Minus, Layers,
+  SlidersHorizontal, Crown, Medal, MapPin, ArrowUpDown, Plus, RotateCcw, Copy, Printer, EyeOff, Eye, Minus, Layers, GitCompare,
   FileImage, FileText,
 } from "lucide-react";
 
@@ -139,6 +140,117 @@ const fmtCompact = (n) => {
 };
 const fRaw = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const todayISO = () => new Date().toISOString().slice(0, 10);
+// BARU: pecah rentang tanggal jadi array "YYYY-MM-DD" per hari -
+// dipakai query mf_dse_prod_ar PER TANGGAL (bukan gte/lte lintas
+// banyak hari sekaligus) supaya index tanggal kepake optimal & RLS
+// yg berat ga dievaluasi ke hampir seisi tabel.
+const datesBetween = (fromISO, toISO) => {
+  const out = [];
+  let d = new Date(fromISO + "T00:00:00Z");
+  const end = new Date(toISO + "T00:00:00Z");
+  while (d <= end) {
+    out.push(d.toISOString().slice(0, 10));
+    d = new Date(d.getTime() + 86400000);
+  }
+  return out;
+};
+// BARU: fetch mf_dse_prod_ar PER TANGGAL x per chunk DSE (chunkSize),
+// dgn .range() cuma sbg jaga2 kalau 1 hari+1 chunk somehow > pageSize
+// baris (jarang kejadian - lebih efisien drpd gte/lte lintas tanggal).
+// BARU: helper generik fetch SEMUA baris dari 1 tabel pakai .range()
+// pagination - dipakai utk query master DSE (mf_dse_database) di
+// export supaya ga kepotong diam2 kalau jumlah DSE > 1000 baris.
+const fetchAllPaged = async (buildQuery, pageSize = 1000) => {
+  let all = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await buildQuery().range(from, from + pageSize - 1);
+    if (error) throw error;
+    const batch = data || [];
+    all = all.concat(batch);
+    if (batch.length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
+};
+const fetchProdArPaged = async (codes, dates, selectCols, chunkSize = 500, pageSize = 1000, concurrency = 6) => {
+  const chunks = [];
+  for (let i = 0; i < codes.length; i += chunkSize) chunks.push(codes.slice(i, i + chunkSize));
+  const tasks = [];
+  for (const dt of dates) for (const chunk of chunks) tasks.push({ dt, chunk });
+  const results = new Array(tasks.length);
+  let nextIdx = 0;
+  const runOne = async (dt, chunk) => {
+    let from = 0;
+    let rows = [];
+    while (true) {
+      const { data, error } = await supabase.from("mf_dse_prod_ar").select(selectCols)
+        .in("dse_code", chunk).eq("tanggal", dt).range(from, from + pageSize - 1);
+      if (error) throw error;
+      const batch = data || [];
+      rows = rows.concat(batch);
+      if (batch.length < pageSize) break;
+      from += pageSize;
+    }
+    return rows;
+  };
+  const worker = async () => {
+    while (nextIdx < tasks.length) {
+      const myIdx = nextIdx++;
+      results[myIdx] = await runOne(tasks[myIdx].dt, tasks[myIdx].chunk);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) || 1 }, () => worker()));
+  return results.flat();
+};
+
+// BARU (permintaan user - "buat agar untuk ar dse hoa dso dsp semuanya
+// bisa di export juga"): fetch+agregasi item piutang (ar_piutang_items,
+// dso_piutang_items, atau hoa_piutang_items - generik lewat parameter
+// itemsTable/paymentsTable/codeField) PER-KODE, dipaginasi (.range())
+// per chunk 500 kode - mencegah limit default 1000 baris Supabase kalau
+// 1 chunk kode punya lebih dari 1000 baris item piutang. Return:
+// { [code]: { totalPiutang, totalDibayar, lunas, jatuhTempo, keterangan } }
+// - sama persis bentuk `arItemsAgg` yg sudah ada, supaya export & tampilan
+// layar selalu konsisten.
+const fetchPiutangAggByCode = async (itemsTable, paymentsTable, codeField, codes, chunkSize = 500, pageSize = 1000) => {
+  const chunks = [];
+  for (let i = 0; i < codes.length; i += chunkSize) chunks.push(codes.slice(i, i + chunkSize));
+  const agg = {};
+  for (const chunk of chunks) {
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase.from(itemsTable)
+        .select(`${codeField}, total, jatuh_tempo, catatan, ${paymentsTable}(nominal, deleted_at)`)
+        .in(codeField, chunk).is("deleted_at", null).range(from, from + pageSize - 1);
+      if (error) throw error;
+      const batch = data || [];
+      batch.forEach((it) => {
+        const code = it[codeField];
+        const a = agg[code] || (agg[code] = { totalPiutang: 0, totalDibayar: 0, unpaid: [] });
+        const total = fRaw(it.total);
+        const paid = (it[paymentsTable] || []).filter((p) => !p.deleted_at).reduce((s, p) => s + fRaw(p.nominal), 0);
+        a.totalPiutang += total;
+        a.totalDibayar += paid;
+        if (paid < total) a.unpaid.push({ jatuh_tempo: it.jatuh_tempo, catatan: it.catatan });
+      });
+      if (batch.length < pageSize) break;
+      from += pageSize;
+    }
+  }
+  const out = {};
+  Object.keys(agg).forEach((code) => {
+    const a = agg[code];
+    const nearest = a.unpaid.filter((u) => u.jatuh_tempo).sort((x, y) => new Date(x.jatuh_tempo) - new Date(y.jatuh_tempo))[0] || null;
+    out[code] = {
+      totalPiutang: a.totalPiutang, totalDibayar: a.totalDibayar,
+      lunas: a.unpaid.length === 0,
+      jatuhTempo: nearest?.jatuh_tempo || "",
+      keterangan: nearest?.catatan || "",
+    };
+  });
+  return out;
+};
 // UPDATE (permintaan user - "saya ingin untuk status active dan vacant ini
 // akan tercatat dengan baik hari per harinya, jika semisal pergantiannya
 // itu di tanggal 5 dia menjadi vacant maka dari tanggal 1-4 dia itu akan
@@ -3585,7 +3697,7 @@ function ArPiutangInput({ t, dseCode, dseCode3id, dseName, mc, branch, entryDate
     </>
   );
 }
-function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChange, identityEdit, onSave, saving, dirty, prevOutstanding, audit, onShowHistory, readOnly, isAdminAreaRole = false, infoPeriodsByDse, mode, rank, isToday, entryDate, onPickDate, onSwitchPeriodMode, onDailyFloorPrev, periodMode, periodSubtitle, profile, arMonth, runGuarded, statusEvents, hiddenCols = {}, loadingDse, dailyDisabled = false, autoOpenCode, onAutoOpenHandled }) {
+function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChange, identityEdit, onSave, saving, dirty, prevOutstanding, audit, onShowHistory, readOnly, isAdminAreaRole = false, infoPeriodsByDse, mode, rank, isToday, entryDate, onPickDate, onSwitchPeriodMode, onDailyFloorPrev, periodMode, periodSubtitle, profile, arMonth, runGuarded, statusEvents, hiddenCols = {}, loadingDse, dailyDisabled = false, autoOpenCode, onAutoOpenHandled, sellinUpload, sellinUploadAvailable, sellinAppAsOfTotal, sellinAppAsOfSp, sellinAppAsOfVou, sellinAppAsOfSaldo, compareRoster }) {
   // UPDATE (permintaan user - "pisahkan data ar dse dan penjualan dse ke
   // menu terpisah"): 1 komponen yg sama dipakai utk 2 menu terpisah -
   // mode="sales" (tab "Penjualan DSE": SP/Voucher/Saldo/Total) & mode="ar"
@@ -5058,16 +5170,62 @@ function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChang
       <td style={{ padding: "10px 12px", minWidth: 150, color: joinDate ? t.mid : t.lo, fontWeight: 600, fontStyle: joinDate ? "normal" : "italic" }}>{joinDate ? fmtDayMonth(joinDate) : "Belum diisi"}</td>
       {!isAr ? (
         <>
-          <td onClick={openPopupToTab("sp")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", borderLeft: `2px solid ${t.line}`, background: t.redBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(e.nilai_sp)}</td>
-          <td onClick={openPopupToTab("fwa")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", background: t.pinkBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(e.nilai_fwa)}</td>
-          <td onClick={openPopupToTab("voucher")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", background: t.blueBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(e.nilai_voucher)}</td>
-          <td onClick={openPopupToTab("saldo")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 140, textAlign: "right", background: t.amberBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(e.nilai_saldo)}</td>
-          <td onClick={openPopupToTab("info")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 800, color: t.teal, whiteSpace: "nowrap", transition: "filter 0.1s, box-shadow 0.1s" }}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-              Rp {fmtID(totalPenjualan)}
-              <ChevronRight size={12} color={t.teal} style={{ flexShrink: 0, opacity: 0.6 }} />
-            </span>
-          </td>
+          <td onClick={openPopupToTab("sp")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", borderLeft: `2px solid ${t.line}`, background: t.redBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(periodMode === "bulan" && compareRoster && sellinUploadAvailable && sellinUpload ? (sellinAppAsOfSp ?? e.nilai_sp) : e.nilai_sp)}</td>
+          {periodMode === "bulan" && compareRoster && (
+            sellinUpload ? (
+              <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: t.hi, cursor: "default" }}>Rp {fmtID(sellinUpload.sellin_sp)}</td>
+            ) : (
+              <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo, cursor: "default" }}>–</td>
+            )
+          )}
+          {!(periodMode === "bulan" && compareRoster) && (
+            <td onClick={openPopupToTab("fwa")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", background: t.pinkBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(e.nilai_fwa)}</td>
+          )}
+          <td onClick={openPopupToTab("voucher")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", background: t.blueBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(periodMode === "bulan" && compareRoster && sellinUploadAvailable && sellinUpload ? (sellinAppAsOfVou ?? e.nilai_voucher) : e.nilai_voucher)}</td>
+          {periodMode === "bulan" && compareRoster && (
+            sellinUpload ? (
+              <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: t.hi, cursor: "default" }}>Rp {fmtID(sellinUpload.sellin_vou)}</td>
+            ) : (
+              <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo, cursor: "default" }}>–</td>
+            )
+          )}
+          <td onClick={openPopupToTab("saldo")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 140, textAlign: "right", background: t.amberBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(periodMode === "bulan" && compareRoster && sellinUploadAvailable && sellinUpload ? (sellinAppAsOfSaldo ?? e.nilai_saldo) : e.nilai_saldo)}</td>
+          {periodMode === "bulan" && compareRoster && (
+            sellinUpload ? (
+              <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: t.hi, cursor: "default" }}>Rp {fmtID(sellinUpload.sellin_saldo)}</td>
+            ) : (
+              <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo, cursor: "default" }}>–</td>
+            )
+          )}
+          {!(periodMode === "bulan" && compareRoster) ? (
+            <td onClick={openPopupToTab("info")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 800, color: t.teal, whiteSpace: "nowrap", transition: "filter 0.1s, box-shadow 0.1s" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                Rp {fmtID(totalPenjualan)}
+                <ChevronRight size={12} color={t.teal} style={{ flexShrink: 0, opacity: 0.6 }} />
+              </span>
+            </td>
+          ) : (() => {
+            const totalExclFwa = fRaw(e.nilai_sp) + fRaw(e.nilai_voucher) + fRaw(e.nilai_saldo);
+            const totalExclFwaDisplay = sellinUploadAvailable ? (sellinAppAsOfTotal ?? 0) : totalExclFwa;
+            const up = sellinUpload;
+            const totalOsa = up ? (fRaw(up.sellin_sp) + fRaw(up.sellin_vou) + fRaw(up.sellin_saldo)) : null;
+            const selisih = up ? (totalExclFwaDisplay - totalOsa) : null;
+            return (
+              <>
+                <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: t.hi, cursor: "default" }}>Rp {fmtID(totalExclFwaDisplay)}</td>
+                {sellinUploadAvailable ? (
+                  <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 800, color: t.hi, cursor: "default" }}>{up ? `Rp ${fmtID(totalOsa)}` : "–"}</td>
+                ) : (
+                  <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo, cursor: "default" }}>–</td>
+                )}
+                {sellinUploadAvailable ? (
+                  <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: up ? (selisih !== 0 ? t.red : t.mid) : t.lo, cursor: "default" }}>{up ? `Rp ${fmtID(selisih)}` : "–"}</td>
+                ) : (
+                  <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo, cursor: "default" }}>–</td>
+                )}
+              </>
+            );
+          })()}
         </>
       ) : (
         <>
@@ -5508,6 +5666,33 @@ export function getCategoryOptionsForRoles(roles) {
 // dari fetch per-baris masing2 <ArPiutangInput> (yg tetap perlu fetch
 // sendiri utk isi modal/td-nya), krn panel ini butuh TOTAL lintas baris
 // utk sorting & hero yg ga bisa diambil dari instance lain.
+// BARU (dipindah dari dalam komponen DSE_ProdAR ke module scope - permintaan
+// user "buat agar untuk ar dse hoa dso dsp semuanya bisa di export juga":
+// ArDsoHoaPanel, komponen TERPISAH dari DSE_ProdAR, perlu helper yg sama):
+// auto-fit lebar kolom + format number "#,##0" (ribuan, TANPA simbol Rp) di
+// kolom angka.
+const buildXlsxSheet = (head, body, numericCols = []) => {
+  const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
+  ws["!freeze"] = { xSplit: 0, ySplit: 1 };
+  ws["!cols"] = head.map((h, c) => {
+    let maxLen = String(h ?? "").length;
+    body.forEach((row) => {
+      const v = row[c];
+      const len = v == null ? 0 : String(v).length;
+      if (len > maxLen) maxLen = len;
+    });
+    return { wch: Math.max(10, Math.min(maxLen + 2, 42)) };
+  });
+  const numSet = new Set(numericCols);
+  body.forEach((row, r) => {
+    numSet.forEach((c) => {
+      const addr = XLSX.utils.encode_cell({ r: r + 1, c });
+      if (ws[addr] && typeof ws[addr].v === "number") ws[addr].z = "#,##0";
+    });
+  });
+  return ws;
+};
+
 function ArDsoHoaPanel({ t, d, profile, entryDate, arMonth, dseMeta, kind }) {
   const isDso = kind === "dso";
   const itemsTable = isDso ? "dso_piutang_items" : "hoa_piutang_items";
@@ -5667,6 +5852,36 @@ function ArDsoHoaPanel({ t, d, profile, entryDate, arMonth, dseMeta, kind }) {
     }
   };
 
+  // BARU (permintaan user - "buat agar untuk ar dse hoa dso dsp semuanya
+  // bisa di export juga"): export 1 sheet, 1 baris per District(DSO/DSP)
+  // atau per Area(HoA) - pakai data yg SUDAH ada di panel ini
+  // (sortedGroups + arTotals), ga perlu fetch ulang.
+  const [exportingDsoHoa, setExportingDsoHoa] = useState(false);
+  const handleExportDsoHoa = () => {
+    setExportingDsoHoa(true);
+    try {
+      const periodeLabel = (arMonth || "").replace(/-/g, "_") || "semua";
+      const head = isDso
+        ? ["#", "District (MC)", "Nama DSO/DSP", "Partner", "Region", "Area", "Total Piutang (Rp)", "Total Dibayar (Rp)", "Sisa Piutang (Rp)", "Jatuh Tempo Terdekat"]
+        : ["#", "Area", "Nama HoA", "Partner", "Region", "Total Piutang (Rp)", "Total Dibayar (Rp)", "Sisa Piutang (Rp)", "Jatuh Tempo Terdekat"];
+      const body = sortedGroups.map((g, i) => {
+        const at = arTotals[g.code] || { totalPiutang: 0, totalDibayar: 0, nearestJatuhTempo: null };
+        const sisa = at.totalPiutang - at.totalDibayar;
+        const jt = at.nearestJatuhTempo ? fmtDayMonth(at.nearestJatuhTempo) : "-";
+        return isDso
+          ? [i + 1, g.code, identityMap[g.code]?.dso_name || "", g.partner || "", g.region || "", g.branch || "", at.totalPiutang, at.totalDibayar, sisa, jt]
+          : [i + 1, g.code, g.hoaName || "", g.partner || "", g.region || "", at.totalPiutang, at.totalDibayar, sisa, jt];
+      });
+      const numericCols = isDso ? [6, 7, 8] : [5, 6, 7];
+      const ws = buildXlsxSheet(head, body, numericCols);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, isDso ? "DSO-DSP" : "HoA");
+      XLSX.writeFile(wb, `AR_${isDso ? "DSO_DSP" : "HoA"}_${periodeLabel}.xlsx`);
+    } finally {
+      setExportingDsoHoa(false);
+    }
+  };
+
   const th = { padding: "11px 12px", background: t.sub, fontSize: 10.5, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, textAlign: "left", borderBottom: `1px solid ${t.line}`, whiteSpace: "nowrap" };
   const rankColors = ["#D4A017", "#9CA3AF", "#B5651D"];
   const anyFilterActive = colFilters.partner.length || colFilters.region.length || colFilters.branch.length || (isDso && colFilters.mc.length) || search.trim().length > 0;
@@ -5688,6 +5903,10 @@ function ArDsoHoaPanel({ t, d, profile, entryDate, arMonth, dseMeta, kind }) {
         <button onClick={() => { loadIdentity(); loadArTotals(); }} title="Refresh"
           style={{ height: 38, padding: "0 14px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", gap: 7, fontSize: 13, fontWeight: 700, fontFamily: FONT, whiteSpace: "nowrap" }}>
           <RefreshCw size={14} className={(identityLoading || arTotalsLoading) ? "spin" : ""} /> Refresh
+        </button>
+        <button onClick={handleExportDsoHoa} disabled={exportingDsoHoa || sortedGroups.length === 0} title="Export ke Excel"
+          style={{ height: 38, padding: "0 14px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, cursor: (exportingDsoHoa || sortedGroups.length === 0) ? "default" : "pointer", display: "flex", alignItems: "center", gap: 7, fontSize: 13, fontWeight: 700, fontFamily: FONT, whiteSpace: "nowrap", opacity: (exportingDsoHoa || sortedGroups.length === 0) ? 0.6 : 1 }}>
+          {exportingDsoHoa ? <Loader2 size={14} className="spin" /> : <FileDown size={14} />} Export XLSX
         </button>
       </div>
 
@@ -6270,6 +6489,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
     totalSp: [], totalFwa: [], totalVoucher: [],
     saldo: [], totalPenjualan: [], ar: [], catatan: [],
     totalPiutang: [], totalDibayar: [], arStatus: [], jatuhTempo: [], arKeterangan: [],
+    totalPenjualanExclFwa: [], sellinSp: [], sellinVou: [], sellinSaldo: [], totalOsa: [], selisihSellin: [],
     // UPDATE (permintaan user - sub-filter "umur" per Status, lihat
     // StatusAgeFilterMenu): array token "`${status}|${hari}`", BUKAN
     // bagian dari `status` di atas supaya tetap bisa pilih status tanpa
@@ -6283,6 +6503,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
     totalSp: [], totalFwa: [], totalVoucher: [],
     saldo: [], totalPenjualan: [], ar: [], catatan: [],
     totalPiutang: [], totalDibayar: [], arStatus: [], jatuhTempo: [], arKeterangan: [],
+    totalPenjualanExclFwa: [], sellinSp: [], sellinVou: [], sellinSaldo: [], totalOsa: [], selisihSellin: [],
     statusAge: [],
   });
   // UPDATE (permintaan user - "untuk kolom partner region branch dan mc
@@ -6483,6 +6704,49 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // ini cuma menjumlahkan angka — aman dimuat tanpa filter apa pun, lalu
   // klik salah satu Region utk drill-down ke tabel input region itu. ──
   const [regionSummary, setRegionSummary] = useState([]);
+  // BARU (permintaan user - "buat langsung disini saja untuk perbandingannya", "jadi tetap bisa dilihat dari leaderboard partner region", "export as xlsx"): modal upload (AdminDseSellinCompare) + flag "ada data upload utk periode ini" (dipakai nentuin kolom tampilin angka vs dash "–") + map total per DSE (dipakai baik utk agregasi leaderboard maupun nantinya level DSE).
+  const [sellinCompareOpen, setSellinCompareOpen] = useState(false);
+  const [sellinUploadAvailable, setSellinUploadAvailable] = useState(false);
+  // BARU (permintaan user - "dibawahnya tanggal as of nya"): tanggal
+  // snapshot kumulatif dari file yg diupload (as_of_dt), ditampilkan
+  // sbg subtitle kolom Sell-in SP/Voucher/Saldo/Total OSA - BEDA dari
+  // periodColumnSubtitle (yg itu tanggal data APP, bukan file upload).
+  const [sellinUploadAsOfDt, setSellinUploadAsOfDt] = useState(null);
+  // BARU (permintaan user - "dan ini sampai ke level DSE ya"): versi level
+  // DSE (roster individual) dari fitur upload sellin di atas - TERPISAH
+  // dari sellinUploadAvailable/sellinUploadAsOfDt (punya tabel Ringkasan/
+  // rollup, scope & query beda) biar ga saling ganggu. Map per dse_code
+  // diisi lewat useEffect TERSENDIRI (sengaja TIDAK digabung ke
+  // loadDseAndEntries yg sudah sangat kompleks/rawan) di bawah.
+  const [sellinUploadByDseCode, setSellinUploadByDseCode] = useState({});
+  const [sellinUploadRosterAvailable, setSellinUploadRosterAvailable] = useState(false);
+  const [sellinUploadRosterAsOfDt, setSellinUploadRosterAsOfDt] = useState(null);
+  // BARU (permintaan user - "Total Penjualan (SP+VC+Saldo) hitung
+  // sampai dengan tanggal data S100 yang sudah diupload"): total app
+  // (SP+Voucher+Saldo, excl FWA) per dse_code TAPI DIBATASI sampai
+  // tanggal as_of upload - diisi di useEffect yg sama dgn fetch upload
+  // di bawah (sudah tau as_of_dt-nya di situ, tinggal query lagi
+  // mf_dse_prod_ar dgn cutoff tanggal itu).
+  const [sellinAppAsOfByDseCode, setSellinAppAsOfByDseCode] = useState({});
+  // BARU (permintaan user - "tanggal penjualan sp voucher dan saldo
+  // mengikuti tanggal pembanding saja"): map per-metrik (terpisah dari
+  // total gabungan di atas) supaya kolom SP/Voucher/Saldo di layar bisa
+  // ikut dibatasi ke tanggal as-of pembanding, sama seperti kolom Total.
+  const [sellinAppAsOfSpByDseCode, setSellinAppAsOfSpByDseCode] = useState({});
+  const [sellinAppAsOfVouByDseCode, setSellinAppAsOfVouByDseCode] = useState({});
+  const [sellinAppAsOfSaldoByDseCode, setSellinAppAsOfSaldoByDseCode] = useState({});
+  // BARU (permintaan user - "jangan langsung tampilan pembanding namun
+  // ditrigger dengan tombol khusus bandingkan data"): kolom pembanding
+  // Sell-in vs App TIDAK LAGI otomatis tampil - sekarang disembunyikan
+  // sampai tombol "Bandingkan Data" diklik. compareRollup = tabel
+  // Ringkasan (Partner/Region/Area/District), compareRoster = tabel
+  // level DSE - independen satu sama lain sesuai permintaan user.
+  const [compareRollup, setCompareRollup] = useState(false);
+  const [compareRoster, setCompareRoster] = useState(false);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (periodMode !== "bulan") { setCompareRollup(false); setCompareRoster(false); }
+  }, [periodMode]);
   const [loadingRegionSummary, setLoadingRegionSummary] = useState(false);
   // UPDATE (permintaan user - "kadang saat saya berpindah cepat untuk
   // level ini informasinya sempat muncul yang lama, baru dia memuat yang
@@ -6531,8 +6795,8 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   // period-nav di atas, cuma versi pendek "<Bulan> <Tahun>" tanpa tanggal
   // 1 nya utk mode Full Month.
   const periodColumnSubtitle = periodMode === "bulan"
-    ? `${MONTH_NAMES[Number(calViewMonth.slice(5, 7)) - 1]} ${calViewMonth.slice(0, 4)}`
-    : fmtDayMonth(entryDate);
+    ? `as of ${fmtDayMonthShort(sortedSelectedDates[sortedSelectedDates.length - 1] || calViewMonth + "-01")}`
+    : fmtDayMonthShort(entryDate);
   const hierarchyIdx = HIERARCHY.indexOf(summaryGroupBy);
   const showAllRegions = isSPM && summaryGroupBy !== "dse";
   // UPDATE (permintaan user - "pada half window atau full window itu
@@ -6680,7 +6944,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
         // Vacant (vacant warna merah jika ada jika 0 tetap hitam)"):
         // totalVacant ditambah persis spt pola mcSummary (lihat
         // r.dse_status === "Vacant" di useMemo mcSummary di bawah).
-        if (!byGroup[key]) byGroup[key] = { key, label, totalAlokasi: 0, totalActive: 0, totalVacant: 0, qtySp: 0, nilaiSp: 0, nilaiFwa: 0, qtyVoucher: 0, nilaiVoucher: 0, nilaiSaldo: 0, tunggakan: 0, totalPiutang: 0, totalDibayar: 0 };
+        if (!byGroup[key]) byGroup[key] = { key, label, totalAlokasi: 0, totalActive: 0, totalVacant: 0, qtySp: 0, nilaiSp: 0, nilaiFwa: 0, qtyVoucher: 0, nilaiVoucher: 0, nilaiSaldo: 0, tunggakan: 0, totalPiutang: 0, totalDibayar: 0, uploadSp: 0, uploadVou: 0, uploadSaldo: 0, asOfSp: 0, asOfVoucher: 0, asOfSaldo: 0 };
         byGroup[key].totalAlokasi += 1;
         const effStatus = periodMode === "tanggal" ? resolveStatusAsOf(r.dse_code, entryDate, statusEvents, r.dse_status) : r.dse_status;
         if (effStatus === "Active") byGroup[key].totalActive += 1;
@@ -6715,6 +6979,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           });
         }
       }
+      let prodRowsForAsOf = [];
       if (codes.length) {
         // UPDATE (permintaan user - "bisa daily / full month"): mode Full
         // Month (isRangeMode) sekarang diakumulasi dari SEMUA tanggal
@@ -6736,6 +7001,58 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           g.nilaiSaldo += fRaw(p.nilai_saldo);
           g.tunggakan = isRangeMode ? fRaw(p.ar_piutang) : (g.tunggakan + fRaw(p.ar_piutang)); // range: baris terakhir menang (saldo, bukan kumulatif)
         });
+        // BARU (permintaan user - "Total Penjualan (SP+VC+Saldo) hitung
+        // sampai dengan tanggal data S100 yang sudah diupload"): simpan
+        // baris mentah (sudah ada `tanggal` per baris) - diagregasi ULANG
+        // dgn cutoff tanggal upload di blok upload di bawah, TANPA query
+        // baru ke mf_dse_prod_ar (datanya sama, cuma beda rentang tanggal).
+        prodRowsForAsOf = prod || [];
+      }
+      // BARU (permintaan user - "jadi tetap bisa dilihat dari leaderboard
+      // partner region ataupun di level dsenya, walaupun belum diupload
+      // sediakan kolomnya"): agregasi total upload admin (mf_dse_admin_
+      // sellin_upload, diisi lewat modal "Upload Sellin DSE" di tombol
+      // header) per GROUP yg sedang ditampilkan - dipakai kolom "Sellin
+      // Upload"/"Selisih" di tabel Ringkasan. Cuma relevan di tab
+      // Penjualan (bukan AR/Piutang), & cuma utk periode BULAN PENUH yg
+      // lagi dilihat (data upload memang snapshot kumulatif 1 bulan,
+      // bukan per-tanggal).
+      if (tab === "input" && periodMode === "bulan") {
+        const uploadPeriod = calViewMonth.slice(0, 7);
+        let anyUploadRow = false;
+        let capturedAsOfUp = null;
+        const UP_CHUNK = 500;
+        for (let i = 0; i < codes.length; i += UP_CHUNK) {
+          const chunk = codes.slice(i, i + UP_CHUNK);
+          const { data: upRows, error: eUp } = await supabase
+            .from("mf_dse_admin_sellin_upload")
+            .select("dse_code, sellin_sp, sellin_vou, sellin_saldo, as_of_dt")
+            .eq("period", uploadPeriod).eq("matched", true).in("dse_code", chunk);
+          if (eUp) { console.error("gagal muat mf_dse_admin_sellin_upload:", eUp); continue; }
+          (upRows || []).forEach((u) => {
+            const g = byGroup[groupOf[u.dse_code]];
+            if (!g) return;
+            anyUploadRow = true;
+            if (capturedAsOfUp == null) capturedAsOfUp = u.as_of_dt;
+            g.uploadSp += fRaw(u.sellin_sp); g.uploadVou += fRaw(u.sellin_vou); g.uploadSaldo += fRaw(u.sellin_saldo);
+          });
+        }
+        // BARU (permintaan user - "Total Penjualan (SP+VC+Saldo) hitung
+        // sampai dengan tanggal data S100 yang sudah diupload, contohnya
+        // as of 22 Nov 2026"): skrng sudah tau tanggal as_of upload-nya -
+        // agregasi ULANG baris prod yg sama (prodRowsForAsOf) tapi cutoff
+        // ke tanggal itu (bukan sampai hari ini lagi), apple-to-apple sama
+        // Sell-in SP/Voucher/Saldo (S100) yg jg snapshot sampai tanggal itu.
+        if (capturedAsOfUp != null) {
+          const cutoffAsOf = `${uploadPeriod}-${String(capturedAsOfUp).padStart(2, "0")}`;
+          prodRowsForAsOf.forEach((p) => {
+            if (p.tanggal > cutoffAsOf) return;
+            const g = byGroup[groupOf[p.dse_code]];
+            if (!g) return;
+            g.asOfSp += fRaw(p.nilai_sp); g.asOfVoucher += fRaw(p.nilai_voucher); g.asOfSaldo += fRaw(p.nilai_saldo);
+          });
+        }
+        if (reqId === regionSummaryReqRef.current) { setSellinUploadAvailable(anyUploadRow); setSellinUploadAsOfDt(capturedAsOfUp); }
       }
       // UPDATE (permintaan user - "setiap view yang dipilih dia akan
       // menyesuaikan ke penjualan terbanyak sesuai filter yang dipilih"):
@@ -6773,7 +7090,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
     } finally {
       if (reqId === regionSummaryReqRef.current) setLoadingRegionSummary(false);
     }
-  }, [entryDate, summaryGroupBy, isRangeMode, sortedSelectedDates, tab, partnerFilter, regionFilter, branchFilter, mcFilter, periodMode, statusEvents, rankMetric]);
+  }, [entryDate, summaryGroupBy, isRangeMode, sortedSelectedDates, tab, partnerFilter, regionFilter, branchFilter, mcFilter, periodMode, statusEvents, rankMetric, calViewMonth]);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { if (showAllRegions) loadRegionSummary(); }, [showAllRegions, loadRegionSummary]);
@@ -6964,6 +7281,76 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
   }, [isSPM, isMPX, regionFilter, branchFilter, partnerFilter, mcFilter, entryDate, isRangeMode, sortedSelectedDates]);
 
   useEffect(() => { loadDseAndEntries(); }, [loadDseAndEntries]);
+
+  // BARU (permintaan user - "dan ini sampai ke level DSE ya"): fetch
+  // terpisah (bukan bagian loadDseAndEntries - sengaja diisolasi spy ga
+  // nambah resiko ke fungsi yg sudah sangat kompleks itu) utk ambil data
+  // upload sellin per-DSE utk roster yg lagi tampil. Cuma jalan di tab
+  // Penjualan + mode Full Month (data upload = snapshot MTD, ga relevan
+  // dibanding ke 1 hari Daily - sama kayak gate di tabel Ringkasan).
+  useEffect(() => {
+    if (!isSPM || tab !== "input" || periodMode !== "bulan" || !dseList.length) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset saat syarat tidak terpenuhi, bukan loop
+      setSellinUploadByDseCode({});
+      setSellinUploadRosterAvailable(false);
+      setSellinUploadRosterAsOfDt(null);
+      setSellinAppAsOfByDseCode({});
+      setSellinAppAsOfSpByDseCode({});
+      setSellinAppAsOfVouByDseCode({});
+      setSellinAppAsOfSaldoByDseCode({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const uploadPeriod = calViewMonth.slice(0, 7);
+      const codes = dseList.map((d) => d.dse_code);
+      const map = {};
+      let anyRow = false;
+      let capturedAsOf = null;
+      const UP_CHUNK = 500;
+      for (let i = 0; i < codes.length; i += UP_CHUNK) {
+        const chunk = codes.slice(i, i + UP_CHUNK);
+        const { data: upRows, error: eUp } = await supabase
+          .from("mf_dse_admin_sellin_upload")
+          .select("dse_code, sellin_sp, sellin_vou, sellin_saldo, as_of_dt")
+          .eq("period", uploadPeriod).eq("matched", true).in("dse_code", chunk);
+        if (eUp) { console.error("gagal muat mf_dse_admin_sellin_upload (level DSE):", eUp); continue; }
+        (upRows || []).forEach((u) => {
+          anyRow = true;
+          if (capturedAsOf == null) capturedAsOf = u.as_of_dt;
+          map[u.dse_code] = { sellin_sp: u.sellin_sp, sellin_vou: u.sellin_vou, sellin_saldo: u.sellin_saldo };
+        });
+      }
+      let appAsOfMap = {};
+      let appAsOfSpMap = {};
+      let appAsOfVouMap = {};
+      let appAsOfSaldoMap = {};
+      if (capturedAsOf != null) {
+        const startISO = `${uploadPeriod}-01`;
+        const endISO = `${uploadPeriod}-${String(capturedAsOf).padStart(2, "0")}`;
+        // Query per-tanggal + paralel (fetchProdArPaged) - bukan gte/lte
+        // lebar langsung, supaya tidak kena statement timeout gara2
+        // biaya evaluasi RLS yg membengkak di range tanggal lebar.
+        const arRows = await fetchProdArPaged(codes, datesBetween(startISO, endISO), "dse_code, nilai_sp, nilai_voucher, nilai_saldo");
+        (arRows || []).forEach((p) => {
+          const sp = fRaw(p.nilai_sp), vou = fRaw(p.nilai_voucher), sal = fRaw(p.nilai_saldo);
+          appAsOfMap[p.dse_code] = (appAsOfMap[p.dse_code] || 0) + sp + vou + sal;
+          appAsOfSpMap[p.dse_code] = (appAsOfSpMap[p.dse_code] || 0) + sp;
+          appAsOfVouMap[p.dse_code] = (appAsOfVouMap[p.dse_code] || 0) + vou;
+          appAsOfSaldoMap[p.dse_code] = (appAsOfSaldoMap[p.dse_code] || 0) + sal;
+        });
+      }
+      if (cancelled) return;
+      setSellinUploadByDseCode(map);
+      setSellinUploadRosterAvailable(anyRow);
+      setSellinUploadRosterAsOfDt(capturedAsOf);
+      setSellinAppAsOfByDseCode(appAsOfMap);
+      setSellinAppAsOfSpByDseCode(appAsOfSpMap);
+      setSellinAppAsOfVouByDseCode(appAsOfVouMap);
+      setSellinAppAsOfSaldoByDseCode(appAsOfSaldoMap);
+    })();
+    return () => { cancelled = true; };
+  }, [isSPM, tab, periodMode, calViewMonth, dseList]);
 
   // Bulk-load ar_piutang_items utk SEMUA dse_code yg lagi tampil, khusus
   // tab AR - dipakai cuma utk opsi/filter checklist kolom Total Piutang/
@@ -7293,8 +7680,21 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
     // di pill Status (statusAgeInfo) - dipakai utk opsi sub-filter umur
     // per status di header kolom Status (lihat ageOptionsByStatus).
     const ageDaysVal = statusAgeInfo(r.dse_code, statusVal, statusEvents, joinVal)?.days ?? null;
-    return { r, namaVal, statusVal, joinVal, partnerVal, regionVal, branchVal, mcVal, nilaiSp, nilaiFwa, nilaiVoucher, nilaiSaldo, totalPenjualan, ar, catatanAll, totalPiutangVal, totalDibayarVal, arStatusVal, jatuhTempoVal, arKeteranganVal, ageDaysVal };
-  }), [dseList, identity, entries, prevAr, arItemsAgg, statusEvents]);
+    // BARU (permintaan user - "tetap bisa difilter seperti kolom lain"):
+    // SAMA PERSIS formula yg dipakai <td> DseInputRow (sellinUploadAvailable
+    // -> pakai total yg dibatasi sampai as_of upload, fallback bulan
+    // penuh kalau belum ada upload) - diulang di sini supaya bisa masuk
+    // pipeline colOptions/filter/sort, bukan cuma ditampilkan di tabel.
+    const sellinUploadRow = sellinUploadByDseCode[r.dse_code];
+    const totalExclFwaFull = nilaiSp + nilaiVoucher + nilaiSaldo;
+    const totalPenjualanExclFwa = sellinUploadRosterAvailable ? (sellinAppAsOfByDseCode[r.dse_code] ?? 0) : totalExclFwaFull;
+    const sellinSp = sellinUploadRow ? fRaw(sellinUploadRow.sellin_sp) : 0;
+    const sellinVou = sellinUploadRow ? fRaw(sellinUploadRow.sellin_vou) : 0;
+    const sellinSaldo = sellinUploadRow ? fRaw(sellinUploadRow.sellin_saldo) : 0;
+    const totalOsa = sellinUploadRow ? (sellinSp + sellinVou + sellinSaldo) : 0;
+    const selisihSellin = sellinUploadRow ? (totalPenjualanExclFwa - totalOsa) : 0;
+    return { r, namaVal, statusVal, joinVal, partnerVal, regionVal, branchVal, mcVal, nilaiSp, nilaiFwa, nilaiVoucher, nilaiSaldo, totalPenjualan, ar, catatanAll, totalPiutangVal, totalDibayarVal, arStatusVal, jatuhTempoVal, arKeteranganVal, ageDaysVal, totalPenjualanExclFwa, sellinSp, sellinVou, sellinSaldo, totalOsa, selisihSellin };
+  }), [dseList, identity, entries, prevAr, arItemsAgg, statusEvents, sellinUploadByDseCode, sellinUploadRosterAvailable, sellinAppAsOfByDseCode]);
 
   // Opsi checklist tiap kolom (distinct values dari enrichedDse saat ini).
   const colOptions = useMemo(() => {
@@ -7326,6 +7726,12 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       arStatus: [{ value: "lunas", label: "Lunas" }, { value: "belum_lunas", label: "Belum Lunas" }],
       jatuhTempo: uniq(enrichedDse.map((x) => x.jatuhTempoVal), (v) => (v ? fmtDayMonth(v) : "— Kosong —")),
       arKeterangan: uniq(enrichedDse.map((x) => x.arKeteranganVal)),
+      totalPenjualanExclFwa: uniq(enrichedDse.map((x) => x.totalPenjualanExclFwa), (v) => `Rp ${fmtID(v)}`),
+      sellinSp: uniq(enrichedDse.map((x) => x.sellinSp), (v) => `Rp ${fmtID(v)}`),
+      sellinVou: uniq(enrichedDse.map((x) => x.sellinVou), (v) => `Rp ${fmtID(v)}`),
+      sellinSaldo: uniq(enrichedDse.map((x) => x.sellinSaldo), (v) => `Rp ${fmtID(v)}`),
+      totalOsa: uniq(enrichedDse.map((x) => x.totalOsa), (v) => `Rp ${fmtID(v)}`),
+      selisihSellin: uniq(enrichedDse.map((x) => x.selisihSellin), (v) => `Rp ${fmtID(v)}`),
     };
   }, [enrichedDse]);
 
@@ -7399,6 +7805,12 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       if (colFilters.arStatus.length && !colFilters.arStatus.includes(x.arStatusVal)) return false;
       if (colFilters.jatuhTempo.length && !colFilters.jatuhTempo.includes(x.jatuhTempoVal)) return false;
       if (colFilters.arKeterangan.length && !colFilters.arKeterangan.includes(x.arKeteranganVal)) return false;
+      if (colFilters.totalPenjualanExclFwa.length && !colFilters.totalPenjualanExclFwa.includes(x.totalPenjualanExclFwa)) return false;
+      if (colFilters.sellinSp.length && !colFilters.sellinSp.includes(x.sellinSp)) return false;
+      if (colFilters.sellinVou.length && !colFilters.sellinVou.includes(x.sellinVou)) return false;
+      if (colFilters.sellinSaldo.length && !colFilters.sellinSaldo.includes(x.sellinSaldo)) return false;
+      if (colFilters.totalOsa.length && !colFilters.totalOsa.includes(x.totalOsa)) return false;
+      if (colFilters.selisihSellin.length && !colFilters.selisihSellin.includes(x.selisihSellin)) return false;
       return true;
     });
   }, [enrichedDse, colFilters, statusAgeByStatus]);
@@ -7437,6 +7849,12 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
           case "arStatus": return x.arStatusVal || "";
           case "jatuhTempo": return x.jatuhTempoVal || "";
           case "arKeterangan": return x.arKeteranganVal || "";
+          case "totalPenjualanExclFwa": return x.totalPenjualanExclFwa;
+          case "sellinSp": return x.sellinSp;
+          case "sellinVou": return x.sellinVou;
+          case "sellinSaldo": return x.sellinSaldo;
+          case "totalOsa": return x.totalOsa;
+          case "selisihSellin": return x.selisihSellin;
           default: return "";
         }
       };
@@ -7459,6 +7877,649 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
 
     return out.map((x) => x.r);
   }, [columnFilteredDse, dseSearch, sortConfig, tab, rankMetric]);
+
+  // BARU (permintaan user - "dan ada fitur datanya export as xlsx nya"):
+  // export tabel yg SEDANG TAMPIL - kalau lagi di level Partner/Region/
+  // Area/District (rollup), export regionSummary apa adanya (termasuk
+  // kolom Sellin Upload/Selisih kalau sellinUploadAvailable); kalau lagi
+  // di level DSE (roster penuh), export columnFilteredDse (objek enriched
+  // SEBELUM filteredDseList nge-map balik ke raw row, lihat
+  // `return out.map((x) => x.r)` di bawah - makanya export TIDAK pakai
+  // filteredDseList langsung, field nilaiSp/partnerVal/dst sudah hilang
+  // di situ) + replikasi filter pencarian dseSearch yg sama + fetch
+  // cepat mf_dse_admin_sellin_upload utk periode yg sama (cuma pas
+  // export, ga disimpan sbg state permanen - hindari nambah beban
+  // render roster yg sudah sangat kompleks).
+  // Blok ini SENGAJA ditaruh SESUDAH deklarasi filteredDseList (bukan di
+  // dekat state2 lain di atas) - diletakkan sebelum compiler React keburu
+  // nge-skip optimisasi filteredDseList gara2 forward-reference kalau
+  // ditaruh sebelum deklarasinya.
+  const [exportingSellinXlsx, setExportingSellinXlsx] = useState(false);
+  // BARU (permintaan user - "ada opsi export tampilan saat ini, atau
+  // download lengkap semua level"): dropdown kecil di tombol Export XLSX.
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [exportMenuPos, setExportMenuPos] = useState({ x: 0, y: 0 });
+  const exportBtnRef = useRef(null);
+  const exportMenuRef = useRef(null);
+  useEffect(() => {
+    if (!exportMenuOpen) return undefined;
+    const onDoc = (ev) => {
+      if (exportBtnRef.current?.contains(ev.target)) return;
+      if (exportMenuRef.current?.contains(ev.target)) return;
+      setExportMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [exportMenuOpen]);
+  const toggleExportMenu = () => {
+    if (!exportMenuOpen && exportBtnRef.current) {
+      const rect = exportBtnRef.current.getBoundingClientRect();
+      const menuW = 270, menuH = 260;
+      let x = rect.right - menuW;
+      let y = rect.bottom + 6;
+      x = Math.max(8, Math.min(x, window.innerWidth - menuW - 8));
+      y = Math.max(8, Math.min(y, window.innerHeight - menuH - 8));
+      setExportMenuPos({ x, y });
+    }
+    setExportMenuOpen((v) => !v);
+  };
+  // BARU (permintaan user - "download lengkap... semua level partner
+  // region area district dse"): agregasi 1 level rollup (Partner/Region/
+  // Area/District) TANPA filter drill-down yg lagi aktif di layar (biar
+  // "lengkap" beneran cover semua, bukan cuma scope yg lagi difilter) -
+  // return array baris, BUKAN setState (ga ganggu tampilan regionSummary
+  // yg lagi dibuka user).
+
+  const fetchLevelSummaryForExport = async (lvl, includeCompare) => {
+    const dses = await fetchAllPaged(() => supabase.from("mf_dse_database").select("dse_code, region, branch, mc, mdi, dse_status").eq("is_revoked", false));
+    const emptyLabelMap = { partner: "Belum Ada Partner", region: "Belum Ada Region", branch: "Belum Ada Area", mc: "Belum Ada District" };
+    const emptyLabel = emptyLabelMap[lvl] || "Belum Ada Region";
+    const groupOf = {};
+    const byGroup = {};
+    (dses || []).forEach((r) => {
+      const key = lvl === "partner" ? (r.mdi || emptyLabel)
+        : lvl === "branch" ? (r.branch || emptyLabel)
+        : lvl === "mc" ? (r.mc || emptyLabel)
+        : (r.region || emptyLabel);
+      groupOf[r.dse_code] = key;
+      if (!byGroup[key]) byGroup[key] = { key, label: key, totalActive: 0, totalVacant: 0, nilaiSp: 0, nilaiFwa: 0, nilaiVoucher: 0, nilaiSaldo: 0, uploadSp: 0, uploadVou: 0, uploadSaldo: 0, asOfSp: 0, asOfVoucher: 0, asOfSaldo: 0 };
+      if (r.dse_status === "Active") byGroup[key].totalActive += 1;
+      else if (r.dse_status === "Vacant") byGroup[key].totalVacant += 1;
+    });
+    const codes = (dses || []).map((r) => r.dse_code);
+    const CHUNK = 500;
+    const isRangeModeExport = periodMode === "bulan";
+    const prodDates = isRangeModeExport ? sortedSelectedDates : [entryDate];
+    const prod = await fetchProdArPaged(codes, prodDates, "dse_code, tanggal, nilai_sp, nilai_fwa, nilai_voucher, nilai_saldo");
+    prod.forEach((p) => {
+      const g = byGroup[groupOf[p.dse_code]];
+      if (!g) return;
+      g.nilaiSp += fRaw(p.nilai_sp); g.nilaiFwa += fRaw(p.nilai_fwa); g.nilaiVoucher += fRaw(p.nilai_voucher); g.nilaiSaldo += fRaw(p.nilai_saldo);
+    });
+    let anyUploadRow = false;
+    let capturedAsOfUp = null;
+    const uploadPeriod = calViewMonth.slice(0, 7);
+    if (periodMode === "bulan" && includeCompare) {
+      for (let i = 0; i < codes.length; i += CHUNK) {
+        const chunk = codes.slice(i, i + CHUNK);
+        const { data: upRows, error: eUp } = await supabase.from("mf_dse_admin_sellin_upload")
+          .select("dse_code, sellin_sp, sellin_vou, sellin_saldo, as_of_dt")
+          .eq("period", uploadPeriod).eq("matched", true).in("dse_code", chunk);
+        if (eUp) throw eUp;
+        (upRows || []).forEach((u) => {
+          const g = byGroup[groupOf[u.dse_code]];
+          if (!g) return;
+          anyUploadRow = true;
+          if (capturedAsOfUp == null) capturedAsOfUp = u.as_of_dt;
+          g.uploadSp += fRaw(u.sellin_sp); g.uploadVou += fRaw(u.sellin_vou); g.uploadSaldo += fRaw(u.sellin_saldo);
+        });
+      }
+      if (capturedAsOfUp != null) {
+        const cutoffAsOf = `${uploadPeriod}-${String(capturedAsOfUp).padStart(2, "0")}`;
+        const prod2 = await fetchProdArPaged(codes, datesBetween(`${uploadPeriod}-01`, cutoffAsOf), "dse_code, tanggal, nilai_sp, nilai_voucher, nilai_saldo");
+        prod2.forEach((p) => {
+          const g = byGroup[groupOf[p.dse_code]];
+          if (!g) return;
+          g.asOfSp += fRaw(p.nilai_sp); g.asOfVoucher += fRaw(p.nilai_voucher); g.asOfSaldo += fRaw(p.nilai_saldo);
+        });
+      }
+    }
+    const rows = Object.values(byGroup).sort((a, b) => (b.nilaiSp + b.nilaiFwa + b.nilaiVoucher + b.nilaiSaldo) - (a.nilaiSp + a.nilaiFwa + a.nilaiVoucher + a.nilaiSaldo));
+    return { rows, uploadAvailable: anyUploadRow };
+  };
+
+  // BARU: SAMA POLA di atas, khusus level DSE individual (roster penuh,
+  // TANPA filter search/kolom yg lagi aktif di layar).
+  const fetchDseLevelForExport = async (includeCompare) => {
+    const dses = await fetchAllPaged(() => supabase.from("mf_dse_database").select("dse_code, region, branch, mc, mdi, ds_name, dse_status").eq("is_revoked", false));
+    const byCode = {};
+    (dses || []).forEach((r) => { byCode[r.dse_code] = { nilaiSp: 0, nilaiFwa: 0, nilaiVoucher: 0, nilaiSaldo: 0 }; });
+    const codes = (dses || []).map((r) => r.dse_code);
+    const CHUNK = 500;
+    const isRangeModeExport = periodMode === "bulan";
+    const prodDates = isRangeModeExport ? sortedSelectedDates : [entryDate];
+    const prod = await fetchProdArPaged(codes, prodDates, "dse_code, tanggal, nilai_sp, nilai_fwa, nilai_voucher, nilai_saldo");
+    prod.forEach((p) => {
+      const n = byCode[p.dse_code];
+      if (!n) return;
+      n.nilaiSp += fRaw(p.nilai_sp); n.nilaiFwa += fRaw(p.nilai_fwa); n.nilaiVoucher += fRaw(p.nilai_voucher); n.nilaiSaldo += fRaw(p.nilai_saldo);
+    });
+    let uploadByCode = {};
+    const uploadPeriod = calViewMonth.slice(0, 7);
+    if (periodMode === "bulan" && includeCompare) {
+      for (let i = 0; i < codes.length; i += CHUNK) {
+        const chunk = codes.slice(i, i + CHUNK);
+        const { data: upRows, error: eUp } = await supabase.from("mf_dse_admin_sellin_upload")
+          .select("dse_code, sellin_sp, sellin_vou, sellin_saldo, as_of_dt")
+          .eq("period", uploadPeriod).eq("matched", true).in("dse_code", chunk);
+        if (eUp) throw eUp;
+        (upRows || []).forEach((u) => { uploadByCode[u.dse_code] = u; });
+      }
+    }
+    const hasUpload = Object.keys(uploadByCode).length > 0;
+    let asOfSpByCode = {}, asOfVouByCode = {}, asOfSaldoByCode = {};
+    const capturedAsOf = hasUpload ? Object.values(uploadByCode)[0]?.as_of_dt : null;
+    if (hasUpload && capturedAsOf != null) {
+      const startISO = `${uploadPeriod}-01`;
+      const endISO = `${uploadPeriod}-${String(capturedAsOf).padStart(2, "0")}`;
+      const arRows = await fetchProdArPaged(codes, datesBetween(startISO, endISO), "dse_code, nilai_sp, nilai_voucher, nilai_saldo");
+      arRows.forEach((p) => {
+        asOfSpByCode[p.dse_code] = (asOfSpByCode[p.dse_code] || 0) + fRaw(p.nilai_sp);
+        asOfVouByCode[p.dse_code] = (asOfVouByCode[p.dse_code] || 0) + fRaw(p.nilai_voucher);
+        asOfSaldoByCode[p.dse_code] = (asOfSaldoByCode[p.dse_code] || 0) + fRaw(p.nilai_saldo);
+      });
+    }
+    const rows = (dses || []).map((r) => {
+      const n = byCode[r.dse_code];
+      const u = uploadByCode[r.dse_code];
+      const uploadTotal = u ? (fRaw(u.sellin_sp) + fRaw(u.sellin_vou) + fRaw(u.sellin_saldo)) : null;
+      const totalPenjualan = n.nilaiSp + n.nilaiFwa + n.nilaiVoucher + n.nilaiSaldo;
+      // BARU (fix "ga balance di excel"): SP/Voucher/Saldo yg DITAMPILKAN
+      // di kolom pembanding dibatasi as-of juga (SAMA kayak Total-nya),
+      // bukan total sebulan penuh - biar SP+Voucher+Saldo = Total Excl FWA.
+      const asOfSp = hasUpload && u ? (asOfSpByCode[r.dse_code] ?? n.nilaiSp) : null;
+      const asOfVoucher = hasUpload && u ? (asOfVouByCode[r.dse_code] ?? n.nilaiVoucher) : null;
+      const asOfSaldo = hasUpload && u ? (asOfSaldoByCode[r.dse_code] ?? n.nilaiSaldo) : null;
+      const totalExclFwaAsOf = hasUpload && u ? (asOfSp + asOfVoucher + asOfSaldo) : null;
+      return {
+        dse_code: r.dse_code, partner: r.mdi || "", region: r.region || "", branch: r.branch || "", mc: r.mc || "", nama: r.ds_name || "", status: r.dse_status || "",
+        nilaiSp: n.nilaiSp, nilaiFwa: n.nilaiFwa, nilaiVoucher: n.nilaiVoucher, nilaiSaldo: n.nilaiSaldo, totalPenjualan,
+        hasUpload, uploadTotal,
+        asOfSp, asOfVoucher, asOfSaldo,
+        sellinSp: u ? fRaw(u.sellin_sp) : null, sellinVou: u ? fRaw(u.sellin_vou) : null, sellinSaldo: u ? fRaw(u.sellin_saldo) : null,
+        totalExclFwaAsOf,
+        selisih: hasUpload && u ? (totalExclFwaAsOf - uploadTotal) : null,
+      };
+    }).sort((a, b) => b.totalPenjualan - a.totalPenjualan);
+    return rows;
+  };
+
+  // BARU (permintaan user - "buat agar untuk ar dse hoa dso dsp semuanya
+  // bisa di export juga"): fetch rollup Partner/Region/Area/District utk
+  // export AR - `scoped=true` ikut filter drill-down yg lagi aktif di
+  // layar (dipakai "Export Tampilan Saat Ini"), `scoped=false` full semua
+  // DSE (dipakai "Download Lengkap", SAMA konvensi dgn export Penjualan).
+  const fetchArLevelSummaryForExport = async (lvl, scoped = false) => {
+    const buildDseQuery = () => {
+      let q = supabase.from("mf_dse_database").select("dse_code, region, branch, mc, mdi, dse_status").eq("is_revoked", false);
+      if (scoped) {
+        if (partnerFilter) q = q.eq("mdi", partnerFilter);
+        if (regionFilter) q = q.eq("region", regionFilter);
+        if (branchFilter) q = q.eq("branch", branchFilter);
+        if (mcFilter) q = q.eq("mc", mcFilter);
+      }
+      return q;
+    };
+    const dses = await fetchAllPaged(buildDseQuery);
+    const emptyLabelMap = { partner: "Belum Ada Partner", region: "Belum Ada Region", branch: "Belum Ada Area", mc: "Belum Ada District" };
+    const emptyLabel = emptyLabelMap[lvl] || "Belum Ada Region";
+    const groupOf = {}; const byGroup = {};
+    (dses || []).forEach((r) => {
+      const key = lvl === "partner" ? (r.mdi || emptyLabel) : lvl === "branch" ? (r.branch || emptyLabel) : lvl === "mc" ? (r.mc || emptyLabel) : (r.region || emptyLabel);
+      groupOf[r.dse_code] = key;
+      if (!byGroup[key]) byGroup[key] = { key, totalDse: 0, totalPiutang: 0, totalDibayar: 0, lunasCount: 0, belumLunasCount: 0, nearestJatuhTempo: null };
+      byGroup[key].totalDse += 1;
+    });
+    const codes = (dses || []).map((r) => r.dse_code);
+    const agg = codes.length ? await fetchPiutangAggByCode("ar_piutang_items", "ar_piutang_payments", "dse_code", codes) : {};
+    codes.forEach((code) => {
+      const g = byGroup[groupOf[code]];
+      if (!g) return;
+      const a = agg[code];
+      if (!a) { g.lunasCount += 1; return; }
+      g.totalPiutang += a.totalPiutang; g.totalDibayar += a.totalDibayar;
+      if (a.lunas) g.lunasCount += 1; else g.belumLunasCount += 1;
+      if (!a.lunas && a.jatuhTempo && (!g.nearestJatuhTempo || a.jatuhTempo < g.nearestJatuhTempo)) g.nearestJatuhTempo = a.jatuhTempo;
+    });
+    return Object.values(byGroup).sort((x, y) => (y.totalPiutang - y.totalDibayar) - (x.totalPiutang - x.totalDibayar));
+  };
+
+  // BARU: fetch per-DSE (level "DSE") utk export AR "Download Lengkap" -
+  // full semua DSE (ga kepengaruh filter layar, sama konvensi export
+  // Penjualan). Export "Tampilan Saat Ini" level DSE pakai data yg SUDAH
+  // ada di layar (columnFilteredDse) - ga perlu fetch ulang.
+  const fetchArDseLevelForExport = async () => {
+    const dses = await fetchAllPaged(() => supabase.from("mf_dse_database").select("dse_code, mdi, region, branch, mc, ds_name, dse_status").eq("is_revoked", false));
+    const codes = (dses || []).map((r) => r.dse_code);
+    const agg = codes.length ? await fetchPiutangAggByCode("ar_piutang_items", "ar_piutang_payments", "dse_code", codes) : {};
+    return (dses || []).map((r) => {
+      const a = agg[r.dse_code];
+      const totalPiutang = a ? a.totalPiutang : 0;
+      const totalDibayar = a ? a.totalDibayar : 0;
+      return {
+        dse_code: r.dse_code, partner: r.mdi || "", region: r.region || "", branch: r.branch || "", mc: r.mc || "", nama: r.ds_name || "", status: r.dse_status || "",
+        totalPiutang, totalDibayar, sisaPiutang: totalPiutang - totalDibayar,
+        statusLabel: a ? (a.lunas ? "Lunas" : "Belum Lunas") : "Lunas",
+        jatuhTempo: a?.jatuhTempo || "", keterangan: a?.keterangan || "",
+      };
+    }).sort((x, y) => y.sisaPiutang - x.sisaPiutang);
+  };
+
+  const [exportingArXlsx, setExportingArXlsx] = useState(false);
+  const [exportingArFullXlsx, setExportingArFullXlsx] = useState(false);
+
+  // BARU: "Export Tampilan Saat Ini" utk tab AR - level rollup pakai
+  // fetchArLevelSummaryForExport(lvl, scoped=true) (ikut filter drill-
+  // down aktif), level DSE pakai columnFilteredDse (data yg sudah
+  // tampil di layar, sudah difilter search/kolom).
+  const handleExportArXlsx = async () => {
+    setExportMenuOpen(false);
+    setExportingArXlsx(true);
+    try {
+      const periodeLabel = `${MONTH_NAMES[Number(calViewMonth.slice(5, 7)) - 1]}_${calViewMonth.slice(0, 4)}`;
+      const wb = XLSX.utils.book_new();
+      if (summaryGroupBy !== "dse") {
+        const rows = await fetchArLevelSummaryForExport(summaryGroupBy, true);
+        const head = ["#", summaryGroupLabel, "Jumlah DSE", "DSE Lunas", "DSE Belum Lunas", "Total Piutang (Rp)", "Total Dibayar (Rp)", "Sisa Piutang (Rp)", "Jatuh Tempo Terdekat"];
+        const body = rows.map((g, i) => [
+          i + 1, g.key, g.totalDse, g.lunasCount, g.belumLunasCount, g.totalPiutang, g.totalDibayar, g.totalPiutang - g.totalDibayar,
+          g.nearestJatuhTempo ? fmtDayMonth(g.nearestJatuhTempo) : "-",
+        ]);
+        const ws = buildXlsxSheet(head, body, [2, 3, 4, 5, 6, 7]);
+        XLSX.utils.book_append_sheet(wb, ws, summaryGroupLabel);
+        XLSX.writeFile(wb, `AR_${summaryGroupLabel}_${periodeLabel}.xlsx`);
+        showToast(`Export AR selesai — ${body.length} baris.`, "ok");
+      } else {
+        const rows = columnFilteredDse.filter((x) => {
+          if (!dseSearch) return true;
+          const s = dseSearch.toLowerCase();
+          const r = x.r;
+          return r.dse_code?.toLowerCase().includes(s) || r.dse_code_3id?.toLowerCase().includes(s) || r.ds_name?.toLowerCase().includes(s);
+        });
+        const head = ["#", "Kode DSE", "Partner", "Region", "Area", "District", "Nama DSE", "Status", "Total Piutang (Rp)", "Total Dibayar (Rp)", "Sisa Piutang (Rp)", "Status Piutang", "Jatuh Tempo", "Keterangan"];
+        const body = rows.map((x, i) => [
+          i + 1, x.r.dse_code, x.partnerVal || "", x.regionVal || "", x.branchVal || "", x.mcVal || "", x.namaVal || "", x.statusVal || "",
+          x.totalPiutangVal, x.totalDibayarVal, x.totalPiutangVal - x.totalDibayarVal,
+          x.arStatusVal === "lunas" ? "Lunas" : "Belum Lunas", x.jatuhTempoVal ? fmtDayMonth(x.jatuhTempoVal) : "-", x.arKeteranganVal || "",
+        ]);
+        const ws = buildXlsxSheet(head, body, [8, 9, 10]);
+        XLSX.utils.book_append_sheet(wb, ws, "DSE");
+        XLSX.writeFile(wb, `AR_DSE_${periodeLabel}.xlsx`);
+        showToast(`Export AR selesai — ${body.length} baris.`, "ok");
+      }
+    } catch (e) {
+      showToast(e.message || "Gagal export AR.", "error");
+    } finally {
+      setExportingArXlsx(false);
+    }
+  };
+
+  // BARU: "Download Lengkap" AR - 1 file xlsx isi 5 sheet (Partner,
+  // Region, Area, District, DSE), full semua DSE (ga kepengaruh filter
+  // layar) - konsep & konvensi file SAMA PERSIS handleExportFullXlsx
+  // (Penjualan), cuma kolomnya Piutang bukan Penjualan.
+  const handleExportArFullXlsx = async () => {
+    setExportMenuOpen(false);
+    setExportingArFullXlsx(true);
+    try {
+      const periodeLabel = `${MONTH_NAMES[Number(calViewMonth.slice(5, 7)) - 1]}_${calViewMonth.slice(0, 4)}`;
+      const wb = XLSX.utils.book_new();
+      const levelDefs = [
+        { lvl: "partner", sheet: "Partner", label: "Partner" },
+        { lvl: "region", sheet: "Region", label: "Region" },
+        { lvl: "branch", sheet: "Area", label: "Area" },
+        { lvl: "mc", sheet: "District", label: "District" },
+      ];
+      const totalExportSteps = levelDefs.length + 1;
+      let exportStepIdx = 0;
+      setExportProgress({ active: true, label: "Menyiapkan export AR lengkap...", current: 0, total: totalExportSteps });
+      for (const { lvl, sheet, label } of levelDefs) {
+        setExportProgress({ active: true, label: `Memproses AR level ${label}...`, current: exportStepIdx, total: totalExportSteps });
+        const rows = await fetchArLevelSummaryForExport(lvl, false);
+        const head = ["#", label, "Jumlah DSE", "DSE Lunas", "DSE Belum Lunas", "Total Piutang (Rp)", "Total Dibayar (Rp)", "Sisa Piutang (Rp)", "Jatuh Tempo Terdekat"];
+        const body = rows.map((g, i) => [
+          i + 1, g.key, g.totalDse, g.lunasCount, g.belumLunasCount, g.totalPiutang, g.totalDibayar, g.totalPiutang - g.totalDibayar,
+          g.nearestJatuhTempo ? fmtDayMonth(g.nearestJatuhTempo) : "-",
+        ]);
+        const ws = buildXlsxSheet(head, body, [2, 3, 4, 5, 6, 7]);
+        XLSX.utils.book_append_sheet(wb, ws, sheet);
+        exportStepIdx++;
+      }
+      setExportProgress({ active: true, label: "Memproses AR level DSE...", current: exportStepIdx, total: totalExportSteps });
+      const dseRows = await fetchArDseLevelForExport();
+      const headDse = ["#", "Kode DSE", "Partner", "Region", "Area", "District", "Nama DSE", "Status", "Total Piutang (Rp)", "Total Dibayar (Rp)", "Sisa Piutang (Rp)", "Status Piutang", "Jatuh Tempo", "Keterangan"];
+      const bodyDse = dseRows.map((x, i) => [
+        i + 1, x.dse_code, x.partner, x.region, x.branch, x.mc, x.nama, x.status,
+        x.totalPiutang, x.totalDibayar, x.sisaPiutang, x.statusLabel, x.jatuhTempo ? fmtDayMonth(x.jatuhTempo) : "-", x.keterangan,
+      ]);
+      const wsDse = buildXlsxSheet(headDse, bodyDse, [8, 9, 10]);
+      XLSX.utils.book_append_sheet(wb, wsDse, "DSE");
+      XLSX.writeFile(wb, `AR_Lengkap_SemuaLevel_${periodeLabel}.xlsx`);
+      setExportProgress({ active: false, label: "", current: 0, total: 0 });
+      showToast(`Export AR lengkap selesai — 4 level + DSE.`, "ok");
+    } catch (e) {
+      setExportProgress({ active: false, label: "", current: 0, total: 0 });
+      showToast(e.message || "Gagal export AR lengkap.", "error");
+    } finally {
+      setExportingArFullXlsx(false);
+    }
+  };
+
+  // BARU: "Download Lengkap" - 1 file xlsx isi 5 sheet (Partner, Region,
+  // Area, District, DSE) sekaligus, masing2 full (ga kepengaruh filter/
+  // level yg lagi dibuka di layar).
+  const [exportingFullXlsx, setExportingFullXlsx] = useState(false);
+  // BARU (permintaan user - "ada opsi untuk tampilkan data pembanding
+  // atau tidak"): checkbox di dropdown export Full Month, default ON
+  // (SAMA PERSIS behavior export sebelum ada opsi ini).
+  const [exportIncludeCompare, setExportIncludeCompare] = useState(true);
+  // BARU (permintaan user - "untuk data daily, ada opsi untuk tarik data
+  // inputan per dse hariannya, jadi ada tanggal-tanggalnya"): rentang
+  // tanggal utk export RAW data harian (1 baris = 1 DSE di 1 tanggal).
+  const [exportDailyFrom, setExportDailyFrom] = useState(() => calViewMonth + "-01"); // UPDATE (permintaan user - "buat defaultnya dari tanggal 1 bulan itu"): default awal rentang export harian = tanggal 1 bulan yg lagi dibuka, bukan hari ini
+  const [exportDailyTo, setExportDailyTo] = useState(() => todayISO());
+  const [exportingDailyRange, setExportingDailyRange] = useState(false);
+  // BARU (permintaan user - "buat progress dan animasi yang sangat
+  // bagus saat export export data ini"): state progress bersama utk
+  // overlay animasi export (dipakai handleExportDailyRange &
+  // handleExportFullXlsx).
+  const [exportProgress, setExportProgress] = useState({ active: false, label: "", current: 0, total: 0, rows: null });
+  const handleExportDailyRange = async () => {
+    if (!exportDailyFrom || !exportDailyTo || exportDailyFrom > exportDailyTo) {
+      showToast("Rentang tanggal tidak valid (dari harus <= sampai).", "error");
+      return;
+    }
+    setExportMenuOpen(false);
+    setExportingDailyRange(true);
+    try {
+      const dses = await fetchAllPaged(() => supabase.from("mf_dse_database").select("dse_code, region, branch, mc, mdi, ds_name").eq("is_revoked", false));
+      const metaByCode = {};
+      (dses || []).forEach((r) => { metaByCode[r.dse_code] = r; });
+      const codes = (dses || []).map((r) => r.dse_code);
+      const CHUNK = 500;
+      const PAGE = 1000;
+      const MAX_EXPORT_ROWS = 1000000; // BARU (permintaan user - "jika lebih dari 1juta baris maka dia akan muncul notif dan akan download sesuai limit maksimal")
+      const rangeDates = datesBetween(exportDailyFrom, exportDailyTo);
+      let allRows = [];
+      let truncated = false;
+      setExportProgress({ active: true, label: "Mengambil data harian...", current: 0, total: rangeDates.length, rows: 0 });
+      // FIX (error user - "canceling statement due to statement
+      // timeout" pas export rentang 1-25): query lintas BANYAK tanggal
+      // sekaligus (gte/lte) + .range() OFFSET di atasnya mahal banget
+      // krn RLS tabel ini berat - dipecah PER TANGGAL (kolom tanggal
+      // ada index-nya) supaya tiap query jauh lebih kecil & murah.
+      const chunksList = [];
+      for (let i = 0; i < codes.length; i += CHUNK) chunksList.push(codes.slice(i, i + CHUNK));
+      // BARU (keluhan user - "mengapa sangat sangat lambat"): tiap
+      // tanggal x tiap chunk DSE di-fetch PARALEL (bukan 1-per-1
+      // berurutan), & beberapa tanggal sekaligus diproses per batch -
+      // query per tanggal tetap kecil & murah (ga kena statement
+      // timeout kayak sebelumnya), tapi jauh lebih cepat.
+      const BATCH_DATES = 5;
+      const fetchOneDate = async (dt) => {
+        const chunkResults = await Promise.all(chunksList.map(async (chunk) => {
+          let pf = 0;
+          let rows = [];
+          while (true) {
+            const { data: prodPage, error: e2 } = await supabase.from("mf_dse_prod_ar")
+              .select("dse_code, tanggal, nilai_sp, nilai_fwa, nilai_voucher, nilai_saldo")
+              .in("dse_code", chunk).eq("tanggal", dt)
+              .range(pf, pf + PAGE - 1);
+            if (e2) throw e2;
+            const batch = prodPage || [];
+            rows = rows.concat(batch);
+            if (batch.length < PAGE) break;
+            pf += PAGE;
+          }
+          return rows;
+        }));
+        return chunkResults.flat();
+      };
+      outerDailyFetch:
+      for (let bi = 0; bi < rangeDates.length; bi += BATCH_DATES) {
+        const dateBatch = rangeDates.slice(bi, bi + BATCH_DATES);
+        const batchResults = await Promise.all(dateBatch.map(fetchOneDate));
+        for (const rows of batchResults) {
+          // BARU: berhenti ambil data SEGERA begitu nyentuh limit -
+          // bukan fetch semua baru dipotong - jadi baris yg lewat
+          // limit TIDAK PERNAH masuk memori sama sekali.
+          if (allRows.length + rows.length > MAX_EXPORT_ROWS) {
+            allRows = allRows.concat(rows.slice(0, MAX_EXPORT_ROWS - allRows.length));
+            truncated = true;
+            break outerDailyFetch;
+          }
+          allRows = allRows.concat(rows);
+        }
+        setExportProgress({ active: true, label: "Mengambil data harian...", current: Math.min(bi + BATCH_DATES, rangeDates.length), total: rangeDates.length, rows: allRows.length });
+      }
+      setExportProgress({ active: false, label: "", current: 0, total: 0 });
+      if (truncated) {
+        showToast(`Data melebihi ${MAX_EXPORT_ROWS.toLocaleString("id-ID")} baris — download dibatasi sampai limit maksimal. Persempit rentang tanggal utk data lengkap.`, "error");
+      }
+      if (!allRows.length) {
+        showToast("Tidak ada data harian pada rentang tanggal tsb (cek lagi - data Oktober 2026 misalnya belum tersedia).", "error");
+        return;
+      }
+      allRows.sort((a, b) => (a.tanggal === b.tanggal ? (a.dse_code || "").localeCompare(b.dse_code || "") : a.tanggal.localeCompare(b.tanggal)));
+      const head = ["#", "Tanggal", "Kode DSE", "Partner", "Region", "Area", "District", "Nama DSE", "Penjualan SP (Rp)", "Penjualan FWA (Rp)", "Penjualan Voucher (Rp)", "Penjualan Saldo (Rp)", "Total Penjualan (Rp)"];
+      const body = allRows.map((p, i) => {
+        const m = metaByCode[p.dse_code] || {};
+        const sp = fRaw(p.nilai_sp), fwa = fRaw(p.nilai_fwa), vou = fRaw(p.nilai_voucher), sal = fRaw(p.nilai_saldo);
+        return [i + 1, p.tanggal, p.dse_code, m.mdi || "", m.region || "", m.branch || "", m.mc || "", m.ds_name || "", sp, fwa, vou, sal, sp + fwa + vou + sal];
+      });
+      const ws = buildXlsxSheet(head, body, [8, 9, 10, 11, 12]);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Data Harian");
+      XLSX.writeFile(wb, `DataHarian_DSE_${exportDailyFrom}_sd_${exportDailyTo}.xlsx`);
+      showToast(`Export selesai — ${body.length} baris.`, "ok");
+    } catch (e) {
+      setExportProgress({ active: false, label: "", current: 0, total: 0 });
+      showToast(e.message || "Gagal export data harian.", "error");
+    } finally {
+      setExportingDailyRange(false);
+    }
+  };
+  const handleExportFullXlsx = async (includeCompare = true) => {
+    setExportMenuOpen(false);
+    setExportingFullXlsx(true);
+    try {
+      const periodeLabel = `${MONTH_NAMES[Number(calViewMonth.slice(5, 7)) - 1]}_${calViewMonth.slice(0, 4)}`;
+      const wb = XLSX.utils.book_new();
+      const levelDefs = [
+        { lvl: "partner", sheet: "Partner", label: "Partner" },
+        { lvl: "region", sheet: "Region", label: "Region" },
+        { lvl: "branch", sheet: "Area", label: "Area" },
+        { lvl: "mc", sheet: "District", label: "District" },
+      ];
+      const totalExportSteps = levelDefs.length + 1;
+      let exportStepIdx = 0;
+      setExportProgress({ active: true, label: "Menyiapkan export lengkap...", current: 0, total: totalExportSteps });
+      for (const { lvl, sheet, label } of levelDefs) {
+        setExportProgress({ active: true, label: `Memproses level ${label}...`, current: exportStepIdx, total: totalExportSteps });
+        const { rows, uploadAvailable } = await fetchLevelSummaryForExport(lvl, includeCompare);
+        // UPDATE (permintaan user - "saat export disertai data
+        // pembanding, ikuti layout web: exclude FWA, tiap metrik
+        // langsung bersebelahan sama Sell-in-nya"): includeCompare ON
+        // -> kolom berpasangan per metrik (SP|Sell-in SP|Voucher|
+        // Sell-in Voucher|Saldo|Sell-in Saldo|Total Excl FWA|Total
+        // Sell-in|Selisih), FWA dikeluarkan - SAMA PERSIS tampilan
+        // tabel "Bandingkan Data" di layar. includeCompare OFF -> 5
+        // kolom original (SP/FWA/Voucher/Saldo/Total).
+        const head = includeCompare
+          ? ["#", label, "DSE Active", "DSE Vacant", "Penjualan SP (Rp)", "Sell-in SP (Rp)", "Penjualan Voucher (Rp)", "Sell-in Voucher (Rp)", "Penjualan Saldo (Rp)", "Sell-in Saldo (Rp)", "Total Penjualan Excl FWA (Rp)", "Total Sell-in (Rp)", "Selisih (Rp)"]
+          : ["#", label, "DSE Active", "DSE Vacant", "Penjualan SP (Rp)", "Penjualan FWA (Rp)", "Penjualan Voucher (Rp)", "Penjualan Saldo (Rp)", "Total Penjualan (Rp)"];
+        const body = rows.map((r, i) => includeCompare ? [
+          i + 1, r.label, r.totalActive, r.totalVacant,
+          uploadAvailable ? r.asOfSp : r.nilaiSp, uploadAvailable ? r.uploadSp : "",
+          uploadAvailable ? r.asOfVoucher : r.nilaiVoucher, uploadAvailable ? r.uploadVou : "",
+          uploadAvailable ? r.asOfSaldo : r.nilaiSaldo, uploadAvailable ? r.uploadSaldo : "",
+          uploadAvailable ? (r.asOfSp + r.asOfVoucher + r.asOfSaldo) : (r.nilaiSp + r.nilaiVoucher + r.nilaiSaldo),
+          uploadAvailable ? (r.uploadSp + r.uploadVou + r.uploadSaldo) : "",
+          uploadAvailable ? ((r.asOfSp + r.asOfVoucher + r.asOfSaldo) - (r.uploadSp + r.uploadVou + r.uploadSaldo)) : "",
+        ] : [
+          i + 1, r.label, r.totalActive, r.totalVacant,
+          r.nilaiSp, r.nilaiFwa, r.nilaiVoucher, r.nilaiSaldo, r.nilaiSp + r.nilaiFwa + r.nilaiVoucher + r.nilaiSaldo,
+        ]);
+        const ws = buildXlsxSheet(head, body, includeCompare ? [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] : [2, 3, 4, 5, 6, 7, 8]);
+        XLSX.utils.book_append_sheet(wb, ws, sheet);
+        exportStepIdx++;
+      }
+      setExportProgress({ active: true, label: "Memproses level DSE...", current: exportStepIdx, total: totalExportSteps });
+      const dseRows = await fetchDseLevelForExport(includeCompare);
+      const headDse = includeCompare
+        ? ["#", "Kode DSE", "Partner", "Region", "Area", "District", "Nama DSE", "Status", "Penjualan SP (Rp)", "Sell-in SP (Rp)", "Penjualan Voucher (Rp)", "Sell-in Voucher (Rp)", "Penjualan Saldo (Rp)", "Sell-in Saldo (Rp)", "Total Penjualan Excl FWA (Rp)", "Total Sell-in (Rp)", "Selisih (Rp)"]
+        : ["#", "Kode DSE", "Partner", "Region", "Area", "District", "Nama DSE", "Status", "Penjualan SP (Rp)", "Penjualan FWA (Rp)", "Penjualan Voucher (Rp)", "Penjualan Saldo (Rp)", "Total Penjualan (Rp)"];
+      const bodyDse = dseRows.map((x, i) => includeCompare ? [
+        i + 1, x.dse_code, x.partner, x.region, x.branch, x.mc, x.nama, x.status,
+        x.hasUpload ? (x.asOfSp ?? x.nilaiSp) : x.nilaiSp, x.hasUpload && x.sellinSp != null ? x.sellinSp : "",
+        x.hasUpload ? (x.asOfVoucher ?? x.nilaiVoucher) : x.nilaiVoucher, x.hasUpload && x.sellinVou != null ? x.sellinVou : "",
+        x.hasUpload ? (x.asOfSaldo ?? x.nilaiSaldo) : x.nilaiSaldo, x.hasUpload && x.sellinSaldo != null ? x.sellinSaldo : "",
+        x.hasUpload ? (x.totalExclFwaAsOf ?? (x.nilaiSp + x.nilaiVoucher + x.nilaiSaldo)) : (x.nilaiSp + x.nilaiVoucher + x.nilaiSaldo),
+        x.hasUpload ? (x.uploadTotal ?? "") : "",
+        x.hasUpload ? (x.selisih ?? "") : "",
+      ] : [
+        i + 1, x.dse_code, x.partner, x.region, x.branch, x.mc, x.nama, x.status,
+        x.nilaiSp, x.nilaiFwa, x.nilaiVoucher, x.nilaiSaldo, x.totalPenjualan,
+      ]);
+      const wsDse = buildXlsxSheet(headDse, bodyDse, includeCompare ? [8, 9, 10, 11, 12, 13, 14, 15, 16] : [8, 9, 10, 11, 12]);
+      XLSX.utils.book_append_sheet(wb, wsDse, "DSE");
+      XLSX.writeFile(wb, `Lengkap_SemuaLevel_${periodeLabel}.xlsx`);
+      setExportProgress({ active: false, label: "", current: 0, total: 0 });
+      showToast(`Export lengkap selesai — 4 level + DSE.`, "ok");
+    } catch (e) {
+      setExportProgress({ active: false, label: "", current: 0, total: 0 });
+      showToast(e.message || "Gagal export lengkap.", "error");
+    } finally {
+      setExportingFullXlsx(false);
+    }
+  };
+
+  const handleExportSellinXlsx = async (includeCompare = true) => {
+    setExportingSellinXlsx(true);
+    try {
+      const periodeLabel = `${MONTH_NAMES[Number(calViewMonth.slice(5, 7)) - 1]}_${calViewMonth.slice(0, 4)}`;
+      if (summaryGroupBy !== "dse") {
+        const head = includeCompare
+          ? ["#", summaryGroupLabel, "DSE Active", "DSE Vacant", "Penjualan SP (Rp)", "Sell-in SP (Rp)", "Penjualan Voucher (Rp)", "Sell-in Voucher (Rp)", "Penjualan Saldo (Rp)", "Sell-in Saldo (Rp)", "Total Penjualan Excl FWA (Rp)", "Total Sell-in (Rp)", "Selisih (Rp)"]
+          : ["#", summaryGroupLabel, "DSE Active", "DSE Vacant", "Penjualan SP (Rp)", "Penjualan FWA (Rp)", "Penjualan Voucher (Rp)", "Penjualan Saldo (Rp)", "Total Penjualan (Rp)"];
+        const body = regionSummary.map((r, i) => includeCompare ? [
+          i + 1, r.label, r.totalActive, r.totalVacant,
+          sellinUploadAvailable ? r.asOfSp : r.nilaiSp, sellinUploadAvailable ? r.uploadSp : "",
+          sellinUploadAvailable ? r.asOfVoucher : r.nilaiVoucher, sellinUploadAvailable ? r.uploadVou : "",
+          sellinUploadAvailable ? r.asOfSaldo : r.nilaiSaldo, sellinUploadAvailable ? r.uploadSaldo : "",
+          sellinUploadAvailable ? (r.asOfSp + r.asOfVoucher + r.asOfSaldo) : (r.nilaiSp + r.nilaiVoucher + r.nilaiSaldo),
+          sellinUploadAvailable ? (r.uploadSp + r.uploadVou + r.uploadSaldo) : "",
+          sellinUploadAvailable ? ((r.asOfSp + r.asOfVoucher + r.asOfSaldo) - (r.uploadSp + r.uploadVou + r.uploadSaldo)) : "",
+        ] : [
+          i + 1, r.label, r.totalActive, r.totalVacant,
+          r.nilaiSp, r.nilaiFwa, r.nilaiVoucher, r.nilaiSaldo, r.nilaiSp + r.nilaiFwa + r.nilaiVoucher + r.nilaiSaldo,
+        ]);
+        const ws = buildXlsxSheet(head, body, includeCompare ? [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] : [2, 3, 4, 5, 6, 7, 8]);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, summaryGroupLabel);
+        XLSX.writeFile(wb, `Ringkasan_${summaryGroupLabel}_${periodeLabel}.xlsx`);
+        showToast(`Export selesai — ${body.length} baris.`, "ok");
+      } else {
+        const rows = columnFilteredDse.filter((x) => {
+          if (!dseSearch) return true;
+          const s = dseSearch.toLowerCase();
+          const r = x.r;
+          return r.dse_code?.toLowerCase().includes(s) || r.dse_code_3id?.toLowerCase().includes(s) || r.ds_name?.toLowerCase().includes(s);
+        });
+        const codes = rows.map((x) => x.r.dse_code).filter(Boolean);
+        let uploadByCode = {};
+        const uploadPeriod = calViewMonth.slice(0, 7);
+        const UP_CHUNK = 500;
+        // UPDATE: tombol "Export Tampilan Saat Ini" ini jalan di Daily
+        // MAUPUN Full Month (includeCompare bisa true di Daily juga),
+        // tapi konsep "data pembanding" cuma valid di Full Month - jadi
+        // layout berpasangan cuma dipakai kalau BENERAN mode bulan.
+        const showCompareDse = periodMode === "bulan" && includeCompare;
+        if (codes.length && showCompareDse) {
+          for (let i = 0; i < codes.length; i += UP_CHUNK) {
+            const chunk = codes.slice(i, i + UP_CHUNK);
+            const { data: upRows } = await supabase.from("mf_dse_admin_sellin_upload")
+              .select("dse_code, sellin_sp, sellin_vou, sellin_saldo, as_of_dt")
+              .eq("period", uploadPeriod).eq("matched", true).in("dse_code", chunk);
+            (upRows || []).forEach((u) => { uploadByCode[u.dse_code] = u; });
+          }
+        }
+        const hasUpload = Object.keys(uploadByCode).length > 0;
+        // BARU: tau tanggal as_of upload -> tarik ULANG total SP+Voucher+
+        // Saldo (excl FWA) dari mf_dse_prod_ar tapi DIBATASI sampai
+        // tanggal itu (bukan bulan penuh sampai hari ini) - dipakai itung
+        // Selisih yg apple-to-apple sama Sellin Upload. Query dipecah PER
+        // TANGGAL (fetchProdArPaged/datesBetween) - konsisten sama fix
+        // "statement timeout" di fungsi export lain, bukan gte/lte lebar.
+        let asOfSpByCode = {}, asOfVouByCode = {}, asOfSaldoByCode = {};
+        const capturedAsOf = hasUpload ? Object.values(uploadByCode)[0]?.as_of_dt : null;
+        if (hasUpload && capturedAsOf != null) {
+          const startISO = `${uploadPeriod}-01`;
+          const endISO = `${uploadPeriod}-${String(capturedAsOf).padStart(2, "0")}`;
+          const arRows = await fetchProdArPaged(codes, datesBetween(startISO, endISO), "dse_code, nilai_sp, nilai_voucher, nilai_saldo");
+          arRows.forEach((p) => {
+            asOfSpByCode[p.dse_code] = (asOfSpByCode[p.dse_code] || 0) + fRaw(p.nilai_sp);
+            asOfVouByCode[p.dse_code] = (asOfVouByCode[p.dse_code] || 0) + fRaw(p.nilai_voucher);
+            asOfSaldoByCode[p.dse_code] = (asOfSaldoByCode[p.dse_code] || 0) + fRaw(p.nilai_saldo);
+          });
+        }
+        // UPDATE (permintaan user - "ikuti layout web: exclude FWA,
+        // tiap metrik bersebelahan sama Sell-in-nya"): showCompareDse ON
+        // -> kolom berpasangan per metrik, FWA dikeluarkan (SAMA PERSIS
+        // tabel "Bandingkan Data" di layar). showCompareDse OFF -> tetap
+        // 5 kolom original.
+        const head = showCompareDse
+          ? ["#", "Kode DSE", "Partner", "Region", "Area", "District", "Nama DSE", "Status", "Penjualan SP (Rp)", "Sell-in SP (Rp)", "Penjualan Voucher (Rp)", "Sell-in Voucher (Rp)", "Penjualan Saldo (Rp)", "Sell-in Saldo (Rp)", "Total Penjualan Excl FWA (Rp)", "Total Sell-in (Rp)", "Selisih (Rp)"]
+          : ["#", "Kode DSE", "Partner", "Region", "Area", "District", "Nama DSE", "Status", "Penjualan SP (Rp)", "Penjualan FWA (Rp)", "Penjualan Voucher (Rp)", "Penjualan Saldo (Rp)", "Total Penjualan (Rp)"];
+        const body = rows.map((x, i) => {
+          const u = uploadByCode[x.r.dse_code];
+          if (!showCompareDse) {
+            return [
+              i + 1, x.r.dse_code, x.partnerVal || "", x.regionVal || "", x.branchVal || "", x.mcVal || "", x.namaVal || "", x.statusVal || "",
+              x.nilaiSp, x.nilaiFwa, x.nilaiVoucher, x.nilaiSaldo, x.totalPenjualan,
+            ];
+          }
+          const uploadTotal = u ? (fRaw(u.sellin_sp) + fRaw(u.sellin_vou) + fRaw(u.sellin_saldo)) : null;
+          // BARU (fix "ga balance di excel"): SP/Voucher/Saldo yg
+          // DITAMPILKAN dibatasi as-of juga (SAMA kayak Total-nya), bukan
+          // total sebulan penuh - biar SP+Voucher+Saldo = Total Excl FWA.
+          const asOfSp = hasUpload && u ? (asOfSpByCode[x.r.dse_code] ?? x.nilaiSp) : null;
+          const asOfVoucher = hasUpload && u ? (asOfVouByCode[x.r.dse_code] ?? x.nilaiVoucher) : null;
+          const asOfSaldo = hasUpload && u ? (asOfSaldoByCode[x.r.dse_code] ?? x.nilaiSaldo) : null;
+          const totalExclFwaAsOf = hasUpload && u ? (asOfSp + asOfVoucher + asOfSaldo) : null;
+          return [
+            i + 1, x.r.dse_code, x.partnerVal || "", x.regionVal || "", x.branchVal || "", x.mcVal || "", x.namaVal || "", x.statusVal || "",
+            hasUpload && u ? asOfSp : x.nilaiSp, hasUpload && u ? fRaw(u.sellin_sp) : "",
+            hasUpload && u ? asOfVoucher : x.nilaiVoucher, hasUpload && u ? fRaw(u.sellin_vou) : "",
+            hasUpload && u ? asOfSaldo : x.nilaiSaldo, hasUpload && u ? fRaw(u.sellin_saldo) : "",
+            hasUpload ? (totalExclFwaAsOf ?? (x.nilaiSp + x.nilaiVoucher + x.nilaiSaldo)) : (x.nilaiSp + x.nilaiVoucher + x.nilaiSaldo),
+            hasUpload ? (uploadTotal ?? "") : "",
+            hasUpload && u ? (totalExclFwaAsOf - uploadTotal) : "",
+          ];
+        });
+        const ws = buildXlsxSheet(head, body, showCompareDse ? [8, 9, 10, 11, 12, 13, 14, 15, 16] : [8, 9, 10, 11, 12]);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "DSE");
+        XLSX.writeFile(wb, `Roster_DSE_${periodeLabel}.xlsx`);
+        showToast(`Export selesai — ${body.length} baris.`, "ok");
+      }
+    } catch (e) {
+      showToast(e.message || "Gagal export.", "error");
+    } finally {
+      setExportingSellinXlsx(false);
+    }
+  };
+
 
   // UPDATE (permintaan user - search suggestion dropdown): daftar saran
   // independen dari filteredDseList (yg bisa kepengaruh colFilters lain) -
@@ -7692,14 +8753,13 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       if (dateTo) q = q.lte("tanggal", dateTo);
       const { data, error } = await q.limit(50000);
       if (error) throw error;
-      const head = ["Tanggal", "Kode DSE", "District", "Area", "Nama DS", "Nama DSE", "Qty SP", "Nilai SP", "Nilai FWA", "Qty Saldo", "Nilai Saldo", "Qty Voucher", "Nilai Voucher", "Bayar AR", "Sisa AR/Piutang", "Catatan", "Terakhir Diperbarui"];
+      const head = ["Tanggal", "Kode DSE", "District", "Area", "Nama DS", "Nama DSE", "Qty SP", "Nilai SP (Rp)", "Nilai FWA (Rp)", "Qty Saldo", "Nilai Saldo (Rp)", "Qty Voucher", "Nilai Voucher (Rp)", "Bayar AR (Rp)", "Sisa AR/Piutang (Rp)", "Catatan", "Terakhir Diperbarui"];
       const body = (data || []).map((r) => [
         r.tanggal, r.dse_code, r.mc || "", r.branch || "", r.ds_name || "", r.dse_name || "",
         fRaw(r.qty_sp), fRaw(r.nilai_sp), fRaw(r.nilai_fwa), fRaw(r.qty_saldo), fRaw(r.nilai_saldo), fRaw(r.qty_voucher), fRaw(r.nilai_voucher),
         fRaw(r.ar_bayar), fRaw(r.ar_piutang), r.catatan || "", r.updated_at || "",
       ]);
-      const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
-      ws["!freeze"] = { xSplit: 0, ySplit: 1 };
+      const ws = buildXlsxSheet(head, body, [6, 7, 8, 9, 10, 11, 12, 13, 14]);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "DSE Prod & AR");
       XLSX.writeFile(wb, `DSE_Prod_AR_${dateFrom || "semua"}_${dateTo || "semua"}.xlsx`);
@@ -9095,8 +10155,156 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                 </button>
               ))}
             </div>
+            {/* BARU (permintaan user - "buat langsung disini saja untuk
+                perbandingannya", "ada fitur datanya export as xlsx nya,
+                buat sejajar ini namun di sebelah kanan"): khusus tab
+                Penjualan (upload sellin ga relevan di AR/Piutang). */}
+            {tab === "ar" && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                <button ref={exportBtnRef} onClick={toggleExportMenu} disabled={exportingArXlsx || exportingArFullXlsx} title="Export ke Excel - pilih tampilan saat ini atau lengkap semua level"
+                  style={{ display: "flex", alignItems: "center", gap: 6, height: 32, padding: "0 10px", borderRadius: 8, border: `1px solid ${exportMenuOpen ? t.teal : t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: (exportingArXlsx || exportingArFullXlsx) ? "default" : "pointer", fontFamily: FONT, whiteSpace: "nowrap", opacity: (exportingArXlsx || exportingArFullXlsx) ? 0.6 : 1 }}>
+                  {(exportingArXlsx || exportingArFullXlsx) ? <Loader2 size={13} className="spin" /> : <FileDown size={13} />} {width >= 700 && "Export XLSX"} <ChevronDown size={12} />
+                </button>
+                {exportMenuOpen && typeof document !== "undefined" && createPortal(
+                  <div ref={exportMenuRef} style={{ position: "fixed", left: exportMenuPos.x, top: exportMenuPos.y, width: 270, borderRadius: 10, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowMd || "0 8px 24px rgba(0,0,0,0.18)", padding: 4, zIndex: 9999, fontFamily: FONT }}>
+                    <button onClick={handleExportArXlsx} style={{ width: "100%", textAlign: "left", display: "flex", flexDirection: "column", gap: 1, padding: "8px 10px", borderRadius: 7, border: "none", background: "transparent", cursor: "pointer", fontFamily: FONT }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = t.sub; }} onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>Export Tampilan Saat Ini</span>
+                      <span style={{ fontSize: 10.5, color: t.lo }}>Cuma level {summaryGroupLabel} yg lagi dibuka</span>
+                    </button>
+                    <div style={{ height: 1, background: t.line, margin: "2px 0" }} />
+                    <button onClick={handleExportArFullXlsx} style={{ width: "100%", textAlign: "left", display: "flex", flexDirection: "column", gap: 1, padding: "8px 10px", borderRadius: 7, border: "none", background: "transparent", cursor: "pointer", fontFamily: FONT }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = t.sub; }} onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>Download Lengkap (Semua Level)</span>
+                      <span style={{ fontSize: 10.5, color: t.lo }}>1 file, 5 sheet: Partner, Region, Area, District, DSE</span>
+                    </button>
+                  </div>,
+                  document.body
+                )}
+              </div>
+            )}
+            {tab === "input" && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                {periodMode === "bulan" && (() => {
+                  const isCompareOn = summaryGroupBy === "dse" ? compareRoster : compareRollup;
+                  const toggleCompare = () => (summaryGroupBy === "dse" ? setCompareRoster((v) => !v) : setCompareRollup((v) => !v));
+                  return (
+                    <button onClick={toggleCompare} title="Tampilkan/sembunyikan kolom perbandingan Sell-in (S100) vs data app, bersebelahan per metrik"
+                      style={{ display: "flex", alignItems: "center", gap: 6, height: 32, padding: "0 10px", borderRadius: 8, border: `1px solid ${isCompareOn ? t.teal : t.inputBd}`, background: isCompareOn ? t.tealBg : t.inputBg, color: isCompareOn ? t.teal : t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap" }}>
+                      <GitCompare size={13} /> {width >= 700 && "Bandingkan Data"}
+                    </button>
+                  );
+                })()}
+                {periodMode === "bulan" && (
+                  <button onClick={() => setSellinCompareOpen(true)} title="Upload data pembanding (Sell-in S100 IM3 & 3ID) & bandingkan dgn penjualan di app"
+                    style={{ display: "flex", alignItems: "center", gap: 6, height: 32, padding: "0 10px", borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap" }}>
+                    <Upload size={13} /> {width >= 700 && "Upload Data Pembanding"}
+                  </button>
+                )}
+                <button ref={exportBtnRef} onClick={toggleExportMenu} disabled={exportingSellinXlsx || exportingFullXlsx} title="Export ke Excel - pilih tampilan saat ini atau lengkap semua level"
+                  style={{ display: "flex", alignItems: "center", gap: 6, height: 32, padding: "0 10px", borderRadius: 8, border: `1px solid ${exportMenuOpen ? t.teal : t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: (exportingSellinXlsx || exportingFullXlsx) ? "default" : "pointer", fontFamily: FONT, whiteSpace: "nowrap", opacity: (exportingSellinXlsx || exportingFullXlsx) ? 0.6 : 1 }}>
+                  {(exportingSellinXlsx || exportingFullXlsx) ? <Loader2 size={13} className="spin" /> : <FileDown size={13} />} {width >= 700 && "Export XLSX"} <ChevronDown size={12} />
+                </button>
+                {/* BARU (permintaan user - "ada opsi export tampilan saat
+                    ini, atau download lengkap... semua level partner
+                    region area district dse"): dropdown via portal ke
+                    document.body (pola sama persis RankMetricMenu) biar
+                    ga ke-clip overflowX:auto toolbar-nya. */}
+                {exportMenuOpen && typeof document !== "undefined" && createPortal(
+                  <div ref={exportMenuRef} style={{ position: "fixed", left: exportMenuPos.x, top: exportMenuPos.y, width: 270, borderRadius: 10, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowMd || "0 8px 24px rgba(0,0,0,0.18)", padding: 4, zIndex: 9999, fontFamily: FONT }}>
+                    {periodMode === "bulan" ? (
+                      <>
+                        {/* BARU (permintaan user - "saat download data di
+                            full month ada opsi untuk tampilkan data
+                            pembanding atau tidak"): checkbox berlaku ke
+                            KEDUA tombol export di bawahnya. */}
+                        <label style={{ display: "flex", alignItems: "center", gap: 7, padding: "7px 10px", cursor: "pointer" }} onClick={(e) => e.stopPropagation()}>
+                          <input type="checkbox" checked={exportIncludeCompare} onChange={(e) => setExportIncludeCompare(e.target.checked)} style={{ width: 14, height: 14, cursor: "pointer", accentColor: t.teal }} />
+                          <span style={{ fontSize: 11.5, fontWeight: 600, color: t.mid }}>Sertakan kolom pembanding Sell-in</span>
+                        </label>
+                        <div style={{ height: 1, background: t.line, margin: "2px 0" }} />
+                        <button onClick={() => handleExportSellinXlsx(exportIncludeCompare)} style={{ width: "100%", textAlign: "left", display: "flex", flexDirection: "column", gap: 1, padding: "8px 10px", borderRadius: 7, border: "none", background: "transparent", cursor: "pointer", fontFamily: FONT }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = t.sub; }} onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                          <span style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>Export Tampilan Saat Ini</span>
+                          <span style={{ fontSize: 10.5, color: t.lo }}>Cuma level {summaryGroupLabel} yg lagi dibuka</span>
+                        </button>
+                        <button onClick={() => handleExportFullXlsx(exportIncludeCompare)} style={{ width: "100%", textAlign: "left", display: "flex", flexDirection: "column", gap: 1, padding: "8px 10px", borderRadius: 7, border: "none", background: "transparent", cursor: "pointer", fontFamily: FONT }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = t.sub; }} onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                          <span style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>Download Lengkap (Semua Level)</span>
+                          <span style={{ fontSize: 10.5, color: t.lo }}>1 file, 5 sheet: Partner, Region, Area, District, DSE</span>
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button onClick={() => handleExportSellinXlsx(true)} style={{ width: "100%", textAlign: "left", display: "flex", flexDirection: "column", gap: 1, padding: "8px 10px", borderRadius: 7, border: "none", background: "transparent", cursor: "pointer", fontFamily: FONT }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = t.sub; }} onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                          <span style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>Export Tampilan Saat Ini</span>
+                          <span style={{ fontSize: 10.5, color: t.lo }}>Snapshot tanggal {fmtDayMonthShort(entryDate)} yg lagi dibuka</span>
+                        </button>
+                        <div style={{ height: 1, background: t.line, margin: "2px 0" }} />
+                        {/* BARU (permintaan user - "untuk data daily, ada
+                            opsi untuk tarik data inputan per dse
+                            hariannya, jadi ada tanggal-tanggalnya, perlu
+                            diperhatikan di oktober data daily tidak
+                            tersedia"): rentang tanggal RAW per-DSE-per-
+                            tanggal, lintas SEMUA DSE. */}
+                        <div style={{ padding: "7px 10px" }} onClick={(e) => e.stopPropagation()}>
+                          <div style={{ fontSize: 12.5, fontWeight: 700, color: t.hi, marginBottom: 6 }}>Tarik Data Harian (Rentang Tanggal)</div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                            <input type="date" value={exportDailyFrom} onChange={(e) => setExportDailyFrom(e.target.value)} style={{ flex: 1, minWidth: 0, padding: "5px 6px", borderRadius: 6, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 11, fontFamily: FONT }} />
+                            <span style={{ fontSize: 10.5, color: t.lo }}>s.d.</span>
+                            <input type="date" value={exportDailyTo} onChange={(e) => setExportDailyTo(e.target.value)} style={{ flex: 1, minWidth: 0, padding: "5px 6px", borderRadius: 6, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 11, fontFamily: FONT }} />
+                          </div>
+                          <div style={{ fontSize: 10, color: t.lo, marginBottom: 6 }}>Catatan: data harian utk Oktober 2026 belum tersedia.</div>
+                          <button onClick={handleExportDailyRange} disabled={exportingDailyRange} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "7px 10px", borderRadius: 7, border: "none", background: t.teal, color: "#fff", fontSize: 11.5, fontWeight: 700, cursor: exportingDailyRange ? "default" : "pointer", fontFamily: FONT, opacity: exportingDailyRange ? 0.6 : 1 }}>
+                            {exportingDailyRange ? <Loader2 size={12} className="spin" /> : <FileDown size={12} />} Export Data Harian
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>,
+                  document.body
+                )}
+              </div>
+            )}
           </div>
         </>
+      )}
+
+      {/* BARU (permintaan user - "buat progress dan animasi yang
+          sangat bagus saat export export data ini"): overlay progress
+          export (spinner ring + progress bar gradient), extend style
+          keyframes global yg udah ada (spin, modalPopIn, loadingFadeIn)
+          biar konsisten sama animasi lain di file ini. */}
+      {exportProgress.active && typeof document !== "undefined" && createPortal(
+        <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", animation: "loadingFadeIn 0.15s ease", fontFamily: FONT }}>
+          <div style={{ background: t.card, borderRadius: 14, padding: "26px 30px", minWidth: 260, maxWidth: 320, boxShadow: t.shadowMd || "0 12px 32px rgba(0,0,0,0.35)", display: "flex", flexDirection: "column", alignItems: "center", gap: 14, animation: "modalPopIn 0.22s cubic-bezier(0.16,1,0.3,1)" }}>
+            <div style={{ position: "relative", width: 52, height: 52 }}>
+              <div style={{ position: "absolute", inset: 0, borderRadius: "50%", border: `4px solid ${t.line}` }} />
+              <div style={{ position: "absolute", inset: 0, borderRadius: "50%", border: "4px solid transparent", borderTopColor: t.teal, animation: "spin 0.9s linear infinite" }} />
+            </div>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: t.hi, textAlign: "center" }}>{exportProgress.label || "Memproses export..."}</div>
+            {exportProgress.total > 0 && (
+              <div style={{ width: "100%" }}>
+                <div style={{ width: "100%", height: 7, borderRadius: 999, background: t.sub, overflow: "hidden" }}>
+                  <div style={{ width: `${Math.min(100, Math.round((exportProgress.current / exportProgress.total) * 100))}%`, height: "100%", borderRadius: 999, background: `linear-gradient(90deg, ${t.teal}, #22d3ee)`, transition: "width 0.25s ease" }} />
+                </div>
+                <div style={{ fontSize: 10.5, color: t.lo, textAlign: "center", marginTop: 6 }}>{exportProgress.current} / {exportProgress.total}</div>
+                {/* BARU: live counter baris yg udah kebawa sejauh ini -
+                    pola export data besar di produk serius (Google
+                    Takeout, dsb), jujur nunjukin progress real tanpa
+                    nebak total (nebak total butuh query count() lebar
+                    yg berisiko timeout lagi). */}
+                {exportProgress.rows != null && (
+                  <div style={{ fontSize: 11, fontWeight: 700, color: t.teal, textAlign: "center", marginTop: 8 }}>
+                    {exportProgress.rows.toLocaleString("id-ID")} baris terambil
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>,
+        document.body
       )}
 
       </div>
@@ -9334,7 +10542,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                 // Penjualan dikasih subtitle (fontWeight lebih tipis)
                 // nunjukkin tanggal aktif (Daily) atau "<Bulan> <Tahun>"
                 // (Full Month), biar jelas angka ini punya periode apa.
-                <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden", marginTop: 14 }}>
+                <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflowX: "auto", overflowY: "hidden", marginTop: 14 }}>
                   {/* UPDATE (permintaan user - gambar kolom Rank dedicated
                       paling kiri + tombol sort metric, "dan setiap
                       tambahkan kolom rank yang sudah diupdate ini
@@ -9354,7 +10562,7 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                       data totalActive/totalVacant yg SAMA persis dari
                       regionSummary (udah dihitung bareng, tinggal
                       ditampilin). */}
-                  <div style={{ display: "grid", gridTemplateColumns: tab === "ar" ? "44px 1.5fr 1fr 1fr 1fr 1fr" : "44px 1.5fr 1fr 1fr 1fr 1fr 1fr 1fr", gap: 0, padding: "11px 18px", background: t.sub, fontSize: 10.5, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: tab === "ar" ? "44px 1.5fr 1fr 1fr 1fr 1fr" : (periodMode === "bulan" ? (compareRollup ? "44px 200px 130px 130px 150px 130px 150px 130px 150px 195px 150px 130px" : "44px 200px 130px 130px 130px 130px 130px 195px") : "44px 1.3fr repeat(6, 1fr)"), minWidth: (tab !== "ar" && periodMode === "bulan") ? (compareRollup ? 1689 : 1089) : undefined, gap: 0, padding: "11px 18px", background: t.sub, fontSize: 10.5, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, whiteSpace: "nowrap" }}>
                     <div style={{ display: "flex", alignItems: "center", height: "100%" }}>
                       <span>#</span>
                     </div>
@@ -9384,22 +10592,80 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                             lihat komentar "tabel ini DIPAKAI BARENG" di
                             atas), jadi 1x perubahan di sini otomatis
                             berlaku di SEMUA level, ga cuma Partner. */}
-                        {["sp", "fwa", "voucher", "saldo", "total"].map((v) => RANK_METRIC_OPTIONS.find((o) => o.v === v)).map((opt) => (
-                          <button key={opt.v} type="button" onClick={() => setRankMetric(opt.v)} title={`Urutkan Rank berdasarkan ${opt.label}`}
-                            style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: FONT, color: rankMetric === opt.v ? t.teal : t.mid }}>
-                            <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.3 }}>
-                              <ArrowUpDown size={10} />
-                              {opt.label}
-                            </span>
-                            <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{periodColumnSubtitle}</span>
-                          </button>
-                        ))}
+                        {/* UPDATE (permintaan user - "jangan langsung
+                            tampilan pembanding namun ditrigger dengan
+                            tombol khusus bandingkan data, nanti juga
+                            posisinya bersebelahan langsung exclude fwa
+                            juga, di perbandingan ini dan datanya dibuat
+                            sama sama as of tanggal terakhir data
+                            tersedia"): compareRollup MATI -> balik ke
+                            tampilan baseline (5 tombol rank-metric SP/FWA/
+                            Voucher/Saldo/Total, as of hari ini, TANPA
+                            kolom sellin). compareRollup NYALA -> FWA
+                            dikeluarkan total, SP/Voucher/Saldo/Total app
+                            DIBATASI sampai tanggal as of upload (asOfSp/
+                            asOfVoucher/asOfSaldo, SAMA PERSIS cutoff yg
+                            dipakai Sell-in), & tiap metrik app langsung
+                            bersebelahan sama pasangan Sell-in-nya. */}
+                        {!compareRollup ? (
+                          <>
+                            {["sp", "fwa", "voucher", "saldo", "total"].map((v) => RANK_METRIC_OPTIONS.find((o) => o.v === v)).map((opt) => (
+                              <button key={opt.v} type="button" onClick={() => setRankMetric(opt.v)} title={`Urutkan Rank berdasarkan ${opt.label}`}
+                                style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: FONT, color: rankMetric === opt.v ? t.teal : t.mid }}>
+                                <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                                  <ArrowUpDown size={10} />
+                                  {opt.label}
+                                </span>
+                                <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{periodColumnSubtitle}</span>
+                              </button>
+                            ))}
+                          </>
+                        ) : (
+                          <>
+                            {(() => {
+                              const asOfSub = sellinUploadAsOfDt ? `as of ${fmtDayMonthShort(`${calViewMonth.slice(0, 7)}-${String(sellinUploadAsOfDt).padStart(2, "0")}`)}` : periodColumnSubtitle;
+                              const spOpt = RANK_METRIC_OPTIONS.find((o) => o.v === "sp");
+                              const voucherOpt = RANK_METRIC_OPTIONS.find((o) => o.v === "voucher");
+                              const saldoOpt = RANK_METRIC_OPTIONS.find((o) => o.v === "saldo");
+                              const rankBtn = (opt) => (
+                                <button key={opt.v} type="button" onClick={() => setRankMetric(opt.v)} title={`Urutkan Rank berdasarkan ${opt.label}`}
+                                  style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: FONT, color: rankMetric === opt.v ? t.teal : t.mid }}>
+                                  <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                                    <ArrowUpDown size={10} />
+                                    {opt.label}
+                                  </span>
+                                  <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{asOfSub}</span>
+                                </button>
+                              );
+                              const plainCol = (label, sub) => (
+                                <div key={label} style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                                  <span>{label}</span>
+                                  <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{sub}</span>
+                                </div>
+                              );
+                              const sellinSub = sellinUploadAsOfDt ? `as of ${fmtDayMonthShort(`${calViewMonth.slice(0, 7)}-${String(sellinUploadAsOfDt).padStart(2, "0")}`)}` : "–";
+                              return (
+                                <>
+                                  {rankBtn(spOpt)}
+                                  {plainCol("Sell-in SP (S100)", sellinSub)}
+                                  {rankBtn(voucherOpt)}
+                                  {plainCol("Sell-in Voucher (S100)", sellinSub)}
+                                  {rankBtn(saldoOpt)}
+                                  {plainCol("Sell-in Saldo (S100)", sellinSub)}
+                                  {plainCol("Total Penjualan", asOfSub)}
+                                  {plainCol("Total OSA (S100)", sellinSub)}
+                                  <div style={{ textAlign: "right", display: "flex", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>Selisih</div>
+                                </>
+                              );
+                            })()}
+                          </>
+                        )}
                       </>
                     )}
                   </div>
                   {regionSummary.map((r, i) => (
                     <div key={r.key} onClick={() => drillInto(r.label)} title={`Lihat detail ${summaryGroupLabel} ${r.label}`}
-                      style={{ display: "grid", gridTemplateColumns: tab === "ar" ? "44px 1.5fr 1fr 1fr 1fr 1fr" : "44px 1.5fr 1fr 1fr 1fr 1fr 1fr 1fr", gap: 0, padding: "14px 18px", borderTop: i === 0 ? "none" : `1px solid ${t.line}`, cursor: "pointer", fontSize: 13, fontVariantNumeric: "tabular-nums", transition: "background 0.12s", background: i === 0 ? t.tealBg : "transparent" }}
+                      style={{ display: "grid", gridTemplateColumns: tab === "ar" ? "44px 1.5fr 1fr 1fr 1fr 1fr" : (periodMode === "bulan" ? (compareRollup ? "44px 200px 130px 130px 150px 130px 150px 130px 150px 195px 150px 130px" : "44px 200px 130px 130px 130px 130px 130px 195px") : "44px 1.3fr repeat(6, 1fr)"), minWidth: (tab !== "ar" && periodMode === "bulan") ? (compareRollup ? 1689 : 1089) : undefined, gap: 0, padding: "14px 18px", borderTop: i === 0 ? "none" : `1px solid ${t.line}`, cursor: "pointer", fontSize: 13, fontVariantNumeric: "tabular-nums", transition: "background 0.12s", background: i === 0 ? t.tealBg : "transparent", whiteSpace: "nowrap" }}
                       onMouseEnter={(e) => { e.currentTarget.style.background = t.sub; }}
                       onMouseLeave={(e) => { e.currentTarget.style.background = i === 0 ? t.tealBg : "transparent"; }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -9419,11 +10685,50 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                       ) : (
                         <>
                           <div style={{ textAlign: "right", color: t.mid }}>{fmtID(r.totalActive)} / <span style={{ color: r.totalVacant > 0 ? t.red : t.mid, fontWeight: r.totalVacant > 0 ? 700 : 400 }}>{fmtID(r.totalVacant)}</span></div>
-                          <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiSp)}</div>
-                          <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiFwa)}</div>
-                          <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiVoucher)}</div>
-                          <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiSaldo)}</div>
-                          <div style={{ textAlign: "right", fontWeight: 800, color: t.teal }}>Rp {fmtID(r.nilaiSp + r.nilaiFwa + r.nilaiVoucher + r.nilaiSaldo)}</div>
+                          {/* UPDATE (permintaan user - "bandingkan
+                              data" dipicu tombol, bersebelahan per
+                              metrik, exclude FWA, as of tanggal sama):
+                              compareRollup MATI -> 5 kolom baseline
+                              (SP/FWA/Voucher/Saldo/Total, as of hari ini).
+                              compareRollup NYALA -> FWA dikeluarkan, tiap
+                              metrik app (dibatasi as of tanggal upload)
+                              langsung bersebelahan sama Sell-in-nya,
+                              ditutup trio Total Excl FWA | Total OSA |
+                              Selisih (SEMUA as of tanggal yg sama). */}
+                          {!compareRollup ? (
+                            <>
+                              <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiSp)}</div>
+                              <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiFwa)}</div>
+                              <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiVoucher)}</div>
+                              <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiSaldo)}</div>
+                              <div style={{ textAlign: "right", fontWeight: 800, color: t.teal }}>Rp {fmtID(r.nilaiSp + r.nilaiFwa + r.nilaiVoucher + r.nilaiSaldo)}</div>
+                            </>
+                          ) : (
+                            <>
+                              <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(sellinUploadAvailable ? r.asOfSp : r.nilaiSp)}</div>
+                              {sellinUploadAvailable ? (
+                                <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.uploadSp)}</div>
+                              ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                              <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(sellinUploadAvailable ? r.asOfVoucher : r.nilaiVoucher)}</div>
+                              {sellinUploadAvailable ? (
+                                <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.uploadVou)}</div>
+                              ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                              <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(sellinUploadAvailable ? r.asOfSaldo : r.nilaiSaldo)}</div>
+                              {sellinUploadAvailable ? (
+                                <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.uploadSaldo)}</div>
+                              ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                              <div style={{ textAlign: "right", fontWeight: 800, color: t.hi }}>Rp {fmtID(sellinUploadAvailable ? (r.asOfSp + r.asOfVoucher + r.asOfSaldo) : (r.nilaiSp + r.nilaiVoucher + r.nilaiSaldo))}</div>
+                              {sellinUploadAvailable ? (
+                                <div style={{ textAlign: "right", fontWeight: 800, color: t.hi }}>Rp {fmtID(r.uploadSp + r.uploadVou + r.uploadSaldo)}</div>
+                              ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                              {sellinUploadAvailable ? (() => {
+                                const selisih = (r.asOfSp + r.asOfVoucher + r.asOfSaldo) - (r.uploadSp + r.uploadVou + r.uploadSaldo);
+                                return <div style={{ textAlign: "right", fontWeight: 700, color: selisih !== 0 ? t.red : t.mid }}>Rp {fmtID(selisih)}</div>;
+                              })() : (
+                                <div style={{ textAlign: "right", color: t.lo }}>–</div>
+                              )}
+                            </>
+                          )}
                         </>
                       )}
                     </div>
@@ -9471,6 +10776,13 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                   sama (lihat SalesBlock/MoreBlock di DseInputRow). */}
               {filteredDseList.map((dse, dseIdx) => (
                 <DseInputRow key={dse.dse_code} t={t} profile={profile} isCardView dse={dse} mode={dseInputMode} rank={dseIdx + 1} isToday={periodMode === "tanggal" && entryDate === todayISO()}
+                  sellinUpload={sellinUploadByDseCode[dse.dse_code]}
+                  sellinUploadAvailable={sellinUploadRosterAvailable}
+                  sellinAppAsOfTotal={sellinAppAsOfByDseCode[dse.dse_code]}
+                  sellinAppAsOfSp={sellinAppAsOfSpByDseCode[dse.dse_code]}
+                  sellinAppAsOfVou={sellinAppAsOfVouByDseCode[dse.dse_code]}
+                  sellinAppAsOfSaldo={sellinAppAsOfSaldoByDseCode[dse.dse_code]}
+                  compareRoster={compareRoster}
                   entryDate={entryDate}
                   arMonth={calViewMonth}
                   periodMode={periodMode}
@@ -9549,13 +10861,37 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                         // sumber data & formatnya dgn subtitle yg sudah ada
                         // di tabel rollup Partner/Region/Area/District), dibaca
                         // & dirender di bawah (lihat col.sub).
-                        ...(tab === "ar" ? [] : [
+                        // UPDATE (permintaan user - "urutannya
+                        // penjualan sp, sellin sp, penjualan fwa
+                        // dihilangkan dari mode pembanding ini, lalu
+                        // penjualan voucher, sellin voucher, penjualan
+                        // saldo, sellin saldo, total penjualan, total
+                        // sellin"): compareRoster ON -> kolom
+                        // BERPASANGAN langsung per metrik (SAMA PERSIS
+                        // pola tabel Ringkasan), FWA disembunyikan total.
+                        // compareRoster OFF -> balik ke 5 kolom original
+                        // (SP/FWA/Voucher/Saldo/Total), FWA muncul lagi.
+                        ...(tab === "ar" ? [] : (periodMode === "bulan" && compareRoster ? (() => {
+                          const asOfSub = sellinUploadRosterAsOfDt ? `as of ${fmtDayMonthShort(`${calViewMonth.slice(0, 7)}-${String(sellinUploadRosterAsOfDt).padStart(2, "0")}`)}` : periodColumnSubtitle;
+                          const sellinSub = sellinUploadRosterAsOfDt ? `as of ${fmtDayMonthShort(`${calViewMonth.slice(0, 7)}-${String(sellinUploadRosterAsOfDt).padStart(2, "0")}`)}` : "–";
+                          return [
+                            { key: "totalSp", label: "Penjualan SP", sub: asOfSub },
+                            { key: "sellinSp", label: "Sell-in SP (S100)", sub: sellinSub },
+                            { key: "totalVoucher", label: "Penjualan Voucher", sub: asOfSub },
+                            { key: "sellinVou", label: "Sell-in Voucher (S100)", sub: sellinSub },
+                            { key: "saldo", label: "Penjualan Saldo", sub: asOfSub },
+                            { key: "sellinSaldo", label: "Sell-in Saldo (S100)", sub: sellinSub },
+                            { key: "totalPenjualanExclFwa", label: "Total Penjualan", sub: asOfSub },
+                            { key: "totalOsa", label: "Total OSA (S100)", sub: sellinSub },
+                            { key: "selisihSellin", label: "Selisih" },
+                          ];
+                        })() : [
                           { key: "totalSp", label: "Penjualan SP", sub: periodColumnSubtitle },
                           { key: "totalFwa", label: "Penjualan FWA", sub: periodColumnSubtitle },
                           { key: "totalVoucher", label: "Penjualan Voucher", sub: periodColumnSubtitle },
                           { key: "saldo", label: "Penjualan Saldo", sub: periodColumnSubtitle },
                           { key: "totalPenjualan", label: "Total Penjualan", sub: periodColumnSubtitle },
-                        ]),
+                        ])),
                         ...(tab === "ar" ? [
                           { key: "totalPiutang", label: "Total Piutang" },
                           { key: "totalDibayar", label: "Total Dibayar" },
@@ -9687,6 +11023,13 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
                   <tbody>
                     {filteredDseList.map((dse, dseIdx) => (
                       <DseInputRow key={dse.dse_code} t={t} profile={profile} isCardView={false} dse={dse} mode={dseInputMode} rank={dseIdx + 1} isToday={periodMode === "tanggal" && entryDate === todayISO()}
+                        sellinUpload={sellinUploadByDseCode[dse.dse_code]}
+                        sellinUploadAvailable={sellinUploadRosterAvailable}
+                        sellinAppAsOfTotal={sellinAppAsOfByDseCode[dse.dse_code]}
+                        sellinAppAsOfSp={sellinAppAsOfSpByDseCode[dse.dse_code]}
+                        sellinAppAsOfVou={sellinAppAsOfVouByDseCode[dse.dse_code]}
+                        sellinAppAsOfSaldo={sellinAppAsOfSaldoByDseCode[dse.dse_code]}
+                        compareRoster={compareRoster}
                         entryDate={entryDate}
                         arMonth={calViewMonth}
                         periodMode={periodMode}
@@ -10004,6 +11347,23 @@ export default function DSE_ProdAR({ theme, profile, onBack, category = "dse", s
       `}</style>
       {showCetakBulk && typeof document !== "undefined" && createPortal(
         <ArCetakBulkModal t={t} arMonth={calViewMonth} list={bulkList} profile={profile} onClose={() => setShowCetakBulk(false)} />,
+        document.body
+      )}
+      {/* BARU (permintaan user - "buat langsung disini saja untuk
+          perbandingannya"): modal upload & bandingkan sellin DSE, dibuka
+          dari tombol "Upload Sellin DSE" di baris Partner/Region/Area/
+          District/DSE. Habis upload sukses, regionSummary di-refresh
+          biar kolom "Sellin Upload"/"Selisih" di tabel langsung update. */}
+      {sellinCompareOpen && typeof document !== "undefined" && createPortal(
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,32,0.6)", zIndex: 9950, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setSellinCompareOpen(false)}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 1400, maxHeight: "92vh", overflowY: "auto", borderRadius: 16, background: t.card, boxShadow: "0 24px 60px rgba(0,0,0,0.4)", padding: 22, position: "relative" }}>
+            <button onClick={() => setSellinCompareOpen(false)} title="Tutup"
+              style={{ position: "absolute", top: 16, right: 16, width: 32, height: 32, borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <X size={16} />
+            </button>
+            <AdminDseSellinCompare theme={d ? "dark" : "light"} onUploaded={() => loadRegionSummary()} initialPeriod={calViewMonth.slice(0, 7)} />
+          </div>
+        </div>,
         document.body
       )}
     </div>

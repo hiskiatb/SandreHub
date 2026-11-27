@@ -1,0 +1,213 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# UPDATE (permintaan user - "bagian ini harusnya tidak bisa diklik, namun
+# setiap kolomnya tetap bisa difilter seperti kolom lain"): 6 kolom baru
+# (Total Penjualan (SP+VC+Saldo), Sell-in SP/Voucher/Saldo, Total OSA,
+# Selisih) level DSE (roster) - (a) <tr> baris PUNYA onClick yg buka popup
+# Info kalau diklik di mana aja (lihat `<tr id={...dse-row...} onClick=`),
+# jadi 6 <td> baru ini perlu `onClick={(e) => e.stopPropagation()}` biar
+# klik di situ TIDAK ikut buka popup; (b) kolomnya skrng ditambah ke
+# pipeline filter/sort yg sama persis dipakai kolom lain (enrichedDse ->
+# colOptions -> columnFilteredDse -> colFilters -> sort switch), lalu
+# `noFilterIcon: true` dihapus dari config header-nya supaya ikon filter
+# (ExcelFilter) muncul & berfungsi SAMA PERSIS kolom lain.
+
+# 1) enrichedDse: tambah 6 field baru - SAMA PERSIS formula yg dipakai di
+# <td> DseInputRow (lihat sellin_cols_dse_level.py: totalExclFwaDisplay/
+# totalOsa/selisih), tapi di level row enrichment supaya bisa
+# dipakai colOptions/filter/sort jg (bukan cuma ditampilkan).
+do(
+    '''    const ageDaysVal = statusAgeInfo(r.dse_code, statusVal, statusEvents, joinVal)?.days ?? null;
+    return { r, namaVal, statusVal, joinVal, partnerVal, regionVal, branchVal, mcVal, nilaiSp, nilaiFwa, nilaiVoucher, nilaiSaldo, totalPenjualan, ar, catatanAll, totalPiutangVal, totalDibayarVal, arStatusVal, jatuhTempoVal, arKeteranganVal, ageDaysVal };
+  }), [dseList, identity, entries, prevAr, arItemsAgg, statusEvents]);''',
+    '''    const ageDaysVal = statusAgeInfo(r.dse_code, statusVal, statusEvents, joinVal)?.days ?? null;
+    // BARU (permintaan user - "tetap bisa difilter seperti kolom lain"):
+    // SAMA PERSIS formula yg dipakai <td> DseInputRow (sellinUploadAvailable
+    // -> pakai total yg dibatasi sampai as_of upload, fallback bulan
+    // penuh kalau belum ada upload) - diulang di sini supaya bisa masuk
+    // pipeline colOptions/filter/sort, bukan cuma ditampilkan di tabel.
+    const sellinUploadRow = sellinUploadByDseCode[r.dse_code];
+    const totalExclFwaFull = nilaiSp + nilaiVoucher + nilaiSaldo;
+    const totalPenjualanExclFwa = sellinUploadRosterAvailable ? (sellinAppAsOfByDseCode[r.dse_code] ?? 0) : totalExclFwaFull;
+    const sellinSp = sellinUploadRow ? fRaw(sellinUploadRow.sellin_sp) : 0;
+    const sellinVou = sellinUploadRow ? fRaw(sellinUploadRow.sellin_vou) : 0;
+    const sellinSaldo = sellinUploadRow ? fRaw(sellinUploadRow.sellin_saldo) : 0;
+    const totalOsa = sellinUploadRow ? (sellinSp + sellinVou + sellinSaldo) : 0;
+    const selisihSellin = sellinUploadRow ? (totalPenjualanExclFwa - totalOsa) : 0;
+    return { r, namaVal, statusVal, joinVal, partnerVal, regionVal, branchVal, mcVal, nilaiSp, nilaiFwa, nilaiVoucher, nilaiSaldo, totalPenjualan, ar, catatanAll, totalPiutangVal, totalDibayarVal, arStatusVal, jatuhTempoVal, arKeteranganVal, ageDaysVal, totalPenjualanExclFwa, sellinSp, sellinVou, sellinSaldo, totalOsa, selisihSellin };
+  }), [dseList, identity, entries, prevAr, arItemsAgg, statusEvents, sellinUploadByDseCode, sellinUploadRosterAvailable, sellinAppAsOfByDseCode]);''',
+    label="enrichedDse field baru",
+)
+
+# 2) colOptions: tambah 6 entry.
+do(
+    '      arKeterangan: uniq(enrichedDse.map((x) => x.arKeteranganVal)),\n    };\n  }, [enrichedDse]);',
+    '''      arKeterangan: uniq(enrichedDse.map((x) => x.arKeteranganVal)),
+      totalPenjualanExclFwa: uniq(enrichedDse.map((x) => x.totalPenjualanExclFwa), (v) => `Rp ${fmtID(v)}`),
+      sellinSp: uniq(enrichedDse.map((x) => x.sellinSp), (v) => `Rp ${fmtID(v)}`),
+      sellinVou: uniq(enrichedDse.map((x) => x.sellinVou), (v) => `Rp ${fmtID(v)}`),
+      sellinSaldo: uniq(enrichedDse.map((x) => x.sellinSaldo), (v) => `Rp ${fmtID(v)}`),
+      totalOsa: uniq(enrichedDse.map((x) => x.totalOsa), (v) => `Rp ${fmtID(v)}`),
+      selisihSellin: uniq(enrichedDse.map((x) => x.selisihSellin), (v) => `Rp ${fmtID(v)}`),
+    };
+  }, [enrichedDse]);''',
+    label="colOptions 6 entry baru",
+)
+
+# 3) columnFilteredDse: tambah 6 pengecekan filter.
+do(
+    '      if (colFilters.arKeterangan.length && !colFilters.arKeterangan.includes(x.arKeteranganVal)) return false;\n      return true;',
+    '''      if (colFilters.arKeterangan.length && !colFilters.arKeterangan.includes(x.arKeteranganVal)) return false;
+      if (colFilters.totalPenjualanExclFwa.length && !colFilters.totalPenjualanExclFwa.includes(x.totalPenjualanExclFwa)) return false;
+      if (colFilters.sellinSp.length && !colFilters.sellinSp.includes(x.sellinSp)) return false;
+      if (colFilters.sellinVou.length && !colFilters.sellinVou.includes(x.sellinVou)) return false;
+      if (colFilters.sellinSaldo.length && !colFilters.sellinSaldo.includes(x.sellinSaldo)) return false;
+      if (colFilters.totalOsa.length && !colFilters.totalOsa.includes(x.totalOsa)) return false;
+      if (colFilters.selisihSellin.length && !colFilters.selisihSellin.includes(x.selisihSellin)) return false;
+      return true;''',
+    label="columnFilteredDse 6 pengecekan baru",
+)
+
+# 4) colFilters state init + resetColFilters: tambah 6 key baru.
+do(
+    '''  const [colFilters, setColFilters] = useState({
+    id: [], partner: [], region: [], branch: [], mc: [], nama: [], status: [], join: [],
+    totalSp: [], totalFwa: [], totalVoucher: [],
+    saldo: [], totalPenjualan: [], ar: [], catatan: [],
+    totalPiutang: [], totalDibayar: [], arStatus: [], jatuhTempo: [], arKeterangan: [],''',
+    '''  const [colFilters, setColFilters] = useState({
+    id: [], partner: [], region: [], branch: [], mc: [], nama: [], status: [], join: [],
+    totalSp: [], totalFwa: [], totalVoucher: [],
+    saldo: [], totalPenjualan: [], ar: [], catatan: [],
+    totalPiutang: [], totalDibayar: [], arStatus: [], jatuhTempo: [], arKeterangan: [],
+    totalPenjualanExclFwa: [], sellinSp: [], sellinVou: [], sellinSaldo: [], totalOsa: [], selisihSellin: [],''',
+    label="colFilters init 6 key baru",
+)
+do(
+    '''  const resetColFilters = () => setColFilters({
+    id: [], partner: [], region: [], branch: [], mc: [], nama: [], status: [], join: [],
+    totalSp: [], totalFwa: [], totalVoucher: [],
+    saldo: [], totalPenjualan: [], ar: [], catatan: [],
+    totalPiutang: [], totalDibayar: [], arStatus: [], jatuhTempo: [], arKeterangan: [],
+    statusAge: [],
+  });''',
+    '''  const resetColFilters = () => setColFilters({
+    id: [], partner: [], region: [], branch: [], mc: [], nama: [], status: [], join: [],
+    totalSp: [], totalFwa: [], totalVoucher: [],
+    saldo: [], totalPenjualan: [], ar: [], catatan: [],
+    totalPiutang: [], totalDibayar: [], arStatus: [], jatuhTempo: [], arKeterangan: [],
+    totalPenjualanExclFwa: [], sellinSp: [], sellinVou: [], sellinSaldo: [], totalOsa: [], selisihSellin: [],
+    statusAge: [],
+  });''',
+    label="resetColFilters 6 key baru",
+)
+
+# 5) Sort switch: tambah 6 case.
+do(
+    '          case "arKeterangan": return x.arKeteranganVal || "";\n          default: return "";',
+    '''          case "arKeterangan": return x.arKeteranganVal || "";
+          case "totalPenjualanExclFwa": return x.totalPenjualanExclFwa;
+          case "sellinSp": return x.sellinSp;
+          case "sellinVou": return x.sellinVou;
+          case "sellinSaldo": return x.sellinSaldo;
+          case "totalOsa": return x.totalOsa;
+          case "selisihSellin": return x.selisihSellin;
+          default: return "";''',
+    label="sort switch 6 case baru",
+)
+
+# 6) Hapus noFilterIcon dari config header 6 kolom - skrng pakai
+# ExcelFilter generik SAMA PERSIS kolom lain.
+do(
+    '{ key: "totalPenjualanExclFwa", label: "Total Penjualan (SP+VC+Saldo)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : periodColumnSubtitle, noFilterIcon: true },',
+    '{ key: "totalPenjualanExclFwa", label: "Total Penjualan (SP+VC+Saldo)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : periodColumnSubtitle },',
+    label="header totalPenjualanExclFwa hapus noFilterIcon",
+)
+do(
+    '{ key: "sellinSp", label: "Sell-in SP (S100)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : "–", noFilterIcon: true },',
+    '{ key: "sellinSp", label: "Sell-in SP (S100)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : "–" },',
+    label="header sellinSp hapus noFilterIcon",
+)
+do(
+    '{ key: "sellinVou", label: "Sell-in Voucher (S100)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : "–", noFilterIcon: true },',
+    '{ key: "sellinVou", label: "Sell-in Voucher (S100)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : "–" },',
+    label="header sellinVou hapus noFilterIcon",
+)
+do(
+    '{ key: "sellinSaldo", label: "Sell-in Saldo (S100)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : "–", noFilterIcon: true },',
+    '{ key: "sellinSaldo", label: "Sell-in Saldo (S100)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : "–" },',
+    label="header sellinSaldo hapus noFilterIcon",
+)
+do(
+    '{ key: "totalOsa", label: "Total OSA (S100)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : "–", noFilterIcon: true },',
+    '{ key: "totalOsa", label: "Total OSA (S100)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : "–" },',
+    label="header totalOsa hapus noFilterIcon",
+)
+do(
+    '{ key: "selisihSellin", label: "Selisih", noFilterIcon: true },',
+    '{ key: "selisihSellin", label: "Selisih" },',
+    label="header selisihSellin hapus noFilterIcon",
+)
+
+# 7) <td> cells: cegah klik bubble ke <tr onClick> row (buka popup Info).
+do(
+    '<td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", borderLeft: `2px solid ${t.line}`, fontWeight: 700, color: t.hi }}>Rp {fmtID(totalExclFwaDisplay)}</td>',
+    '<td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", borderLeft: `2px solid ${t.line}`, fontWeight: 700, color: t.hi, cursor: "default" }}>Rp {fmtID(totalExclFwaDisplay)}</td>',
+    label="td totalExclFwaDisplay stopPropagation",
+)
+do(
+    '<td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: up ? t.hi : t.lo }}>{up ? `Rp ${fmtID(up.sellin_sp)}` : "–"}</td>',
+    '<td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: up ? t.hi : t.lo, cursor: "default" }}>{up ? `Rp ${fmtID(up.sellin_sp)}` : "–"}</td>',
+    label="td sellinSp(up) stopPropagation",
+)
+do(
+    '<td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: up ? t.hi : t.lo }}>{up ? `Rp ${fmtID(up.sellin_vou)}` : "–"}</td>',
+    '<td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: up ? t.hi : t.lo, cursor: "default" }}>{up ? `Rp ${fmtID(up.sellin_vou)}` : "–"}</td>',
+    label="td sellinVou(up) stopPropagation",
+)
+do(
+    '<td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: up ? t.hi : t.lo }}>{up ? `Rp ${fmtID(up.sellin_saldo)}` : "–"}</td>',
+    '<td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: up ? t.hi : t.lo, cursor: "default" }}>{up ? `Rp ${fmtID(up.sellin_saldo)}` : "–"}</td>',
+    label="td sellinSaldo(up) stopPropagation",
+)
+do(
+    '<td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 800, color: up ? t.hi : t.lo }}>{up ? `Rp ${fmtID(totalOsa)}` : "–"}</td>',
+    '<td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 800, color: up ? t.hi : t.lo, cursor: "default" }}>{up ? `Rp ${fmtID(totalOsa)}` : "–"}</td>',
+    label="td totalOsa(up) stopPropagation",
+)
+do(
+    '<td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: up ? (selisih !== 0 ? t.red : t.mid) : t.lo }}>{up ? `Rp ${fmtID(selisih)}` : "–"}</td>',
+    '<td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: up ? (selisih !== 0 ? t.red : t.mid) : t.lo, cursor: "default" }}>{up ? `Rp ${fmtID(selisih)}` : "–"}</td>',
+    label="td selisih(up) stopPropagation",
+)
+do(
+    '''                  <>
+                    <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo }}>–</td>
+                    <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo }}>–</td>
+                    <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo }}>–</td>
+                    <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo }}>–</td>
+                    <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo }}>–</td>
+                  </>''',
+    '''                  <>
+                    <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo, cursor: "default" }}>–</td>
+                    <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo, cursor: "default" }}>–</td>
+                    <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo, cursor: "default" }}>–</td>
+                    <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo, cursor: "default" }}>–</td>
+                    <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo, cursor: "default" }}>–</td>
+                  </>''',
+    label="td dash(no upload) stopPropagation",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - 6 kolom baru level DSE: tidak bisa diklik (row), tapi bisa difilter/sort")

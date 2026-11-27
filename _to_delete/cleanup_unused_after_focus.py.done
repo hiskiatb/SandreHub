@@ -1,0 +1,30 @@
+path = "app/dashboard/components/AdminDseSellinCompare.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# Bersihkan state onlyMismatch/showUnmatched & import ChevronDown/ChevronUp
+# yg sekarang tidak terpakai lagi setelah tabel selisih & toggle
+# collapse-nya dihapus (lihat focus_unmatched.py).
+do(
+    '  AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, FileSpreadsheet,\n',
+    '  AlertTriangle, CheckCircle2, FileSpreadsheet,\n',
+    label="hapus import ChevronDown/ChevronUp",
+)
+
+do(
+    '  const [onlyMismatch, setOnlyMismatch] = useState(false);\n  const [showUnmatched, setShowUnmatched] = useState(false);\n',
+    '',
+    label="hapus state onlyMismatch/showUnmatched",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - cleanup state/import tidak terpakai")

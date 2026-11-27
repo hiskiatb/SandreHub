@@ -1,0 +1,207 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# UPDATE (permintaan user - screenshot tabel level DSE, "mengapa masih
+# seperti ini harusnya urutannya penjualan sp, sellin sp, penjualan fwa
+# dihilangkan dari mode pembanding ini, lalu penjualan voucher, sellin
+# voucher, penjualan saldo, sellin saldo, total penjualan, total sellin"):
+# dulu compareRoster ON cuma nambahin 6 kolom pembanding NEMPEL DI
+# BELAKANG kolom input asli (urutan: SP,FWA,Voucher,Saldo,TotalPenjualan,
+# lalu TotalExclFwa,SellinSP,SellinVou,SellinSaldo,TotalOsa,Selisih) -
+# SEKARANG direorder jadi BERPASANGAN LANGSUNG per metrik persis kayak
+# tabel Ringkasan: SP|SellinSP, Voucher|SellinVoucher, Saldo|SellinSaldo,
+# TotalExclFwa|TotalOsa|Selisih - kolom FWA DIHILANGKAN TOTAL dari mode
+# pembanding ini (compareRoster ON). Kolom input SP/Voucher/Saldo/Total
+# TETAP kolom editable yg sama (onClick buka popup edit) - cuma posisi &
+# (saat ON) kolom Total-nya ganti ke varian Excl FWA yg udah as-of
+# restricted, FWA cuma disembunyikan pas compareRoster ON (compareRoster
+# OFF: urutan & isi balik ke 5 kolom original, FWA muncul lagi).
+
+# ---------------------------------------------------------------------
+# 1) HEADER kolom - reorder jadi berpasangan, FWA dihilangkan saat ON.
+do(
+    '''                        ...(tab === "ar" ? [] : [
+                          { key: "totalSp", label: "Penjualan SP", sub: periodColumnSubtitle },
+                          { key: "totalFwa", label: "Penjualan FWA", sub: periodColumnSubtitle },
+                          { key: "totalVoucher", label: "Penjualan Voucher", sub: periodColumnSubtitle },
+                          { key: "saldo", label: "Penjualan Saldo", sub: periodColumnSubtitle },
+                          { key: "totalPenjualan", label: "Total Penjualan", sub: periodColumnSubtitle },
+                          // BARU (permintaan user - "dan ini sampai ke
+                          // level DSE ya" + "tambah kolom Total Penjualan
+                          // (SP+VC+Saldo)" + "SELL-IN SP/VOUCHER/SALDO
+                          // (S100)" + "TOTAL OSA (S100)"): sama persis 6
+                          // kolom yg sudah ada di tabel Ringkasan Partner/
+                          // Region/Area/District, turun ke level DSE
+                          // individual juga. Cuma Full Month (data upload
+                          // snapshot MTD, ga relevan dibandingkan ke 1
+                          // hari Daily).
+                          // UPDATE (permintaan user - "jangan langsung
+                          // tampilan pembanding namun ditrigger dengan
+                          // tombol khusus bandingkan data"): 6 kolom
+                          // pembanding ini sekarang CUMA muncul kalau
+                          // compareRoster aktif (tombol "Bandingkan Data"
+                          // di toolbar atas, independen dari compareRollup
+                          // di tabel Ringkasan) - sebelumnya selalu
+                          // tampil asal Full Month.
+                          ...(periodMode === "bulan" && compareRoster ? [
+                            { key: "totalPenjualanExclFwa", label: "Total Penjualan (Excl FWA)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : periodColumnSubtitle },
+                            { key: "sellinSp", label: "Sell-in SP (S100)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : "–" },
+                            { key: "sellinVou", label: "Sell-in Voucher (S100)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : "–" },
+                            { key: "sellinSaldo", label: "Sell-in Saldo (S100)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : "–" },
+                            { key: "totalOsa", label: "Total OSA (S100)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : "–" },
+                            { key: "selisihSellin", label: "Selisih" },
+                          ] : []),
+                        ]),''',
+    '''                        // UPDATE (permintaan user - "urutannya
+                        // penjualan sp, sellin sp, penjualan fwa
+                        // dihilangkan dari mode pembanding ini, lalu
+                        // penjualan voucher, sellin voucher, penjualan
+                        // saldo, sellin saldo, total penjualan, total
+                        // sellin"): compareRoster ON -> kolom
+                        // BERPASANGAN langsung per metrik (SAMA PERSIS
+                        // pola tabel Ringkasan), FWA disembunyikan total.
+                        // compareRoster OFF -> balik ke 5 kolom original
+                        // (SP/FWA/Voucher/Saldo/Total), FWA muncul lagi.
+                        ...(tab === "ar" ? [] : (periodMode === "bulan" && compareRoster ? (() => {
+                          const asOfSub = sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : periodColumnSubtitle;
+                          const sellinSub = sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : "–";
+                          return [
+                            { key: "totalSp", label: "Penjualan SP", sub: asOfSub },
+                            { key: "sellinSp", label: "Sell-in SP (S100)", sub: sellinSub },
+                            { key: "totalVoucher", label: "Penjualan Voucher", sub: asOfSub },
+                            { key: "sellinVou", label: "Sell-in Voucher (S100)", sub: sellinSub },
+                            { key: "saldo", label: "Penjualan Saldo", sub: asOfSub },
+                            { key: "sellinSaldo", label: "Sell-in Saldo (S100)", sub: sellinSub },
+                            { key: "totalPenjualanExclFwa", label: "Total Penjualan (Excl FWA)", sub: asOfSub },
+                            { key: "totalOsa", label: "Total OSA (S100)", sub: sellinSub },
+                            { key: "selisihSellin", label: "Selisih" },
+                          ];
+                        })() : [
+                          { key: "totalSp", label: "Penjualan SP", sub: periodColumnSubtitle },
+                          { key: "totalFwa", label: "Penjualan FWA", sub: periodColumnSubtitle },
+                          { key: "totalVoucher", label: "Penjualan Voucher", sub: periodColumnSubtitle },
+                          { key: "saldo", label: "Penjualan Saldo", sub: periodColumnSubtitle },
+                          { key: "totalPenjualan", label: "Total Penjualan", sub: periodColumnSubtitle },
+                        ])),''',
+    label="header roster reorder berpasangan",
+)
+
+# ---------------------------------------------------------------------
+# 2) <td> DseInputRow - SAMA PERSIS urutan baru di header: SP|SellinSP,
+# (FWA disembunyikan kalau ON), Voucher|SellinVoucher, Saldo|SellinSaldo,
+# TotalExclFwa|TotalOsa|Selisih (kalau ON) ATAU FWA + Total Penjualan
+# biasa (kalau OFF) - kolom input (SP/Voucher/Saldo/Total) TETAP kolom
+# yg sama, onClick buka popup edit tetap jalan seperti biasa.
+do(
+    '''          <td onClick={openPopupToTab("sp")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", borderLeft: `2px solid ${t.line}`, background: t.redBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(e.nilai_sp)}</td>
+          <td onClick={openPopupToTab("fwa")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", background: t.pinkBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(e.nilai_fwa)}</td>
+          <td onClick={openPopupToTab("voucher")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", background: t.blueBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(e.nilai_voucher)}</td>
+          <td onClick={openPopupToTab("saldo")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 140, textAlign: "right", background: t.amberBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(e.nilai_saldo)}</td>
+          <td onClick={openPopupToTab("info")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 800, color: t.teal, whiteSpace: "nowrap", transition: "filter 0.1s, box-shadow 0.1s" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              Rp {fmtID(totalPenjualan)}
+              <ChevronRight size={12} color={t.teal} style={{ flexShrink: 0, opacity: 0.6 }} />
+            </span>
+          </td>
+          {periodMode === "bulan" && compareRoster && (() => {
+            const totalExclFwa = fRaw(e.nilai_sp) + fRaw(e.nilai_voucher) + fRaw(e.nilai_saldo);
+            const totalExclFwaDisplay = sellinUploadAvailable ? (sellinAppAsOfTotal ?? 0) : totalExclFwa;
+            const up = sellinUpload;
+            const totalOsa = up ? (fRaw(up.sellin_sp) + fRaw(up.sellin_vou) + fRaw(up.sellin_saldo)) : null;
+            const selisih = up ? (totalExclFwaDisplay - totalOsa) : null;
+            return (
+              <>
+                <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", borderLeft: `2px solid ${t.line}`, fontWeight: 700, color: t.hi, cursor: "default" }}>Rp {fmtID(totalExclFwaDisplay)}</td>
+                {sellinUploadAvailable ? (
+                  <>
+                    <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: up ? t.hi : t.lo, cursor: "default" }}>{up ? `Rp ${fmtID(up.sellin_sp)}` : "–"}</td>
+                    <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: up ? t.hi : t.lo, cursor: "default" }}>{up ? `Rp ${fmtID(up.sellin_vou)}` : "–"}</td>
+                    <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: up ? t.hi : t.lo, cursor: "default" }}>{up ? `Rp ${fmtID(up.sellin_saldo)}` : "–"}</td>
+                    <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 800, color: up ? t.hi : t.lo, cursor: "default" }}>{up ? `Rp ${fmtID(totalOsa)}` : "–"}</td>
+                    <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: up ? (selisih !== 0 ? t.red : t.mid) : t.lo, cursor: "default" }}>{up ? `Rp ${fmtID(selisih)}` : "–"}</td>
+                  </>
+                ) : (
+                  <>
+                    <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo, cursor: "default" }}>–</td>
+                    <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo, cursor: "default" }}>–</td>
+                    <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo, cursor: "default" }}>–</td>
+                    <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo, cursor: "default" }}>–</td>
+                    <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo, cursor: "default" }}>–</td>
+                  </>
+                )}
+              </>
+            );
+          })()}
+        </>''',
+    '''          <td onClick={openPopupToTab("sp")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", borderLeft: `2px solid ${t.line}`, background: t.redBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(e.nilai_sp)}</td>
+          {periodMode === "bulan" && compareRoster && (
+            sellinUploadAvailable ? (
+              <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: t.hi, cursor: "default" }}>Rp {fmtID(sellinUpload.sellin_sp)}</td>
+            ) : (
+              <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo, cursor: "default" }}>–</td>
+            )
+          )}
+          {!(periodMode === "bulan" && compareRoster) && (
+            <td onClick={openPopupToTab("fwa")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", background: t.pinkBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(e.nilai_fwa)}</td>
+          )}
+          <td onClick={openPopupToTab("voucher")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", background: t.blueBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(e.nilai_voucher)}</td>
+          {periodMode === "bulan" && compareRoster && (
+            sellinUploadAvailable ? (
+              <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: t.hi, cursor: "default" }}>Rp {fmtID(sellinUpload.sellin_vou)}</td>
+            ) : (
+              <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo, cursor: "default" }}>–</td>
+            )
+          )}
+          <td onClick={openPopupToTab("saldo")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 140, textAlign: "right", background: t.amberBg, fontWeight: 700, transition: "filter 0.1s, box-shadow 0.1s" }}>Rp {fmtID(e.nilai_saldo)}</td>
+          {periodMode === "bulan" && compareRoster && (
+            sellinUploadAvailable ? (
+              <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: t.hi, cursor: "default" }}>Rp {fmtID(sellinUpload.sellin_saldo)}</td>
+            ) : (
+              <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo, cursor: "default" }}>–</td>
+            )
+          )}
+          {!(periodMode === "bulan" && compareRoster) ? (
+            <td onClick={openPopupToTab("info")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 800, color: t.teal, whiteSpace: "nowrap", transition: "filter 0.1s, box-shadow 0.1s" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                Rp {fmtID(totalPenjualan)}
+                <ChevronRight size={12} color={t.teal} style={{ flexShrink: 0, opacity: 0.6 }} />
+              </span>
+            </td>
+          ) : (() => {
+            const totalExclFwa = fRaw(e.nilai_sp) + fRaw(e.nilai_voucher) + fRaw(e.nilai_saldo);
+            const totalExclFwaDisplay = sellinUploadAvailable ? (sellinAppAsOfTotal ?? 0) : totalExclFwa;
+            const up = sellinUpload;
+            const totalOsa = up ? (fRaw(up.sellin_sp) + fRaw(up.sellin_vou) + fRaw(up.sellin_saldo)) : null;
+            const selisih = up ? (totalExclFwaDisplay - totalOsa) : null;
+            return (
+              <>
+                <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: t.hi, cursor: "default" }}>Rp {fmtID(totalExclFwaDisplay)}</td>
+                {sellinUploadAvailable ? (
+                  <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 800, color: t.hi, cursor: "default" }}>{up ? `Rp ${fmtID(totalOsa)}` : "–"}</td>
+                ) : (
+                  <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo, cursor: "default" }}>–</td>
+                )}
+                {sellinUploadAvailable ? (
+                  <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: up ? (selisih !== 0 ? t.red : t.mid) : t.lo, cursor: "default" }}>{up ? `Rp ${fmtID(selisih)}` : "–"}</td>
+                ) : (
+                  <td onClick={(e) => e.stopPropagation()} style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo, cursor: "default" }}>–</td>
+                )}
+              </>
+            );
+          })()}
+        </>''',
+    label="td roster reorder berpasangan",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - header roster direorder jadi berpasangan, FWA disembunyikan pas compareRoster ON")

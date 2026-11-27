@@ -1,0 +1,46 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# 1) Header roster level DSE: tambah 6 kolom baru PERSIS sesudah
+#    "Total Penjualan" - SAMA PERSIS urutan td yg sudah ditambah di
+#    DseInputRow (lihat sellin_cols_dse_level.py). noFilterIcon:true
+#    (data dari sumber eksternal/upload, bukan field yg bisa
+#    difilter/diurutkan spt kolom lain). Cuma muncul di Full Month
+#    (periodMode === "bulan") - SAMA PERSIS gate di tabel rollup di atas &
+#    di <td>-nya sendiri.
+do(
+    '{ key: "totalPenjualan", label: "Total Penjualan", sub: periodColumnSubtitle },\n                        ]),',
+    '''{ key: "totalPenjualan", label: "Total Penjualan", sub: periodColumnSubtitle },
+                          // BARU (permintaan user - "dan ini sampai ke
+                          // level DSE ya" + "tambah kolom Total Penjualan
+                          // (SP+VC+Saldo)" + "SELL-IN SP/VOUCHER/SALDO
+                          // (S100)" + "TOTAL OSA (S100)"): sama persis 6
+                          // kolom yg sudah ada di tabel Ringkasan Partner/
+                          // Region/Area/District, turun ke level DSE
+                          // individual juga. Cuma Full Month (data upload
+                          // snapshot MTD, ga relevan dibandingkan ke 1
+                          // hari Daily).
+                          ...(periodMode === "bulan" ? [
+                            { key: "totalPenjualanExclFwa", label: "Total Penjualan (SP+VC+Saldo)", sub: periodColumnSubtitle, noFilterIcon: true },
+                            { key: "sellinSp", label: "Sell-in SP (S100)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : "–", noFilterIcon: true },
+                            { key: "sellinVou", label: "Sell-in Voucher (S100)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : "–", noFilterIcon: true },
+                            { key: "sellinSaldo", label: "Sell-in Saldo (S100)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : "–", noFilterIcon: true },
+                            { key: "totalOsa", label: "Total OSA (S100)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : "–", noFilterIcon: true },
+                            { key: "selisihSellin", label: "Selisih", noFilterIcon: true },
+                          ] : []),
+                        ]),''',
+    label="header kolom roster DSE",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - header roster DSE ditambah")

@@ -1,0 +1,42 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# FIX (permintaan user - screenshot kolom "TOTAL PENJUALAN (SP+VC+SALDO)"
+# subtitle "November 2026": "ini jangan buat november namun as of tanggal
+# berapa"): kolom ini beda dari kolom Penjualan SP/FWA/Voucher/Saldo/Total
+# Penjualan yg lain (yg emang nunjukkin akumulasi SATU BULAN PENUH, makanya
+# subtitle-nya cukup nama bulan) - kolom baru ini sengaja dibikin utk
+# dibandingkan head-to-head sama Sell-in SP/Voucher/Saldo (S100) yg upload
+# (yg subtitle-nya "as of <tanggal file>"), jadi subtitle-nya juga harus
+# "as of <tanggal>" - pakai tanggal HARI INI (data input aplikasi = live,
+# terus bertambah tiap hari sampai hari ini), sama format fmtDayMonth yg
+# udah dipakai di tempat lain (mis. subtitle mode Daily).
+
+# 1) Header tabel Ringkasan (Partner/Region/Area/District)
+do(
+    '''                              <span>Total Penjualan (SP+VC+Saldo)</span>
+                              <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{periodColumnSubtitle}</span>''',
+    '''                              <span>Total Penjualan (SP+VC+Saldo)</span>
+                              <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{`as of ${fmtDayMonth(todayISO())}`}</span>''',
+    label="header rollup total penjualan excl fwa",
+)
+
+# 2) Header roster level DSE (column config)
+do(
+    '{ key: "totalPenjualanExclFwa", label: "Total Penjualan (SP+VC+Saldo)", sub: periodColumnSubtitle, noFilterIcon: true },',
+    '{ key: "totalPenjualanExclFwa", label: "Total Penjualan (SP+VC+Saldo)", sub: `as of ${fmtDayMonth(todayISO())}`, noFilterIcon: true },',
+    label="header roster total penjualan excl fwa",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - subtitle Total Penjualan (SP+VC+Saldo) diganti jadi as of tanggal hari ini")

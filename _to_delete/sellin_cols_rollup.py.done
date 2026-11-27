@@ -1,0 +1,173 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# 1) State: tambah asOfDt dari file upload (dipakai subtitle "as of <tgl>")
+do(
+    "  const [sellinUploadAvailable, setSellinUploadAvailable] = useState(false);",
+    "  const [sellinUploadAvailable, setSellinUploadAvailable] = useState(false);\n"
+    '  // BARU (permintaan user - "dibawahnya tanggal as of nya"): tanggal\n'
+    '  // snapshot kumulatif dari file yg diupload (as_of_dt), ditampilkan\n'
+    '  // sbg subtitle kolom Sell-in SP/Voucher/Saldo/Total OSA - BEDA dari\n'
+    '  // periodColumnSubtitle (yg itu tanggal data APP, bukan file upload).\n'
+    "  const [sellinUploadAsOfDt, setSellinUploadAsOfDt] = useState(null);",
+    label="state asOfDt",
+)
+
+# 2) Fetch: ambil juga as_of_dt, capture nilainya
+old2 = '''          const { data: upRows, error: eUp } = await supabase
+            .from("mf_dse_admin_sellin_upload")
+            .select("dse_code, sellin_sp, sellin_vou, sellin_saldo")
+            .eq("period", uploadPeriod).eq("matched", true).in("dse_code", chunk);
+          if (eUp) { console.error("gagal muat mf_dse_admin_sellin_upload:", eUp); continue; }
+          (upRows || []).forEach((u) => {
+            const g = byGroup[groupOf[u.dse_code]];
+            if (!g) return;
+            anyUploadRow = true;
+            g.uploadSp += fRaw(u.sellin_sp); g.uploadVou += fRaw(u.sellin_vou); g.uploadSaldo += fRaw(u.sellin_saldo);
+          });
+        }
+        if (reqId === regionSummaryReqRef.current) setSellinUploadAvailable(anyUploadRow);
+      }'''
+new2 = '''          const { data: upRows, error: eUp } = await supabase
+            .from("mf_dse_admin_sellin_upload")
+            .select("dse_code, sellin_sp, sellin_vou, sellin_saldo, as_of_dt")
+            .eq("period", uploadPeriod).eq("matched", true).in("dse_code", chunk);
+          if (eUp) { console.error("gagal muat mf_dse_admin_sellin_upload:", eUp); continue; }
+          (upRows || []).forEach((u) => {
+            const g = byGroup[groupOf[u.dse_code]];
+            if (!g) return;
+            anyUploadRow = true;
+            if (capturedAsOfUp == null) capturedAsOfUp = u.as_of_dt;
+            g.uploadSp += fRaw(u.sellin_sp); g.uploadVou += fRaw(u.sellin_vou); g.uploadSaldo += fRaw(u.sellin_saldo);
+          });
+        }
+        if (reqId === regionSummaryReqRef.current) { setSellinUploadAvailable(anyUploadRow); setSellinUploadAsOfDt(capturedAsOfUp); }
+      }'''
+do(old2, new2, label="fetch as_of_dt")
+
+do(
+    "        const uploadPeriod = calViewMonth.slice(0, 7);\n        let anyUploadRow = false;",
+    "        const uploadPeriod = calViewMonth.slice(0, 7);\n        let anyUploadRow = false;\n        let capturedAsOfUp = null;",
+    label="declare capturedAsOfUp",
+)
+
+# 3) Header: ganti 2 kolom lama ("Sellin Upload"/"Selisih") jadi 6 kolom baru
+old3 = '''                        {/* BARU (permintaan user - "jadi tetap bisa dilihat
+                            dari leaderboard partner region ... walaupun
+                            belum diupload sediakan kolomnnya"): 2 kolom
+                            tambahan dari data upload admin (mf_dse_admin_
+                            sellin_upload) - selalu tampil (bukan cuma pas
+                            ada datanya), isinya "–" kalau belum ada upload
+                            utk periode bulan yg lagi dilihat. */}
+                        <div style={{ textAlign: "right", display: "flex", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>Sellin Upload</div>
+                        <div style={{ textAlign: "right", display: "flex", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>Selisih</div>
+                      </>
+                    )}
+                  </div>'''
+new3 = '''                        {/* BARU (permintaan user - "tambah kolom Total
+                            Penjualan (SP+VC+Saldo)" [exclude FWA, dari
+                            inputan app] + "SELL-IN SP/VOUCHER/SALDO (S100)"
+                            + "TOTAL OSA (S100)" [dari file upload admin] +
+                            "Selisih" - semua SELALU tampil, "–" kalau
+                            upload belum ada utk periode ini). */}
+                        <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                          <span>Total Penjualan (SP+VC+Saldo)</span>
+                          <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{periodColumnSubtitle}</span>
+                        </div>
+                        <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                          <span>Sell-in SP (S100)</span>
+                          <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{sellinUploadAsOfDt ? `as of ${sellinUploadAsOfDt}` : "–"}</span>
+                        </div>
+                        <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                          <span>Sell-in Voucher (S100)</span>
+                          <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{sellinUploadAsOfDt ? `as of ${sellinUploadAsOfDt}` : "–"}</span>
+                        </div>
+                        <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                          <span>Sell-in Saldo (S100)</span>
+                          <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{sellinUploadAsOfDt ? `as of ${sellinUploadAsOfDt}` : "–"}</span>
+                        </div>
+                        <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", height: "100%" }}>
+                          <span>Total OSA (S100)</span>
+                          <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{sellinUploadAsOfDt ? `as of ${sellinUploadAsOfDt}` : "–"}</span>
+                        </div>
+                        <div style={{ textAlign: "right", display: "flex", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>Selisih</div>
+                      </>
+                    )}
+                  </div>'''
+do(old3, new3, label="header 6 kolom baru")
+
+# 4) Row data: ganti 2 cell lama jadi 6 cell baru
+old4 = '''                          {/* BARU (permintaan user - upload sellin admin vs
+                              penjualan di app, langsung di tabel Ringkasan
+                              ini). SP+Voucher+Saldo saja (FWA ga ikut -
+                              sesuai desain awal fitur upload). "–" kalau
+                              memang belum ada upload sama sekali utk
+                              periode bulan ini. */}
+                          {sellinUploadAvailable ? (
+                            <div style={{ textAlign: "right", fontWeight: 700, color: t.hi }}>Rp {fmtID(r.uploadSp + r.uploadVou + r.uploadSaldo)}</div>
+                          ) : (
+                            <div style={{ textAlign: "right", color: t.lo }}>–</div>
+                          )}
+                          {sellinUploadAvailable ? (() => {
+                            const selisih = (r.nilaiSp + r.nilaiVoucher + r.nilaiSaldo) - (r.uploadSp + r.uploadVou + r.uploadSaldo);
+                            return <div style={{ textAlign: "right", fontWeight: 700, color: selisih !== 0 ? t.red : t.mid }}>Rp {fmtID(selisih)}</div>;
+                          })() : (
+                            <div style={{ textAlign: "right", color: t.lo }}>–</div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  ))}'''
+new4 = '''                          {/* BARU (permintaan user - "tambah kolom Total
+                              Penjualan (SP+VC+Saldo)" dari inputan [FWA
+                              exclude] + breakdown upload admin (Sell-in SP/
+                              Voucher/Saldo/Total OSA) + Selisih, sampai ke
+                              level DSE). Total Penjualan excl-FWA SELALU
+                              ada (dari inputan, ga butuh upload). Kolom
+                              upload "–" kalau memang belum ada upload sama
+                              sekali utk periode bulan ini. */}
+                          <div style={{ textAlign: "right", fontWeight: 700, color: t.hi }}>Rp {fmtID(r.nilaiSp + r.nilaiVoucher + r.nilaiSaldo)}</div>
+                          {sellinUploadAvailable ? (
+                            <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.uploadSp)}</div>
+                          ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                          {sellinUploadAvailable ? (
+                            <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.uploadVou)}</div>
+                          ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                          {sellinUploadAvailable ? (
+                            <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.uploadSaldo)}</div>
+                          ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                          {sellinUploadAvailable ? (
+                            <div style={{ textAlign: "right", fontWeight: 800, color: t.hi }}>Rp {fmtID(r.uploadSp + r.uploadVou + r.uploadSaldo)}</div>
+                          ) : (<div style={{ textAlign: "right", color: t.lo }}>–</div>)}
+                          {sellinUploadAvailable ? (() => {
+                            const selisih = (r.nilaiSp + r.nilaiVoucher + r.nilaiSaldo) - (r.uploadSp + r.uploadVou + r.uploadSaldo);
+                            return <div style={{ textAlign: "right", fontWeight: 700, color: selisih !== 0 ? t.red : t.mid }}>Rp {fmtID(selisih)}</div>;
+                          })() : (
+                            <div style={{ textAlign: "right", color: t.lo }}>–</div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  ))}'''
+do(old4, new4, label="row 6 kolom baru")
+
+# 5) Grid template: 8 kolom -> 12 kolom (44px label + 12x 1fr via repeat())
+do(
+    '"44px 1.3fr 1fr 1fr 1fr 1fr 1fr 1fr 1fr 1fr"',
+    '"44px 1.3fr repeat(12, 1fr)"',
+    n=2,
+    label="gridTemplateColumns 12 kolom",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - kolom rollup direstrukturisasi (6 kolom baru)")

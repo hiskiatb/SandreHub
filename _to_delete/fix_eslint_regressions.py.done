@@ -1,0 +1,126 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# FIX 1: tambah calViewMonth ke dependency array loadRegionSummary (dipakai
+# oleh blok fetch mf_dse_admin_sellin_upload yg baru ditambahkan).
+do(
+    "  }, [entryDate, summaryGroupBy, isRangeMode, sortedSelectedDates, tab, partnerFilter, regionFilter, branchFilter, mcFilter, periodMode, statusEvents, rankMetric]);",
+    "  }, [entryDate, summaryGroupBy, isRangeMode, sortedSelectedDates, tab, partnerFilter, regionFilter, branchFilter, mcFilter, periodMode, statusEvents, rankMetric, calViewMonth]);",
+    label="dep calViewMonth",
+)
+
+# FIX 2: pindahkan handleExportSellinXlsx (+ state exportingSellinXlsx) dari
+# SEBELUM filteredDseList ke SESUDAHNYA - forward-reference ke filteredDseList
+# (dideklarasikan ratusan baris di bawah via useMemo) bikin React Compiler
+# gagal preserve memoization-nya (react-hooks/preserve-manual-memoization).
+# Sekaligus perbaiki bug: filteredDseList isinya RAW row (x.r, lihat
+# `return out.map((x) => x.r)`), BUKAN objek enriched (nilaiSp/partnerVal/dst) -
+# export sekarang pakai columnFilteredDse (objek enriched `x` sebelum
+# di-map ke raw) + replikasi filter dseSearch yg sama.
+old_block_start = src.index("  // BARU (permintaan user - \"dan ada fitur datanya export as xlsx nya\"):")
+old_block_end = src.index("  const loadRegionSummary = useCallback(async () => {")
+old_block = src[old_block_start:old_block_end]
+assert "handleExportSellinXlsx" in old_block, "blok lama tidak ketemu persis"
+
+# hapus dari posisi lama
+src = src[:old_block_start] + src[old_block_end:]
+
+new_block = '''  // BARU (permintaan user - "dan ada fitur datanya export as xlsx nya"):
+  // export tabel yg SEDANG TAMPIL - kalau lagi di level Partner/Region/
+  // Area/District (rollup), export regionSummary apa adanya (termasuk
+  // kolom Sellin Upload/Selisih kalau sellinUploadAvailable); kalau lagi
+  // di level DSE (roster penuh), export columnFilteredDse (objek enriched
+  // SEBELUM filteredDseList nge-map balik ke raw row, lihat
+  // `return out.map((x) => x.r)` di bawah - makanya export TIDAK pakai
+  // filteredDseList langsung, field nilaiSp/partnerVal/dst sudah hilang
+  // di situ) + replikasi filter pencarian dseSearch yg sama + fetch
+  // cepat mf_dse_admin_sellin_upload utk periode yg sama (cuma pas
+  // export, ga disimpan sbg state permanen - hindari nambah beban
+  // render roster yg sudah sangat kompleks).
+  // Blok ini SENGAJA ditaruh SESUDAH deklarasi filteredDseList (bukan di
+  // dekat state2 lain di atas) - diletakkan sebelum compiler React keburu
+  // nge-skip optimisasi filteredDseList gara2 forward-reference kalau
+  // ditaruh sebelum deklarasinya.
+  const [exportingSellinXlsx, setExportingSellinXlsx] = useState(false);
+  const handleExportSellinXlsx = async () => {
+    setExportingSellinXlsx(true);
+    try {
+      const periodeLabel = `${MONTH_NAMES[Number(calViewMonth.slice(5, 7)) - 1]}_${calViewMonth.slice(0, 4)}`;
+      if (summaryGroupBy !== "dse") {
+        const head = ["#", summaryGroupLabel, "DSE Active", "DSE Vacant", "Penjualan SP", "Penjualan FWA", "Penjualan Voucher", "Penjualan Saldo", "Total Penjualan", "Sellin Upload (SP+Vou+Saldo)", "Selisih"];
+        const body = regionSummary.map((r, i) => [
+          i + 1, r.label, r.totalActive, r.totalVacant,
+          r.nilaiSp, r.nilaiFwa, r.nilaiVoucher, r.nilaiSaldo, r.nilaiSp + r.nilaiFwa + r.nilaiVoucher + r.nilaiSaldo,
+          sellinUploadAvailable ? (r.uploadSp + r.uploadVou + r.uploadSaldo) : "",
+          sellinUploadAvailable ? ((r.nilaiSp + r.nilaiVoucher + r.nilaiSaldo) - (r.uploadSp + r.uploadVou + r.uploadSaldo)) : "",
+        ]);
+        const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
+        ws["!freeze"] = { xSplit: 0, ySplit: 1 };
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, summaryGroupLabel);
+        XLSX.writeFile(wb, `Ringkasan_${summaryGroupLabel}_${periodeLabel}.xlsx`);
+        showToast(`Export selesai — ${body.length} baris.`, "ok");
+      } else {
+        const rows = columnFilteredDse.filter((x) => {
+          if (!dseSearch) return true;
+          const s = dseSearch.toLowerCase();
+          const r = x.r;
+          return r.dse_code?.toLowerCase().includes(s) || r.dse_code_3id?.toLowerCase().includes(s) || r.ds_name?.toLowerCase().includes(s);
+        });
+        const codes = rows.map((x) => x.r.dse_code).filter(Boolean);
+        let uploadByCode = {};
+        if (codes.length) {
+          const uploadPeriod = calViewMonth.slice(0, 7);
+          const UP_CHUNK = 500;
+          for (let i = 0; i < codes.length; i += UP_CHUNK) {
+            const chunk = codes.slice(i, i + UP_CHUNK);
+            const { data: upRows } = await supabase.from("mf_dse_admin_sellin_upload")
+              .select("dse_code, sellin_sp, sellin_vou, sellin_saldo")
+              .eq("period", uploadPeriod).eq("matched", true).in("dse_code", chunk);
+            (upRows || []).forEach((u) => { uploadByCode[u.dse_code] = u; });
+          }
+        }
+        const hasUpload = Object.keys(uploadByCode).length > 0;
+        const head = ["#", "Kode DSE", "Partner", "Region", "Area", "District", "Nama DSE", "Status", "Penjualan SP", "Penjualan FWA", "Penjualan Voucher", "Penjualan Saldo", "Total Penjualan", "Sellin Upload (SP+Vou+Saldo)", "Selisih"];
+        const body = rows.map((x, i) => {
+          const u = uploadByCode[x.r.dse_code];
+          const uploadTotal = u ? (fRaw(u.sellin_sp) + fRaw(u.sellin_vou) + fRaw(u.sellin_saldo)) : null;
+          return [
+            i + 1, x.r.dse_code, x.partnerVal || "", x.regionVal || "", x.branchVal || "", x.mcVal || "", x.namaVal || "", x.statusVal || "",
+            x.nilaiSp, x.nilaiFwa, x.nilaiVoucher, x.nilaiSaldo, x.totalPenjualan,
+            hasUpload ? (uploadTotal ?? "") : "",
+            hasUpload && u ? ((x.nilaiSp + x.nilaiVoucher + x.nilaiSaldo) - uploadTotal) : "",
+          ];
+        });
+        const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
+        ws["!freeze"] = { xSplit: 0, ySplit: 1 };
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "DSE");
+        XLSX.writeFile(wb, `Roster_DSE_${periodeLabel}.xlsx`);
+        showToast(`Export selesai — ${body.length} baris.`, "ok");
+      }
+    } catch (e) {
+      showToast(e.message || "Gagal export.", "error");
+    } finally {
+      setExportingSellinXlsx(false);
+    }
+  };
+
+'''
+
+anchor_after = "  }, [columnFilteredDse, dseSearch, sortConfig, tab, rankMetric]);\n"
+assert src.count(anchor_after) == 1, "anchor sesudah filteredDseList tidak ketemu/tidak unik"
+src = src.replace(anchor_after, anchor_after + "\n" + new_block, 1)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - regresi eslint diperbaiki (pindah handler + fix dep array)")

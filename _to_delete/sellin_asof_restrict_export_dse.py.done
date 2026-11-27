@@ -1,0 +1,67 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# UPDATE (permintaan user - "Total Penjualan (SP+VC+Saldo) hitung sampai
+# dengan tanggal data S100 yang sudah diupload"): export XLSX level DSE
+# (roster) - kolom "Selisih" dulu pakai total bulan PENUH (x.nilaiSp dkk,
+# sampai hari ini), skrng dibatasi sampai tanggal as_of upload jg (SAMA
+# PERSIS logic yg dipakai tabel on-screen & export Ringkasan) - apple-to-
+# apple sama Sellin Upload yg jg snapshot sampai tanggal itu.
+do(
+    '''            const { data: upRows } = await supabase.from("mf_dse_admin_sellin_upload")
+              .select("dse_code, sellin_sp, sellin_vou, sellin_saldo")
+              .eq("period", uploadPeriod).eq("matched", true).in("dse_code", chunk);
+            (upRows || []).forEach((u) => { uploadByCode[u.dse_code] = u; });
+          }
+        }
+        const hasUpload = Object.keys(uploadByCode).length > 0;''',
+    '''            const { data: upRows } = await supabase.from("mf_dse_admin_sellin_upload")
+              .select("dse_code, sellin_sp, sellin_vou, sellin_saldo, as_of_dt")
+              .eq("period", uploadPeriod).eq("matched", true).in("dse_code", chunk);
+            (upRows || []).forEach((u) => { uploadByCode[u.dse_code] = u; });
+          }
+        }
+        const hasUpload = Object.keys(uploadByCode).length > 0;
+        // BARU: tau tanggal as_of upload -> tarik ULANG total SP+Voucher+
+        // Saldo (excl FWA) dari mf_dse_prod_ar tapi DIBATASI sampai
+        // tanggal itu (bukan bulan penuh sampai hari ini) - dipakai itung
+        // Selisih yg apple-to-apple sama Sellin Upload.
+        let appAsOfByCode = {};
+        const capturedAsOf = hasUpload ? Object.values(uploadByCode)[0]?.as_of_dt : null;
+        if (hasUpload && capturedAsOf != null) {
+          const startISO = `${uploadPeriod}-01`;
+          const endISO = `${uploadPeriod}-${String(capturedAsOf).padStart(2, "0")}`;
+          for (let i = 0; i < codes.length; i += UP_CHUNK) {
+            const chunk = codes.slice(i, i + UP_CHUNK);
+            const { data: arRows } = await supabase.from("mf_dse_prod_ar")
+              .select("dse_code, nilai_sp, nilai_voucher, nilai_saldo")
+              .in("dse_code", chunk).gte("tanggal", startISO).lte("tanggal", endISO);
+            (arRows || []).forEach((p) => {
+              const a = appAsOfByCode[p.dse_code] || (appAsOfByCode[p.dse_code] = 0);
+              appAsOfByCode[p.dse_code] = a + fRaw(p.nilai_sp) + fRaw(p.nilai_voucher) + fRaw(p.nilai_saldo);
+            });
+          }
+        }''',
+    label="fetch app total as-of-restricted utk export DSE",
+)
+
+do(
+    '''            hasUpload ? (uploadTotal ?? "") : "",
+            hasUpload && u ? ((x.nilaiSp + x.nilaiVoucher + x.nilaiSaldo) - uploadTotal) : "",''',
+    '''            hasUpload ? (uploadTotal ?? "") : "",
+            hasUpload && u ? ((appAsOfByCode[x.r.dse_code] ?? (x.nilaiSp + x.nilaiVoucher + x.nilaiSaldo)) - uploadTotal) : "",''',
+    label="selisih export DSE pakai total as-of-restricted",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - export XLSX level DSE: selisih dibatasi sampai tanggal as of upload")

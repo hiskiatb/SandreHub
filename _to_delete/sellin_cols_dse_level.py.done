@@ -1,0 +1,76 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# 1) DseInputRow: terima prop baru sellinUpload (object {sp,vou,saldo}|undefined)
+#    & sellinUploadAvailable (bool) - dipakai utk 6 kolom baru di <td> tabel
+#    desktop. periodMode SUDAH ada sbg prop (ga perlu ditambah lagi).
+do(
+    "function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChange, identityEdit, onSave, saving, dirty, prevOutstanding, audit, onShowHistory, readOnly, isAdminAreaRole = false, infoPeriodsByDse, mode, rank, isToday, entryDate, onPickDate, onSwitchPeriodMode, onDailyFloorPrev, periodMode, periodSubtitle, profile, arMonth, runGuarded, statusEvents, hiddenCols = {}, loadingDse, dailyDisabled = false, autoOpenCode, onAutoOpenHandled }) {",
+    "function DseInputRow({ t, isCardView, dse, entry, onEntryChange, onIdentityChange, identityEdit, onSave, saving, dirty, prevOutstanding, audit, onShowHistory, readOnly, isAdminAreaRole = false, infoPeriodsByDse, mode, rank, isToday, entryDate, onPickDate, onSwitchPeriodMode, onDailyFloorPrev, periodMode, periodSubtitle, profile, arMonth, runGuarded, statusEvents, hiddenCols = {}, loadingDse, dailyDisabled = false, autoOpenCode, onAutoOpenHandled, sellinUpload, sellinUploadAvailable }) {",
+    label="DseInputRow props baru",
+)
+
+# 2) <td> baru PERSIS sesudah td "Total Penjualan" (level DSE) - permintaan
+#    user: "dan ini sampai ke level DSE ya" + "tambah kolom Total Penjualan
+#    (SP+VC+Saldo)" [FWA exclude, dari inputan] + breakdown Sell-in SP/
+#    Voucher/Saldo/Total OSA (S100) [dari file upload] + Selisih. Cuma
+#    tampil di mode Full Month (periodMode === "bulan") - SAMA PERSIS
+#    aturan di tabel rollup Partner/Region/Area/District di atas.
+old2 = '''          <td onClick={openPopupToTab("info")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 800, color: t.teal, whiteSpace: "nowrap", transition: "filter 0.1s, box-shadow 0.1s" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              Rp {fmtID(totalPenjualan)}
+              <ChevronRight size={12} color={t.teal} style={{ flexShrink: 0, opacity: 0.6 }} />
+            </span>
+          </td>
+        </>
+      ) : ('''
+new2 = '''          <td onClick={openPopupToTab("info")} {...cellHoverHandlers} style={{ ...rowClickable, padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 800, color: t.teal, whiteSpace: "nowrap", transition: "filter 0.1s, box-shadow 0.1s" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              Rp {fmtID(totalPenjualan)}
+              <ChevronRight size={12} color={t.teal} style={{ flexShrink: 0, opacity: 0.6 }} />
+            </span>
+          </td>
+          {periodMode === "bulan" && (() => {
+            const totalExclFwa = fRaw(e.nilai_sp) + fRaw(e.nilai_voucher) + fRaw(e.nilai_saldo);
+            const up = sellinUpload;
+            const totalOsa = up ? (fRaw(up.sellin_sp) + fRaw(up.sellin_vou) + fRaw(up.sellin_saldo)) : null;
+            const selisih = up ? (totalExclFwa - totalOsa) : null;
+            return (
+              <>
+                <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", borderLeft: `2px solid ${t.line}`, fontWeight: 700, color: t.hi }}>Rp {fmtID(totalExclFwa)}</td>
+                {sellinUploadAvailable ? (
+                  <>
+                    <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: up ? t.hi : t.lo }}>{up ? `Rp ${fmtID(up.sellin_sp)}` : "–"}</td>
+                    <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: up ? t.hi : t.lo }}>{up ? `Rp ${fmtID(up.sellin_vou)}` : "–"}</td>
+                    <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: up ? t.hi : t.lo }}>{up ? `Rp ${fmtID(up.sellin_saldo)}` : "–"}</td>
+                    <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 800, color: up ? t.hi : t.lo }}>{up ? `Rp ${fmtID(totalOsa)}` : "–"}</td>
+                    <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 700, color: up ? (selisih !== 0 ? t.red : t.mid) : t.lo }}>{up ? `Rp ${fmtID(selisih)}` : "–"}</td>
+                  </>
+                ) : (
+                  <>
+                    <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo }}>–</td>
+                    <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo }}>–</td>
+                    <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo }}>–</td>
+                    <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo }}>–</td>
+                    <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", color: t.lo }}>–</td>
+                  </>
+                )}
+              </>
+            );
+          })()}
+        </>
+      ) : ('''
+do(old2, new2, label="td baru level DSE")
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - bagian A (DseInputRow td) selesai")

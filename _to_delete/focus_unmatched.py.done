@@ -1,0 +1,190 @@
+path = "app/dashboard/components/AdminDseSellinCompare.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# UPDATE (permintaan user - "selisihnya memang wajar jadi tidak perlu
+# ditampilkan fokus ke dse yang tidak ditemukan"): selisih Upload vs App
+# itu WAJAR terjadi (upload = snapshot MTD sampai tanggal as-of tertentu,
+# app = data live yg terus bertambah) - jadi tabel detail per-DSE
+# Upload/App/Selisih DIHAPUS. Fokus tampilan sekarang ke daftar "DSE
+# Tidak Dikenali" (yg memang perlu ditindaklanjuti - kode gak match ke
+# database) - ditampilkan LANGSUNG (gak collapse lagi), search juga
+# sekarang nyari di daftar ini. Stat pill "Selisih ditemukan" & checkbox
+# "Hanya yang beda" ikut dihapus (ga relevan lagi tanpa tabel itu).
+do(
+    '''  const filteredRows = useMemo(() => {
+    let out = activeRows;
+    if (search.trim()) {
+      const q = norm(search);
+      out = out.filter((r) => norm(r.dse_code).includes(q) || norm(r.mdi).includes(q) || norm(r.mc).includes(q) || norm(r.branch).includes(q));
+    }
+    if (onlyMismatch) out = out.filter((r) => r.diffSp !== 0 || r.diffVou !== 0 || r.diffSaldo !== 0);
+    return out;
+  }, [activeRows, search, onlyMismatch]);
+
+  const mismatchCount = useMemo(() => activeRows.filter((r) => r.diffSp !== 0 || r.diffVou !== 0 || r.diffSaldo !== 0).length, [activeRows]);
+''',
+    '''  // UPDATE (permintaan user - "selisihnya memang wajar jadi tidak perlu
+  // ditampilkan fokus ke dse yang tidak ditemukan"): yg difilter search
+  // sekarang daftar "DSE Tidak Dikenali" (fokus utama tampilan), bukan
+  // lagi tabel perbandingan Upload/App/Selisih (sudah dihapus).
+  const filteredUnmatched = useMemo(() => {
+    let out = activeUnmatched;
+    if (search.trim()) {
+      const q = norm(search);
+      out = out.filter((r) => norm(r.raw_code_im3).includes(q) || norm(r.raw_code_3id).includes(q) || norm(r.mdi).includes(q) || norm(r.mc).includes(q) || norm(r.branch).includes(q));
+    }
+    return out;
+  }, [activeUnmatched, search]);
+''',
+    label="ganti filteredRows jadi filteredUnmatched",
+)
+
+do(
+    '''              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: t.mid, cursor: "pointer" }}>
+                <input type="checkbox" checked={onlyMismatch} onChange={(e) => setOnlyMismatch(e.target.checked)} />
+                Hanya yang beda ({mismatchCount})
+              </label>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+            <StatPill t={t} icon={<Wallet size={13} />} label="DSE cocok" value={activeRows.length} />
+            <StatPill t={t} icon={<AlertTriangle size={13} />} label="Selisih ditemukan" value={mismatchCount} accent={mismatchCount > 0 ? t.red : t.green} />
+            <StatPill t={t} icon={<X size={13} />} label="DSE tidak dikenali" value={activeUnmatched.length} accent={activeUnmatched.length > 0 ? t.amber : t.green} />
+          </div>
+
+          <div style={{ overflowX: "auto", border: `1px solid ${t.line}`, borderRadius: 12 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: t.sub }}>
+                  <Th t={t}>Kode DSE</Th><Th t={t}>Partner</Th><Th t={t}>MC</Th><Th t={t}>Area</Th>
+                  <Th t={t} align="right">Upload SP</Th><Th t={t} align="right">App SP</Th><Th t={t} align="right">Selisih SP</Th>
+                  <Th t={t} align="right">Upload Vou</Th><Th t={t} align="right">App Vou</Th><Th t={t} align="right">Selisih Vou</Th>
+                  <Th t={t} align="right">Upload Saldo</Th><Th t={t} align="right">App Saldo</Th><Th t={t} align="right">Selisih Saldo</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredRows.map((r) => {
+                  const mismatch = r.diffSp !== 0 || r.diffVou !== 0 || r.diffSaldo !== 0;
+                  return (
+                    <tr key={r.dse_code} style={{ borderTop: `1px solid ${t.lineH}`, background: mismatch ? t.redBg : "transparent" }}>
+                      <Td t={t} bold>{r.dse_code}</Td>
+                      <Td t={t}>{r.mdi}</Td>
+                      <Td t={t}>{r.mc}</Td>
+                      <Td t={t}>{r.branch}</Td>
+                      <Td t={t} align="right">{fmtID(r.uploadSp)}</Td>
+                      <Td t={t} align="right">{fmtID(r.appSp)}</Td>
+                      <Td t={t} align="right" color={r.diffSp !== 0 ? t.red : t.lo}>{fmtID(r.diffSp)}</Td>
+                      <Td t={t} align="right">{fmtID(r.uploadVou)}</Td>
+                      <Td t={t} align="right">{fmtID(r.appVou)}</Td>
+                      <Td t={t} align="right" color={r.diffVou !== 0 ? t.red : t.lo}>{fmtID(r.diffVou)}</Td>
+                      <Td t={t} align="right">{fmtID(r.uploadSaldo)}</Td>
+                      <Td t={t} align="right">{fmtID(r.appSaldo)}</Td>
+                      <Td t={t} align="right" color={r.diffSaldo !== 0 ? t.red : t.lo}>{fmtID(r.diffSaldo)}</Td>
+                    </tr>
+                  );
+                })}
+                {!filteredRows.length && (
+                  <tr><td colSpan={13} style={{ padding: 24, textAlign: "center", color: t.mid, fontSize: 12.5 }}>Tidak ada data yang cocok dengan filter.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <button onClick={() => setShowUnmatched((v) => !v)}
+            style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 16, marginBottom: 8, background: "none", border: "none", color: t.mid, fontSize: 12.5, fontWeight: 700, cursor: "pointer", padding: 0 }}>
+            {showUnmatched ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            DSE Tidak Dikenali ({activeUnmatched.length})
+          </button>
+          {showUnmatched && (
+            <div style={{ overflowX: "auto", border: `1px solid ${t.amberBd}`, borderRadius: 12, background: t.amberBg }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr>
+                    <Th t={t}>Brand</Th><Th t={t}>Kode Mentah</Th><Th t={t}>Partner (dari file)</Th><Th t={t}>MC</Th><Th t={t}>Area</Th>
+                    <Th t={t} align="right">Sellin SP</Th><Th t={t} align="right">Sellin Vou</Th><Th t={t} align="right">Sellin Saldo</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {activeUnmatched.map((r, i) => (
+                    <tr key={i} style={{ borderTop: `1px solid ${t.amberBd}` }}>
+                      <Td t={t}>{r.raw_code_im3 ? "IM3" : "3ID"}</Td>
+                      <Td t={t} bold>{r.raw_code_im3 || r.raw_code_3id}</Td>
+                      <Td t={t}>{r.mdi}</Td>
+                      <Td t={t}>{r.mc}</Td>
+                      <Td t={t}>{r.branch}</Td>
+                      <Td t={t} align="right">{fmtID(r.sellin_sp)}</Td>
+                      <Td t={t} align="right">{fmtID(r.sellin_vou)}</Td>
+                      <Td t={t} align="right">{fmtID(r.sellin_saldo)}</Td>
+                    </tr>
+                  ))}
+                  {!activeUnmatched.length && (
+                    <tr><td colSpan={8} style={{ padding: 20, textAlign: "center", color: t.mid, fontSize: 12.5 }}>Tidak ada - semua kode DSE cocok dengan database.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>''',
+    '''            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+            <StatPill t={t} icon={<Wallet size={13} />} label="DSE cocok" value={activeRows.length} />
+            <StatPill t={t} icon={<X size={13} />} label="DSE tidak dikenali" value={activeUnmatched.length} accent={activeUnmatched.length > 0 ? t.amber : t.green} />
+          </div>
+
+          {/* UPDATE (permintaan user - "selisihnya memang wajar jadi
+              tidak perlu ditampilkan, fokus ke dse yang tidak
+              ditemukan"): tabel detail Upload/App/Selisih per-DSE
+              DIHAPUS (selisih MTD vs app live memang wajar beda) -
+              fokus tampilan ke daftar DSE Tidak Dikenali di bawah,
+              langsung tampil (ga collapse lagi). */}
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>
+            DSE Tidak Dikenali ({activeUnmatched.length})
+          </div>
+          <div style={{ overflowX: "auto", border: `1px solid ${t.amberBd}`, borderRadius: 12, background: t.amberBg }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr>
+                  <Th t={t}>Brand</Th><Th t={t}>Kode Mentah</Th><Th t={t}>Partner (dari file)</Th><Th t={t}>MC</Th><Th t={t}>Area</Th>
+                  <Th t={t} align="right">Sellin SP</Th><Th t={t} align="right">Sellin Vou</Th><Th t={t} align="right">Sellin Saldo</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredUnmatched.map((r, i) => (
+                  <tr key={i} style={{ borderTop: `1px solid ${t.amberBd}` }}>
+                    <Td t={t}>{r.raw_code_im3 ? "IM3" : "3ID"}</Td>
+                    <Td t={t} bold>{r.raw_code_im3 || r.raw_code_3id}</Td>
+                    <Td t={t}>{r.mdi}</Td>
+                    <Td t={t}>{r.mc}</Td>
+                    <Td t={t}>{r.branch}</Td>
+                    <Td t={t} align="right">{fmtID(r.sellin_sp)}</Td>
+                    <Td t={t} align="right">{fmtID(r.sellin_vou)}</Td>
+                    <Td t={t} align="right">{fmtID(r.sellin_saldo)}</Td>
+                  </tr>
+                ))}
+                {!filteredUnmatched.length && (
+                  <tr><td colSpan={8} style={{ padding: 20, textAlign: "center", color: t.mid, fontSize: 12.5 }}>
+                    {activeUnmatched.length ? "Tidak ada yang cocok dengan pencarian." : "Tidak ada - semua kode DSE cocok dengan database."}
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>''',
+    label="hapus tabel selisih, fokus unmatched",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - fokus tampilan ke DSE Tidak Dikenali")

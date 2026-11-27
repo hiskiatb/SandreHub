@@ -1,0 +1,86 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# 1) State baru: map per-DSE upload (dse_code -> {sellin_sp, sellin_vou,
+#    sellin_saldo}), flag "ada upload utk roster yg lagi tampil", & tanggal
+#    as_of_dt-nya - TERPISAH dari sellinUploadAvailable/sellinUploadAsOfDt
+#    (itu punya tabel Ringkasan/rollup, beda query & scope).
+do(
+    '  const [sellinUploadAsOfDt, setSellinUploadAsOfDt] = useState(null);\n',
+    '''  const [sellinUploadAsOfDt, setSellinUploadAsOfDt] = useState(null);
+  // BARU (permintaan user - "dan ini sampai ke level DSE ya"): versi level
+  // DSE (roster individual) dari fitur upload sellin di atas - TERPISAH
+  // dari sellinUploadAvailable/sellinUploadAsOfDt (punya tabel Ringkasan/
+  // rollup, scope & query beda) biar ga saling ganggu. Map per dse_code
+  // diisi lewat useEffect TERSENDIRI (sengaja TIDAK digabung ke
+  // loadDseAndEntries yg sudah sangat kompleks/rawan) di bawah.
+  const [sellinUploadByDseCode, setSellinUploadByDseCode] = useState({});
+  const [sellinUploadRosterAvailable, setSellinUploadRosterAvailable] = useState(false);
+  const [sellinUploadRosterAsOfDt, setSellinUploadRosterAsOfDt] = useState(null);
+''',
+    label="state baru level DSE",
+)
+
+# 2) useEffect TERSENDIRI (terpisah dari loadDseAndEntries) - fetch
+#    mf_dse_admin_sellin_upload utk dse_code yg lagi tampil di roster.
+do(
+    '  useEffect(() => { loadDseAndEntries(); }, [loadDseAndEntries]);\n',
+    '''  useEffect(() => { loadDseAndEntries(); }, [loadDseAndEntries]);
+
+  // BARU (permintaan user - "dan ini sampai ke level DSE ya"): fetch
+  // terpisah (bukan bagian loadDseAndEntries - sengaja diisolasi spy ga
+  // nambah resiko ke fungsi yg sudah sangat kompleks itu) utk ambil data
+  // upload sellin per-DSE utk roster yg lagi tampil. Cuma jalan di tab
+  // Penjualan + mode Full Month (data upload = snapshot MTD, ga relevan
+  // dibanding ke 1 hari Daily - sama kayak gate di tabel Ringkasan).
+  useEffect(() => {
+    if (!isSPM || tab !== "input" || periodMode !== "bulan" || !dseList.length) {
+      setSellinUploadByDseCode({});
+      setSellinUploadRosterAvailable(false);
+      setSellinUploadRosterAsOfDt(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const uploadPeriod = calViewMonth.slice(0, 7);
+      const codes = dseList.map((d) => d.dse_code);
+      const map = {};
+      let anyRow = false;
+      let capturedAsOf = null;
+      const UP_CHUNK = 500;
+      for (let i = 0; i < codes.length; i += UP_CHUNK) {
+        const chunk = codes.slice(i, i + UP_CHUNK);
+        const { data: upRows, error: eUp } = await supabase
+          .from("mf_dse_admin_sellin_upload")
+          .select("dse_code, sellin_sp, sellin_vou, sellin_saldo, as_of_dt")
+          .eq("period", uploadPeriod).eq("matched", true).in("dse_code", chunk);
+        if (eUp) { console.error("gagal muat mf_dse_admin_sellin_upload (level DSE):", eUp); continue; }
+        (upRows || []).forEach((u) => {
+          anyRow = true;
+          if (capturedAsOf == null) capturedAsOf = u.as_of_dt;
+          map[u.dse_code] = { sellin_sp: u.sellin_sp, sellin_vou: u.sellin_vou, sellin_saldo: u.sellin_saldo };
+        });
+      }
+      if (cancelled) return;
+      setSellinUploadByDseCode(map);
+      setSellinUploadRosterAvailable(anyRow);
+      setSellinUploadRosterAsOfDt(capturedAsOf);
+    })();
+    return () => { cancelled = true; };
+  }, [isSPM, tab, periodMode, calViewMonth, dseList]);
+''',
+    label="useEffect fetch upload level DSE",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - state + fetch level DSE ditambah")

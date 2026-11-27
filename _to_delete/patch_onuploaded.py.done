@@ -1,0 +1,38 @@
+path = "app/dashboard/components/AdminDseSellinCompare.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+do(
+    "export default function AdminDseSellinCompare({ theme }) {",
+    "export default function AdminDseSellinCompare({ theme, onUploaded }) {",
+    label="prop onUploaded",
+)
+do(
+    '''      setPeriod(p);
+      setAsOfDt(asOf);
+      setUploading(false);
+      await loadComparison(p, asOf);''',
+    '''      setPeriod(p);
+      setAsOfDt(asOf);
+      setUploading(false);
+      await loadComparison(p, asOf);
+      // BARU (dipakai saat komponen ini dibuka sbg modal dari dalam
+      // DSE_ProdAR.jsx - permintaan user "buat langsung disini saja
+      // untuk perbandingannya"): kasih tau parent upload sukses, biar
+      // tabel Ringkasan di belakang modal ikut refresh kolom Sellin
+      // Upload/Selisihnya tanpa user harus klik Refresh manual.
+      if (typeof onUploaded === "function") onUploaded();''',
+    label="call onUploaded",
+)
+
+assert src != orig
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - onUploaded ditambahkan")

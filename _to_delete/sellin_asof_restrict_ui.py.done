@@ -1,0 +1,74 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# 1) Header rollup: subtitle "Total Penjualan (SP+VC+Saldo)" - kalau
+# upload ADA, pakai tanggal as_of upload-nya (bukan hari ini lagi, krn
+# valuenya skrng DIBATASI sampai tanggal itu); kalau BELUM ada upload,
+# tetap fallback "as of hari ini" (ga ada tanggal referensi lain, value
+# jg fallback ke total bulan berjalan - lihat perubahan value di bawah).
+do(
+    '''                              <span>Total Penjualan (SP+VC+Saldo)</span>
+                              <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{`as of ${fmtDayMonth(todayISO())}`}</span>''',
+    '''                              <span>Total Penjualan (SP+VC+Saldo)</span>
+                              <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: t.lo, marginTop: 1, fontSize: 10.5 }}>{sellinUploadAsOfDt ? `as of ${sellinUploadAsOfDt}` : periodColumnSubtitle}</span>''',
+    label="header rollup subtitle total excl fwa",
+)
+
+do(
+    '{ key: "totalPenjualanExclFwa", label: "Total Penjualan (SP+VC+Saldo)", sub: `as of ${fmtDayMonth(todayISO())}`, noFilterIcon: true },',
+    '{ key: "totalPenjualanExclFwa", label: "Total Penjualan (SP+VC+Saldo)", sub: sellinUploadRosterAsOfDt ? `as of ${sellinUploadRosterAsOfDt}` : periodColumnSubtitle, noFilterIcon: true },',
+    label="header roster subtitle total excl fwa",
+)
+
+# 2) Row rollup: value & Selisih pakai total YG DIBATASI (asOfSp/Voucher/
+# Saldo) kalau upload ada, fallback ke total bulan berjalan (nilaiSp dkk)
+# kalau belum ada upload.
+do(
+    '''                              <div style={{ textAlign: "right", fontWeight: 700, color: t.hi }}>Rp {fmtID(r.nilaiSp + r.nilaiVoucher + r.nilaiSaldo)}</div>
+                              {sellinUploadAvailable ? (
+                                <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.uploadSp)}</div>''',
+    '''                              <div style={{ textAlign: "right", fontWeight: 700, color: t.hi }}>Rp {fmtID(sellinUploadAvailable ? (r.asOfSp + r.asOfVoucher + r.asOfSaldo) : (r.nilaiSp + r.nilaiVoucher + r.nilaiSaldo))}</div>
+                              {sellinUploadAvailable ? (
+                                <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.uploadSp)}</div>''',
+    label="row rollup value total excl fwa",
+)
+
+do(
+    '''                              {sellinUploadAvailable ? (() => {
+                                const selisih = (r.nilaiSp + r.nilaiVoucher + r.nilaiSaldo) - (r.uploadSp + r.uploadVou + r.uploadSaldo);
+                                return <div style={{ textAlign: "right", fontWeight: 700, color: selisih !== 0 ? t.red : t.mid }}>Rp {fmtID(selisih)}</div>;
+                              })() : (
+                                <div style={{ textAlign: "right", color: t.lo }}>–</div>
+                              )}
+                            </>
+                          )}''',
+    '''                              {sellinUploadAvailable ? (() => {
+                                const selisih = (r.asOfSp + r.asOfVoucher + r.asOfSaldo) - (r.uploadSp + r.uploadVou + r.uploadSaldo);
+                                return <div style={{ textAlign: "right", fontWeight: 700, color: selisih !== 0 ? t.red : t.mid }}>Rp {fmtID(selisih)}</div>;
+                              })() : (
+                                <div style={{ textAlign: "right", color: t.lo }}>–</div>
+                              )}
+                            </>
+                          )}''',
+    label="row rollup selisih",
+)
+
+# 3) XLSX export Ringkasan: selisih-nya ikut pakai total yg dibatasi jg.
+do(
+    '          sellinUploadAvailable ? ((r.nilaiSp + r.nilaiVoucher + r.nilaiSaldo) - (r.uploadSp + r.uploadVou + r.uploadSaldo)) : "",',
+    '          sellinUploadAvailable ? ((r.asOfSp + r.asOfVoucher + r.asOfSaldo) - (r.uploadSp + r.uploadVou + r.uploadSaldo)) : "",',
+    label="export xlsx selisih",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - UI rollup (header/row/export) pakai total yg dibatasi sampai as of upload")

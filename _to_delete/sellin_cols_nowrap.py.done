@@ -1,0 +1,31 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# FIX (permintaan user - "untuk amount ini, pastikan semuanya dalam satu
+# line"): nilai Rp di tabel Ringkasan sempat wrap ke 2 baris ("Rp" turun
+# sendiri) krn kolom sempit. whiteSpace:nowrap DIWARISI oleh semua anak di
+# dalamnya (CSS inheritance) - cukup ditaruh SEKALI di kontainer header &
+# row grid-nya, ga perlu diulang di tiap <div> amount satu2.
+do(
+    'gap: 0, padding: "11px 18px", background: t.sub, fontSize: 10.5, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>',
+    'gap: 0, padding: "11px 18px", background: t.sub, fontSize: 10.5, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, whiteSpace: "nowrap" }}>',
+    label="header row nowrap",
+)
+do(
+    'gap: 0, padding: "14px 18px", borderTop: i === 0 ? "none" : `1px solid ${t.line}`, cursor: "pointer", fontSize: 13, fontVariantNumeric: "tabular-nums", transition: "background 0.12s", background: i === 0 ? t.tealBg : "transparent" }}',
+    'gap: 0, padding: "14px 18px", borderTop: i === 0 ? "none" : `1px solid ${t.line}`, cursor: "pointer", fontSize: 13, fontVariantNumeric: "tabular-nums", transition: "background 0.12s", background: i === 0 ? t.tealBg : "transparent", whiteSpace: "nowrap" }}',
+    label="data row nowrap",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - whiteSpace nowrap ditambahkan (header + row rollup)")

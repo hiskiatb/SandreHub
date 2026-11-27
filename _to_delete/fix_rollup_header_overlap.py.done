@@ -1,0 +1,40 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# FIX (laporan user - "ini rapikan header masih ketimpa timpa", screenshot
+# tabel Ringkasan/Partner): kolom header "TOTAL PENJUALAN" (rank-metric,
+# dulu 140px) & "Total Penjualan (SP+VC+Saldo)" (dulu 160px) KETERLALU
+# SEMPIT utk teks + subtitle "as of ..."-nya yg panjang, sementara whiteSpace
+# nowrap bikin teksnya meluber keluar kotaknya & numpuk sama kolom tetangga.
+# Fix: lebarkan 2 kolom itu (140->195, 160->195) di KEDUA tempat yg pakai
+# grid template yg sama persis (header baris 9677 & row data baris 9761),
+# serta naikkan minWidth total grid-nya (1874 -> 1964, selisih 90 dari
+# pelebaran 2 kolom tsb) biar scroll-x tetap konsisten/ga kepotong.
+OLD_TEMPLATE = '"44px 200px 130px 130px 130px 130px 130px 140px 160px 130px 150px 140px 130px 130px"'
+NEW_TEMPLATE = '"44px 200px 130px 130px 130px 130px 130px 195px 195px 130px 150px 140px 130px 130px"'
+assert src.count(OLD_TEMPLATE) == 2, f"expected 2, found {src.count(OLD_TEMPLATE)}"
+src = src.replace(OLD_TEMPLATE, NEW_TEMPLATE)
+
+do(
+    'minWidth: (tab !== "ar" && periodMode === "bulan") ? 1874 : undefined, gap: 0, padding: "11px 18px"',
+    'minWidth: (tab !== "ar" && periodMode === "bulan") ? 1964 : undefined, gap: 0, padding: "11px 18px"',
+    label="minWidth header 1874->1964",
+)
+do(
+    'minWidth: (tab !== "ar" && periodMode === "bulan") ? 1874 : undefined, gap: 0, padding: "14px 18px"',
+    'minWidth: (tab !== "ar" && periodMode === "bulan") ? 1964 : undefined, gap: 0, padding: "14px 18px"',
+    label="minWidth row 1874->1964",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - kolom 'Total Penjualan' & 'Total Penjualan (SP+VC+Saldo)' dilebarkan, header rollup rapi")

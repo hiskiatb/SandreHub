@@ -1,0 +1,140 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# UPDATE (permintaan user - "Total Penjualan (SP+VC+Saldo) hitung sampai
+# dengan tanggal data S100 yang sudah diupload") level DSE (roster): SAMA
+# PERSIS logic yg dipakai tabel Ringkasan - kalau ada upload utk periode
+# ini, Total Penjualan (SP+VC+Saldo) & Selisih DIBATASI sampai tanggal
+# as_of upload (bukan bulan penuh sampai hari ini lagi). as_of itu SATU
+# tanggal GLOBAL per file upload (bukan per-DSE), jadi berlaku ke SEMUA
+# DSE di roster, bukan cuma yg match ke upload.
+
+# 1) State baru: map per-DSE total SP+Voucher+Saldo (app) yg DIBATASI
+# sampai tanggal as_of upload.
+do(
+    '  const [sellinUploadRosterAsOfDt, setSellinUploadRosterAsOfDt] = useState(null);\n',
+    '''  const [sellinUploadRosterAsOfDt, setSellinUploadRosterAsOfDt] = useState(null);
+  // BARU (permintaan user - "Total Penjualan (SP+VC+Saldo) hitung
+  // sampai dengan tanggal data S100 yang sudah diupload"): total app
+  // (SP+Voucher+Saldo, excl FWA) per dse_code TAPI DIBATASI sampai
+  // tanggal as_of upload - diisi di useEffect yg sama dgn fetch upload
+  // di bawah (sudah tau as_of_dt-nya di situ, tinggal query lagi
+  // mf_dse_prod_ar dgn cutoff tanggal itu).
+  const [sellinAppAsOfByDseCode, setSellinAppAsOfByDseCode] = useState({});
+''',
+    label="state sellinAppAsOfByDseCode",
+)
+
+# 2) Reset state baru di early-return effect.
+do(
+    '''      setSellinUploadByDseCode({});
+      setSellinUploadRosterAvailable(false);
+      setSellinUploadRosterAsOfDt(null);
+      return;''',
+    '''      setSellinUploadByDseCode({});
+      setSellinUploadRosterAvailable(false);
+      setSellinUploadRosterAsOfDt(null);
+      setSellinAppAsOfByDseCode({});
+      return;''',
+    label="reset sellinAppAsOfByDseCode",
+)
+
+# 3) Setelah capturedAsOf diketahui, fetch ULANG mf_dse_prod_ar dgn
+# cutoff tanggal itu (period-01 s.d. period-capturedAsOf), jumlahkan
+# nilai_sp+nilai_voucher+nilai_saldo per dse_code -> sellinAppAsOfByDseCode.
+do(
+    '''      if (cancelled) return;
+      setSellinUploadByDseCode(map);
+      setSellinUploadRosterAvailable(anyRow);
+      setSellinUploadRosterAsOfDt(capturedAsOf);
+    })();
+    return () => { cancelled = true; };
+  }, [isSPM, tab, periodMode, calViewMonth, dseList]);''',
+    '''      let appAsOfMap = {};
+      if (capturedAsOf != null) {
+        const startISO = `${uploadPeriod}-01`;
+        const endISO = `${uploadPeriod}-${String(capturedAsOf).padStart(2, "0")}`;
+        for (let i = 0; i < codes.length; i += UP_CHUNK) {
+          const chunk = codes.slice(i, i + UP_CHUNK);
+          const { data: arRows, error: eAr } = await supabase
+            .from("mf_dse_prod_ar")
+            .select("dse_code, nilai_sp, nilai_voucher, nilai_saldo")
+            .in("dse_code", chunk).gte("tanggal", startISO).lte("tanggal", endISO);
+          if (eAr) { console.error("gagal muat mf_dse_prod_ar (as of upload, level DSE):", eAr); continue; }
+          (arRows || []).forEach((p) => {
+            const a = appAsOfMap[p.dse_code] || (appAsOfMap[p.dse_code] = 0);
+            appAsOfMap[p.dse_code] = a + fRaw(p.nilai_sp) + fRaw(p.nilai_voucher) + fRaw(p.nilai_saldo);
+          });
+        }
+      }
+      if (cancelled) return;
+      setSellinUploadByDseCode(map);
+      setSellinUploadRosterAvailable(anyRow);
+      setSellinUploadRosterAsOfDt(capturedAsOf);
+      setSellinAppAsOfByDseCode(appAsOfMap);
+    })();
+    return () => { cancelled = true; };
+  }, [isSPM, tab, periodMode, calViewMonth, dseList]);''',
+    label="fetch sellinAppAsOfByDseCode",
+)
+
+# 4) Prop baru ke DseInputRow (kedua pemanggilan: mobile card & desktop).
+do(
+    '''                  sellinUpload={sellinUploadByDseCode[dse.dse_code]}
+                  sellinUploadAvailable={sellinUploadRosterAvailable}''',
+    '''                  sellinUpload={sellinUploadByDseCode[dse.dse_code]}
+                  sellinUploadAvailable={sellinUploadRosterAvailable}
+                  sellinAppAsOfTotal={sellinAppAsOfByDseCode[dse.dse_code]}''',
+    label="prop mobile card sellinAppAsOfTotal",
+)
+do(
+    '''                        sellinUpload={sellinUploadByDseCode[dse.dse_code]}
+                        sellinUploadAvailable={sellinUploadRosterAvailable}''',
+    '''                        sellinUpload={sellinUploadByDseCode[dse.dse_code]}
+                        sellinUploadAvailable={sellinUploadRosterAvailable}
+                        sellinAppAsOfTotal={sellinAppAsOfByDseCode[dse.dse_code]}''',
+    label="prop desktop table sellinAppAsOfTotal",
+)
+
+# 5) DseInputRow: terima prop baru.
+do(
+    ", sellinUpload, sellinUploadAvailable }) {",
+    ", sellinUpload, sellinUploadAvailable, sellinAppAsOfTotal }) {",
+    label="DseInputRow prop signature sellinAppAsOfTotal",
+)
+
+# 6) td "Total Penjualan (SP+VC+Saldo)" level DSE: pakai total yg
+# DIBATASI (sellinAppAsOfTotal) kalau ada upload utk periode ini, fallback
+# ke total bulan penuh (totalExclFwa) kalau belum ada upload - SAMA
+# PERSIS pola rollup. Selisih ikut pakai total yg dibatasi jg.
+do(
+    '''            const totalExclFwa = fRaw(e.nilai_sp) + fRaw(e.nilai_voucher) + fRaw(e.nilai_saldo);
+            const up = sellinUpload;
+            const totalOsa = up ? (fRaw(up.sellin_sp) + fRaw(up.sellin_vou) + fRaw(up.sellin_saldo)) : null;
+            const selisih = up ? (totalExclFwa - totalOsa) : null;
+            return (
+              <>
+                <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", borderLeft: `2px solid ${t.line}`, fontWeight: 700, color: t.hi }}>Rp {fmtID(totalExclFwa)}</td>''',
+    '''            const totalExclFwa = fRaw(e.nilai_sp) + fRaw(e.nilai_voucher) + fRaw(e.nilai_saldo);
+            const totalExclFwaDisplay = sellinUploadAvailable ? (sellinAppAsOfTotal ?? 0) : totalExclFwa;
+            const up = sellinUpload;
+            const totalOsa = up ? (fRaw(up.sellin_sp) + fRaw(up.sellin_vou) + fRaw(up.sellin_saldo)) : null;
+            const selisih = up ? (totalExclFwaDisplay - totalOsa) : null;
+            return (
+              <>
+                <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", borderLeft: `2px solid ${t.line}`, fontWeight: 700, color: t.hi }}>Rp {fmtID(totalExclFwaDisplay)}</td>''',
+    label="td total excl fwa pakai total dibatasi",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - level DSE: Total Penjualan (SP+VC+Saldo) & Selisih dibatasi sampai tanggal as of upload")

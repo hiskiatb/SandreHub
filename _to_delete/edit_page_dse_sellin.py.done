@@ -1,0 +1,60 @@
+import re, sys
+
+path = "app/dashboard/page.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+
+orig = src
+
+# 1) Import komponen baru (setelah import DSE_ProdAR)
+old_import = 'import DSE_ProdAR, { CATEGORY_OPTIONS as DSE_CATEGORY_OPTIONS, getCategoryOptionsForRoles, hasRole, hasAnyRole } from "./components/DSE_ProdAR";'
+new_import = old_import + '\nimport AdminDseSellinCompare from "./components/AdminDseSellinCompare"; // BARU (permintaan user - fitur upload file DSE PROD xlsx utk dibandingkan dgn input DSE, khusus spm_sumatera)'
+assert src.count(old_import) == 1, "import anchor not found/not unique"
+src = src.replace(old_import, new_import, 1)
+
+# 2) View constant (dekat DATA_PROVIDED_BULK_VIEW)
+old_const = 'const DATA_PROVIDED_BULK_VIEW = "data-provided-bulk-v2"; // dideklarasikan di sini (BUKAN di dekat PNL_VIEWS_V2 di bawah) krn dipakai duluan oleh HIDE_DATE_PICKER_VIEWS tepat di bawah ini - const harus sudah ada sebelum dipakai (TDZ).'
+new_const = old_const + '\nconst DSE_SELLIN_COMPARE_VIEW = "dse-sellin-compare"; // BARU (permintaan user - "fitur upload file ini... khusus utk tampilan spm_sumatera dulu... dibandingkan dengan data penjualan dse")'
+assert src.count(old_const) == 1, "const anchor not found/not unique"
+src = src.replace(old_const, new_const, 1)
+
+# 3) Tambahkan ke HIDE_DATE_PICKER_VIEWS set
+old_set_marker = '"pendapatan-v2","pengeluaran-v2",DATA_PROVIDED_BULK_VIEW]);'
+new_set_marker = '"pendapatan-v2","pengeluaran-v2",DATA_PROVIDED_BULK_VIEW,DSE_SELLIN_COMPARE_VIEW]);'
+assert src.count(old_set_marker) == 1, "set anchor not found/not unique"
+src = src.replace(old_set_marker, new_set_marker, 1)
+
+# 4) Sidebar nav item (persis di bawah item "Upload Data Provided")
+old_nav = '{isTrueSPM && <SNavItem icon={<Upload size={13} />} label="Upload Data Provided" active={view === DATA_PROVIDED_BULK_VIEW} onClick={() => navigate(DATA_PROVIDED_BULK_VIEW)} />}'
+new_nav = old_nav + '\n                          {isTrueSPM && <SNavItem icon={<FileSpreadsheet size={13} />} label="Upload Sellin DSE (Bandingkan)" active={view === DSE_SELLIN_COMPARE_VIEW} onClick={() => navigate(DSE_SELLIN_COMPARE_VIEW)} />}'
+assert src.count(old_nav) == 1, "nav anchor not found/not unique"
+src = src.replace(old_nav, new_nav, 1)
+
+# 5) Render block (persis setelah blok render Upload Data Provided)
+old_render_end = '''            {view === DATA_PROVIDED_BULK_VIEW && isTrueSPM && (
+              <motion.div key="dpbulk" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("pnl-mpx-v2")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke MDI P&amp;L Report</button>
+                <PNL_DataProvidedBulkUpload t={v2t} d={d} masterData={masterDataV2} dataProvidedRows={DATA_PROVIDED_ROWS} profile={profile}
+                  onClose={() => navigate("pnl-mpx-v2")} />
+              </motion.div>
+            )}'''
+new_render_block = old_render_end + '''
+
+            {/* ── Upload & Bandingkan Sellin DSE (BARU - permintaan user:
+                upload file DSE PROD [sheet IM3 & 3ID], dijumlahkan per DSE,
+                dibandingkan dgn input DSE di app [SP/Voucher/Saldo saja,
+                FWA tidak dibandingkan]. Khusus spm_sumatera dulu.) ── */}
+            {view === DSE_SELLIN_COMPARE_VIEW && isTrueSPM && (
+              <motion.div key="dsesellin" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("pnl-mpx-v2")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke MDI P&amp;L Report</button>
+                <AdminDseSellinCompare theme={d ? "dark" : "light"} />
+              </motion.div>
+            )}'''
+assert src.count(old_render_end) == 1, "render anchor not found/not unique"
+src = src.replace(old_render_end, new_render_block, 1)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+
+print("OK - 5 edits applied")

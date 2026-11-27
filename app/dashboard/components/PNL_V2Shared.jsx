@@ -136,7 +136,7 @@ export const TH = ({ children, t, align = "left", width, color }) => (
   <th style={{ padding:'7px 8px', width, textAlign:align, fontSize:10, fontWeight:700, letterSpacing:'0.08em', textTransform:'uppercase', color: color || t.lo }}>{children}</th>
 );
 
-export function FormHeader({ icon: Icon, title, activeContext, readOnly, t, children }) {
+export function FormHeader({ icon: Icon, title, activeContext, readOnly, t, children, headerRight }) {
   return (
     <div style={{ marginBottom:28 }}>
       <div style={{ display:'flex', alignItems:'center', gap:14 }}>
@@ -146,6 +146,13 @@ export function FormHeader({ icon: Icon, title, activeContext, readOnly, t, chil
           <div style={{ fontSize:12, fontWeight:600, letterSpacing:'0.02em', color:t.mid, marginTop:4, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{[activeContext?.mpxType, activeContext?.mpxName, activeContext?.branch].filter(Boolean).join(' · ')}</div>
         </div>
         {readOnly && <div style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'5px 12px', borderRadius:99, background:t.amberBg, border:`1px solid ${t.amberBd}`, color:t.amber, fontSize:11, fontWeight:700, flexShrink:0, whiteSpace:'nowrap' }}><Eye size={12} /> Mode Lihat</div>}
+        {/* BARU (permintaan user - "pindahkan pemilihan periode menjadi
+            sejajar dengan form pendapatan november 2026"): slot opsional
+            SEBARIS dgn judul (bukan baris kedua spt `children` di bawah)
+            - dipakai PNL_FormPendapatanV2 utk periodControl. Judul di
+            sebelah kiri tetap punya overflow:ellipsis jadi aman kalau
+            layar sempit (judul yg kepotong, bukan layout yg berantakan). */}
+        {headerRight && <div style={{ flexShrink:0 }}>{headerRight}</div>}
       </div>
       {/* FIX (permintaan user - "rapikan, sangat berantakan"): slot
           opsional (dipakai PNL_FormPengeluaranV2 utk picker Depo) dulu
@@ -171,8 +178,20 @@ export function Stepper({ items, step, setStep, t, d }) {
         <div style={{ position:'absolute', top:R/2, left:R/2, height:2, background:'linear-gradient(90deg,#ED1C24,#C6168D)', width:`calc((100% - ${R}px) * ${pct/100})`, transform:'translateY(-50%)', borderRadius:99, transition:'width 0.3s ease', zIndex:1 }} />
         {items.map((label, i) => {
           const s = i + 1, isA = step === s, isP = step > s;
+          // FIX (permintaan user - "rapikan stepper agar text dibawahnya
+          // itu tidak melewati batas kiri kontainer dibawahnya"): label
+          // step sebelumnya SELALU center-align di bawah lingkaran yg
+          // lebarnya cuma R(34px) - utk label panjang (mis. "OPEX & COM")
+          // di step PERTAMA, setengah teksnya jadi nongol ke KIRI
+          // melewati tepi kiri stepper/kontainer di bawahnya (begitu pula
+          // step TERAKHIR bisa kebablasan ke kanan). Fix: step pertama
+          // rata kiri (nempel tepi kiri lingkaran pertama), step terakhir
+          // rata kanan (nempel tepi kanan lingkaran terakhir), step
+          // tengah tetap center spt semula - lingkaran sendiri TIDAK
+          // ikut bergeser krn lebar kolom persis sama dgn lebar tombol.
+          const align = i === 0 ? 'flex-start' : i === items.length - 1 ? 'flex-end' : 'center';
           return (
-            <div key={label} style={{ position:'relative', zIndex:2, display:'flex', flexDirection:'column', alignItems:'center', width:R }}>
+            <div key={label} style={{ position:'relative', zIndex:2, display:'flex', flexDirection:'column', alignItems:align, width:R }}>
               <button onClick={() => setStep(s)} style={{ width:R, height:R, borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700, fontSize:12, border:`2px solid ${(isA||isP)?'#ED1C24':t.line}`, background:(isA||isP)?'linear-gradient(135deg,#ED1C24,#C6168D)':(d?'#1A1A1D':'#FFFFFF'), color:(isA||isP)?'#fff':t.lo, cursor:'pointer', outline:'none', transition:'all 0.2s', transform:isA?'scale(1.10)':'scale(1)', boxShadow:isA?'0 0 0 4px rgba(237,28,36,0.15),0 3px 10px rgba(237,28,36,0.28)':'none', flexShrink:0, fontFamily:'inherit' }}>
                 {isP ? <CheckCircle2 size={15} strokeWidth={2.5} /> : s}
               </button>

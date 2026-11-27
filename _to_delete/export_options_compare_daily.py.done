@@ -1,0 +1,435 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# BESAR (permintaan user - "saat download data di full month ada opsi
+# untuk tampilkan data pembanding atau tidak, dan juga untuk data daily,
+# ada opsi untuk tarik data inputan per dse hariannya, jadi ada
+# tanggal-tanggalnya, perlu diperhatikan di oktober data daily tidak
+# tersedia"): dropdown Export XLSX sekarang beda isi tergantung periodMode:
+#  - Full Month: checkbox "Sertakan kolom pembanding Sell-in" (ON/OFF)
+#    berlaku ke KEDUA tombol (Export Tampilan Saat Ini & Download
+#    Lengkap) - kalau OFF, kolom Sellin Upload/Selisih ga ikut di-export
+#    sama sekali (query upload-nya jg di-skip, bukan cuma disembunyikan).
+#  - Daily: tombol lama (export snapshot 1 tanggal yg lagi dipilih) TETAP
+#    ada, DITAMBAH fitur baru "Tarik Data Harian (Rentang Tanggal)" - 2
+#    input tanggal (dari/sampai) + tombol export sendiri, hasilnya 1
+#    sheet RAW per DSE PER TANGGAL (ada kolom Tanggal), lintas SEMUA DSE
+#    (bukan cuma yg lagi difilter di layar). Dikasih catatan kecil di
+#    bawah input tanggal krn data harian utk Oktober 2026 belum tersedia
+#    (entry baru mulai bulan sesudahnya) - cuma informasi, ga ada validasi
+#    block khusus (kalau rentang nyerempet Oktober & hasilnya kosong,
+#    toast error sudah otomatis muncul "Tidak ada data...").
+
+# ---------------------------------------------------------------------
+# 1) State baru: toggle include-compare + rentang tanggal utk export harian.
+do(
+    "  const [exportingFullXlsx, setExportingFullXlsx] = useState(false);\n",
+    '''  const [exportingFullXlsx, setExportingFullXlsx] = useState(false);
+  // BARU (permintaan user - "ada opsi untuk tampilkan data pembanding
+  // atau tidak"): checkbox di dropdown export Full Month, default ON
+  // (SAMA PERSIS behavior export sebelum ada opsi ini).
+  const [exportIncludeCompare, setExportIncludeCompare] = useState(true);
+  // BARU (permintaan user - "untuk data daily, ada opsi untuk tarik data
+  // inputan per dse hariannya, jadi ada tanggal-tanggalnya"): rentang
+  // tanggal utk export RAW data harian (1 baris = 1 DSE di 1 tanggal).
+  const [exportDailyFrom, setExportDailyFrom] = useState(() => todayISO());
+  const [exportDailyTo, setExportDailyTo] = useState(() => todayISO());
+  const [exportingDailyRange, setExportingDailyRange] = useState(false);
+  const handleExportDailyRange = async () => {
+    if (!exportDailyFrom || !exportDailyTo || exportDailyFrom > exportDailyTo) {
+      showToast("Rentang tanggal tidak valid (dari harus <= sampai).", "error");
+      return;
+    }
+    setExportMenuOpen(false);
+    setExportingDailyRange(true);
+    try {
+      const { data: dses, error: e1 } = await supabase.from("mf_dse_database").select("dse_code, region, branch, mc, mdi, ds_name").eq("is_revoked", false);
+      if (e1) throw e1;
+      const metaByCode = {};
+      (dses || []).forEach((r) => { metaByCode[r.dse_code] = r; });
+      const codes = (dses || []).map((r) => r.dse_code);
+      const CHUNK = 500;
+      let allRows = [];
+      for (let i = 0; i < codes.length; i += CHUNK) {
+        const chunk = codes.slice(i, i + CHUNK);
+        const { data: prod, error: e2 } = await supabase.from("mf_dse_prod_ar")
+          .select("dse_code, tanggal, nilai_sp, nilai_fwa, nilai_voucher, nilai_saldo")
+          .in("dse_code", chunk).gte("tanggal", exportDailyFrom).lte("tanggal", exportDailyTo);
+        if (e2) throw e2;
+        allRows = allRows.concat(prod || []);
+      }
+      if (!allRows.length) {
+        showToast("Tidak ada data harian pada rentang tanggal tsb (cek lagi - data Oktober 2026 misalnya belum tersedia).", "error");
+        return;
+      }
+      allRows.sort((a, b) => (a.tanggal === b.tanggal ? (a.dse_code || "").localeCompare(b.dse_code || "") : a.tanggal.localeCompare(b.tanggal)));
+      const head = ["#", "Tanggal", "Kode DSE", "Partner", "Region", "Area", "District", "Nama DSE", "Penjualan SP", "Penjualan FWA", "Penjualan Voucher", "Penjualan Saldo", "Total Penjualan"];
+      const body = allRows.map((p, i) => {
+        const m = metaByCode[p.dse_code] || {};
+        const sp = fRaw(p.nilai_sp), fwa = fRaw(p.nilai_fwa), vou = fRaw(p.nilai_voucher), sal = fRaw(p.nilai_saldo);
+        return [i + 1, p.tanggal, p.dse_code, m.mdi || "", m.region || "", m.branch || "", m.mc || "", m.ds_name || "", sp, fwa, vou, sal, sp + fwa + vou + sal];
+      });
+      const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
+      ws["!freeze"] = { xSplit: 0, ySplit: 1 };
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Data Harian");
+      XLSX.writeFile(wb, `DataHarian_DSE_${exportDailyFrom}_sd_${exportDailyTo}.xlsx`);
+      showToast(`Export selesai — ${body.length} baris.`, "ok");
+    } catch (e) {
+      showToast(e.message || "Gagal export data harian.", "error");
+    } finally {
+      setExportingDailyRange(false);
+    }
+  };
+''',
+    label="state exportIncludeCompare + fungsi handleExportDailyRange",
+)
+
+# ---------------------------------------------------------------------
+# 2) fetchLevelSummaryForExport: terima param includeCompare, skip query
+# upload+asOf kalau false (bukan cuma disembunyikan di kolom - query-nya
+# beneran ga jalan, lebih cepat).
+do(
+    '  const fetchLevelSummaryForExport = async (lvl) => {',
+    '  const fetchLevelSummaryForExport = async (lvl, includeCompare) => {',
+    label="fetchLevelSummaryForExport signature includeCompare",
+)
+do(
+    '''    let anyUploadRow = false;
+    let capturedAsOfUp = null;
+    const uploadPeriod = calViewMonth.slice(0, 7);
+    if (periodMode === "bulan") {
+      for (let i = 0; i < codes.length; i += CHUNK) {
+        const chunk = codes.slice(i, i + CHUNK);
+        const { data: upRows, error: eUp } = await supabase.from("mf_dse_admin_sellin_upload")
+          .select("dse_code, sellin_sp, sellin_vou, sellin_saldo, as_of_dt")
+          .eq("period", uploadPeriod).eq("matched", true).in("dse_code", chunk);
+        if (eUp) throw eUp;
+        (upRows || []).forEach((u) => {
+          const g = byGroup[groupOf[u.dse_code]];
+          if (!g) return;
+          anyUploadRow = true;
+          if (capturedAsOfUp == null) capturedAsOfUp = u.as_of_dt;
+          g.uploadSp += fRaw(u.sellin_sp); g.uploadVou += fRaw(u.sellin_vou); g.uploadSaldo += fRaw(u.sellin_saldo);
+        });
+      }
+      if (capturedAsOfUp != null) {''',
+    '''    let anyUploadRow = false;
+    let capturedAsOfUp = null;
+    const uploadPeriod = calViewMonth.slice(0, 7);
+    if (periodMode === "bulan" && includeCompare) {
+      for (let i = 0; i < codes.length; i += CHUNK) {
+        const chunk = codes.slice(i, i + CHUNK);
+        const { data: upRows, error: eUp } = await supabase.from("mf_dse_admin_sellin_upload")
+          .select("dse_code, sellin_sp, sellin_vou, sellin_saldo, as_of_dt")
+          .eq("period", uploadPeriod).eq("matched", true).in("dse_code", chunk);
+        if (eUp) throw eUp;
+        (upRows || []).forEach((u) => {
+          const g = byGroup[groupOf[u.dse_code]];
+          if (!g) return;
+          anyUploadRow = true;
+          if (capturedAsOfUp == null) capturedAsOfUp = u.as_of_dt;
+          g.uploadSp += fRaw(u.sellin_sp); g.uploadVou += fRaw(u.sellin_vou); g.uploadSaldo += fRaw(u.sellin_saldo);
+        });
+      }
+      if (capturedAsOfUp != null) {''',
+    label="fetchLevelSummaryForExport gate includeCompare",
+)
+
+# ---------------------------------------------------------------------
+# 3) fetchDseLevelForExport: sama pola, terima includeCompare.
+do(
+    "  const fetchDseLevelForExport = async () => {",
+    "  const fetchDseLevelForExport = async (includeCompare) => {",
+    label="fetchDseLevelForExport signature includeCompare",
+)
+do(
+    '''    let uploadByCode = {};
+    const uploadPeriod = calViewMonth.slice(0, 7);
+    if (periodMode === "bulan") {
+      for (let i = 0; i < codes.length; i += CHUNK) {
+        const chunk = codes.slice(i, i + CHUNK);
+        const { data: upRows, error: eUp } = await supabase.from("mf_dse_admin_sellin_upload")
+          .select("dse_code, sellin_sp, sellin_vou, sellin_saldo, as_of_dt")
+          .eq("period", uploadPeriod).eq("matched", true).in("dse_code", chunk);
+        if (eUp) throw eUp;
+        (upRows || []).forEach((u) => { uploadByCode[u.dse_code] = u; });
+      }
+    }
+    const hasUpload = Object.keys(uploadByCode).length > 0;''',
+    '''    let uploadByCode = {};
+    const uploadPeriod = calViewMonth.slice(0, 7);
+    if (periodMode === "bulan" && includeCompare) {
+      for (let i = 0; i < codes.length; i += CHUNK) {
+        const chunk = codes.slice(i, i + CHUNK);
+        const { data: upRows, error: eUp } = await supabase.from("mf_dse_admin_sellin_upload")
+          .select("dse_code, sellin_sp, sellin_vou, sellin_saldo, as_of_dt")
+          .eq("period", uploadPeriod).eq("matched", true).in("dse_code", chunk);
+        if (eUp) throw eUp;
+        (upRows || []).forEach((u) => { uploadByCode[u.dse_code] = u; });
+      }
+    }
+    const hasUpload = Object.keys(uploadByCode).length > 0;''',
+    label="fetchDseLevelForExport gate includeCompare",
+)
+
+# ---------------------------------------------------------------------
+# 4) handleExportFullXlsx: terima includeCompare, teruskan ke 2 fetcher
+# di atas, kolom Sellin Upload/Selisih cuma ditambah ke head/body kalau
+# includeCompare true.
+do(
+    '  const handleExportFullXlsx = async () => {',
+    '  const handleExportFullXlsx = async (includeCompare = true) => {',
+    label="handleExportFullXlsx signature includeCompare",
+)
+do(
+    '''      for (const { lvl, sheet, label } of levelDefs) {
+        const { rows, uploadAvailable } = await fetchLevelSummaryForExport(lvl);
+        const head = ["#", label, "DSE Active", "DSE Vacant", "Penjualan SP", "Penjualan FWA", "Penjualan Voucher", "Penjualan Saldo", "Total Penjualan", "Sellin Upload (SP+Vou+Saldo)", "Selisih"];
+        const body = rows.map((r, i) => [
+          i + 1, r.label, r.totalActive, r.totalVacant,
+          r.nilaiSp, r.nilaiFwa, r.nilaiVoucher, r.nilaiSaldo, r.nilaiSp + r.nilaiFwa + r.nilaiVoucher + r.nilaiSaldo,
+          uploadAvailable ? (r.uploadSp + r.uploadVou + r.uploadSaldo) : "",
+          uploadAvailable ? ((r.asOfSp + r.asOfVoucher + r.asOfSaldo) - (r.uploadSp + r.uploadVou + r.uploadSaldo)) : "",
+        ]);
+        const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
+        ws["!freeze"] = { xSplit: 0, ySplit: 1 };
+        XLSX.utils.book_append_sheet(wb, ws, sheet);
+      }
+      const dseRows = await fetchDseLevelForExport();
+      const headDse = ["#", "Kode DSE", "Partner", "Region", "Area", "District", "Nama DSE", "Status", "Penjualan SP", "Penjualan FWA", "Penjualan Voucher", "Penjualan Saldo", "Total Penjualan", "Sellin Upload (SP+Vou+Saldo)", "Selisih"];
+      const bodyDse = dseRows.map((x, i) => [
+        i + 1, x.dse_code, x.partner, x.region, x.branch, x.mc, x.nama, x.status,
+        x.nilaiSp, x.nilaiFwa, x.nilaiVoucher, x.nilaiSaldo, x.totalPenjualan,
+        x.hasUpload ? (x.uploadTotal ?? "") : "",
+        x.hasUpload ? (x.selisih ?? "") : "",
+      ]);''',
+    '''      for (const { lvl, sheet, label } of levelDefs) {
+        const { rows, uploadAvailable } = await fetchLevelSummaryForExport(lvl, includeCompare);
+        const head = ["#", label, "DSE Active", "DSE Vacant", "Penjualan SP", "Penjualan FWA", "Penjualan Voucher", "Penjualan Saldo", "Total Penjualan", ...(includeCompare ? ["Sellin Upload (SP+Vou+Saldo)", "Selisih"] : [])];
+        const body = rows.map((r, i) => [
+          i + 1, r.label, r.totalActive, r.totalVacant,
+          r.nilaiSp, r.nilaiFwa, r.nilaiVoucher, r.nilaiSaldo, r.nilaiSp + r.nilaiFwa + r.nilaiVoucher + r.nilaiSaldo,
+          ...(includeCompare ? [
+            uploadAvailable ? (r.uploadSp + r.uploadVou + r.uploadSaldo) : "",
+            uploadAvailable ? ((r.asOfSp + r.asOfVoucher + r.asOfSaldo) - (r.uploadSp + r.uploadVou + r.uploadSaldo)) : "",
+          ] : []),
+        ]);
+        const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
+        ws["!freeze"] = { xSplit: 0, ySplit: 1 };
+        XLSX.utils.book_append_sheet(wb, ws, sheet);
+      }
+      const dseRows = await fetchDseLevelForExport(includeCompare);
+      const headDse = ["#", "Kode DSE", "Partner", "Region", "Area", "District", "Nama DSE", "Status", "Penjualan SP", "Penjualan FWA", "Penjualan Voucher", "Penjualan Saldo", "Total Penjualan", ...(includeCompare ? ["Sellin Upload (SP+Vou+Saldo)", "Selisih"] : [])];
+      const bodyDse = dseRows.map((x, i) => [
+        i + 1, x.dse_code, x.partner, x.region, x.branch, x.mc, x.nama, x.status,
+        x.nilaiSp, x.nilaiFwa, x.nilaiVoucher, x.nilaiSaldo, x.totalPenjualan,
+        ...(includeCompare ? [
+          x.hasUpload ? (x.uploadTotal ?? "") : "",
+          x.hasUpload ? (x.selisih ?? "") : "",
+        ] : []),
+      ]);''',
+    label="handleExportFullXlsx gate includeCompare kolom",
+)
+
+# ---------------------------------------------------------------------
+# 5) handleExportSellinXlsx (export "Tampilan Saat Ini"): terima
+# includeCompare, gate query upload+asOf & kolom Sellin Upload/Selisih
+# (rollup & DSE) - SAMA pola di atas.
+do(
+    "  const handleExportSellinXlsx = async () => {",
+    "  const handleExportSellinXlsx = async (includeCompare = true) => {",
+    label="handleExportSellinXlsx signature includeCompare",
+)
+do(
+    '''      if (summaryGroupBy !== "dse") {
+        const head = ["#", summaryGroupLabel, "DSE Active", "DSE Vacant", "Penjualan SP", "Penjualan FWA", "Penjualan Voucher", "Penjualan Saldo", "Total Penjualan", "Sellin Upload (SP+Vou+Saldo)", "Selisih"];
+        const body = regionSummary.map((r, i) => [
+          i + 1, r.label, r.totalActive, r.totalVacant,
+          r.nilaiSp, r.nilaiFwa, r.nilaiVoucher, r.nilaiSaldo, r.nilaiSp + r.nilaiFwa + r.nilaiVoucher + r.nilaiSaldo,
+          sellinUploadAvailable ? (r.uploadSp + r.uploadVou + r.uploadSaldo) : "",
+          sellinUploadAvailable ? ((r.asOfSp + r.asOfVoucher + r.asOfSaldo) - (r.uploadSp + r.uploadVou + r.uploadSaldo)) : "",
+        ]);''',
+    '''      if (summaryGroupBy !== "dse") {
+        const head = ["#", summaryGroupLabel, "DSE Active", "DSE Vacant", "Penjualan SP", "Penjualan FWA", "Penjualan Voucher", "Penjualan Saldo", "Total Penjualan", ...(includeCompare ? ["Sellin Upload (SP+Vou+Saldo)", "Selisih"] : [])];
+        const body = regionSummary.map((r, i) => [
+          i + 1, r.label, r.totalActive, r.totalVacant,
+          r.nilaiSp, r.nilaiFwa, r.nilaiVoucher, r.nilaiSaldo, r.nilaiSp + r.nilaiFwa + r.nilaiVoucher + r.nilaiSaldo,
+          ...(includeCompare ? [
+            sellinUploadAvailable ? (r.uploadSp + r.uploadVou + r.uploadSaldo) : "",
+            sellinUploadAvailable ? ((r.asOfSp + r.asOfVoucher + r.asOfSaldo) - (r.uploadSp + r.uploadVou + r.uploadSaldo)) : "",
+          ] : []),
+        ]);''',
+    label="handleExportSellinXlsx rollup gate includeCompare",
+)
+do(
+    '''        const codes = rows.map((x) => x.r.dse_code).filter(Boolean);
+        let uploadByCode = {};
+        const uploadPeriod = calViewMonth.slice(0, 7);
+        const UP_CHUNK = 500;
+        if (codes.length) {
+          for (let i = 0; i < codes.length; i += UP_CHUNK) {
+            const chunk = codes.slice(i, i + UP_CHUNK);
+            const { data: upRows } = await supabase.from("mf_dse_admin_sellin_upload")
+              .select("dse_code, sellin_sp, sellin_vou, sellin_saldo, as_of_dt")
+              .eq("period", uploadPeriod).eq("matched", true).in("dse_code", chunk);
+            (upRows || []).forEach((u) => { uploadByCode[u.dse_code] = u; });
+          }
+        }
+        const hasUpload = Object.keys(uploadByCode).length > 0;
+        // BARU: tau tanggal as_of upload -> tarik ULANG total SP+Voucher+
+        // Saldo (excl FWA) dari mf_dse_prod_ar tapi DIBATASI sampai
+        // tanggal itu (bukan bulan penuh sampai hari ini) - dipakai itung
+        // Selisih yg apple-to-apple sama Sellin Upload.
+        let appAsOfByCode = {};
+        const capturedAsOf = hasUpload ? Object.values(uploadByCode)[0]?.as_of_dt : null;
+        if (hasUpload && capturedAsOf != null) {''',
+    '''        const codes = rows.map((x) => x.r.dse_code).filter(Boolean);
+        let uploadByCode = {};
+        const uploadPeriod = calViewMonth.slice(0, 7);
+        const UP_CHUNK = 500;
+        if (codes.length && periodMode === "bulan" && includeCompare) {
+          for (let i = 0; i < codes.length; i += UP_CHUNK) {
+            const chunk = codes.slice(i, i + UP_CHUNK);
+            const { data: upRows } = await supabase.from("mf_dse_admin_sellin_upload")
+              .select("dse_code, sellin_sp, sellin_vou, sellin_saldo, as_of_dt")
+              .eq("period", uploadPeriod).eq("matched", true).in("dse_code", chunk);
+            (upRows || []).forEach((u) => { uploadByCode[u.dse_code] = u; });
+          }
+        }
+        const hasUpload = Object.keys(uploadByCode).length > 0;
+        // BARU: tau tanggal as_of upload -> tarik ULANG total SP+Voucher+
+        // Saldo (excl FWA) dari mf_dse_prod_ar tapi DIBATASI sampai
+        // tanggal itu (bukan bulan penuh sampai hari ini) - dipakai itung
+        // Selisih yg apple-to-apple sama Sellin Upload.
+        let appAsOfByCode = {};
+        const capturedAsOf = hasUpload ? Object.values(uploadByCode)[0]?.as_of_dt : null;
+        if (hasUpload && capturedAsOf != null) {''',
+    label="handleExportSellinXlsx dse gate upload fetch includeCompare",
+)
+do(
+    '''        const head = ["#", "Kode DSE", "Partner", "Region", "Area", "District", "Nama DSE", "Status", "Penjualan SP", "Penjualan FWA", "Penjualan Voucher", "Penjualan Saldo", "Total Penjualan", "Sellin Upload (SP+Vou+Saldo)", "Selisih"];
+        const body = rows.map((x, i) => {
+          const u = uploadByCode[x.r.dse_code];
+          const uploadTotal = u ? (fRaw(u.sellin_sp) + fRaw(u.sellin_vou) + fRaw(u.sellin_saldo)) : null;
+          return [
+            i + 1, x.r.dse_code, x.partnerVal || "", x.regionVal || "", x.branchVal || "", x.mcVal || "", x.namaVal || "", x.statusVal || "",
+            x.nilaiSp, x.nilaiFwa, x.nilaiVoucher, x.nilaiSaldo, x.totalPenjualan,
+            hasUpload ? (uploadTotal ?? "") : "",
+            hasUpload && u ? ((appAsOfByCode[x.r.dse_code] ?? (x.nilaiSp + x.nilaiVoucher + x.nilaiSaldo)) - uploadTotal) : "",
+          ];
+        });''',
+    '''        const head = ["#", "Kode DSE", "Partner", "Region", "Area", "District", "Nama DSE", "Status", "Penjualan SP", "Penjualan FWA", "Penjualan Voucher", "Penjualan Saldo", "Total Penjualan", ...(includeCompare ? ["Sellin Upload (SP+Vou+Saldo)", "Selisih"] : [])];
+        const body = rows.map((x, i) => {
+          const u = uploadByCode[x.r.dse_code];
+          const uploadTotal = u ? (fRaw(u.sellin_sp) + fRaw(u.sellin_vou) + fRaw(u.sellin_saldo)) : null;
+          return [
+            i + 1, x.r.dse_code, x.partnerVal || "", x.regionVal || "", x.branchVal || "", x.mcVal || "", x.namaVal || "", x.statusVal || "",
+            x.nilaiSp, x.nilaiFwa, x.nilaiVoucher, x.nilaiSaldo, x.totalPenjualan,
+            ...(includeCompare ? [
+              hasUpload ? (uploadTotal ?? "") : "",
+              hasUpload && u ? ((appAsOfByCode[x.r.dse_code] ?? (x.nilaiSp + x.nilaiVoucher + x.nilaiSaldo)) - uploadTotal) : "",
+            ] : []),
+          ];
+        });''',
+    label="handleExportSellinXlsx dse gate includeCompare kolom",
+)
+
+# ---------------------------------------------------------------------
+# 6) Dropdown panel: isinya beda tergantung periodMode.
+do(
+    '''                {exportMenuOpen && typeof document !== "undefined" && createPortal(
+                  <div ref={exportMenuRef} style={{ position: "fixed", left: exportMenuPos.x, top: exportMenuPos.y, width: 240, borderRadius: 10, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowMd || "0 8px 24px rgba(0,0,0,0.18)", padding: 4, zIndex: 9999, fontFamily: FONT }}>
+                    <button onClick={handleExportSellinXlsx} style={{ width: "100%", textAlign: "left", display: "flex", flexDirection: "column", gap: 1, padding: "8px 10px", borderRadius: 7, border: "none", background: "transparent", cursor: "pointer", fontFamily: FONT }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = t.sub; }} onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>Export Tampilan Saat Ini</span>
+                      <span style={{ fontSize: 10.5, color: t.lo }}>Cuma level {summaryGroupLabel} yg lagi dibuka</span>
+                    </button>
+                    <button onClick={handleExportFullXlsx} style={{ width: "100%", textAlign: "left", display: "flex", flexDirection: "column", gap: 1, padding: "8px 10px", borderRadius: 7, border: "none", background: "transparent", cursor: "pointer", fontFamily: FONT }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = t.sub; }} onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>Download Lengkap (Semua Level)</span>
+                      <span style={{ fontSize: 10.5, color: t.lo }}>1 file, 5 sheet: Partner, Region, Area, District, DSE</span>
+                    </button>
+                  </div>,
+                  document.body
+                )}''',
+    '''                {exportMenuOpen && typeof document !== "undefined" && createPortal(
+                  <div ref={exportMenuRef} style={{ position: "fixed", left: exportMenuPos.x, top: exportMenuPos.y, width: 270, borderRadius: 10, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowMd || "0 8px 24px rgba(0,0,0,0.18)", padding: 4, zIndex: 9999, fontFamily: FONT }}>
+                    {periodMode === "bulan" ? (
+                      <>
+                        {/* BARU (permintaan user - "saat download data di
+                            full month ada opsi untuk tampilkan data
+                            pembanding atau tidak"): checkbox berlaku ke
+                            KEDUA tombol export di bawahnya. */}
+                        <label style={{ display: "flex", alignItems: "center", gap: 7, padding: "7px 10px", cursor: "pointer" }} onClick={(e) => e.stopPropagation()}>
+                          <input type="checkbox" checked={exportIncludeCompare} onChange={(e) => setExportIncludeCompare(e.target.checked)} style={{ width: 14, height: 14, cursor: "pointer", accentColor: t.teal }} />
+                          <span style={{ fontSize: 11.5, fontWeight: 600, color: t.mid }}>Sertakan kolom pembanding Sell-in</span>
+                        </label>
+                        <div style={{ height: 1, background: t.line, margin: "2px 0" }} />
+                        <button onClick={() => handleExportSellinXlsx(exportIncludeCompare)} style={{ width: "100%", textAlign: "left", display: "flex", flexDirection: "column", gap: 1, padding: "8px 10px", borderRadius: 7, border: "none", background: "transparent", cursor: "pointer", fontFamily: FONT }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = t.sub; }} onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                          <span style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>Export Tampilan Saat Ini</span>
+                          <span style={{ fontSize: 10.5, color: t.lo }}>Cuma level {summaryGroupLabel} yg lagi dibuka</span>
+                        </button>
+                        <button onClick={() => handleExportFullXlsx(exportIncludeCompare)} style={{ width: "100%", textAlign: "left", display: "flex", flexDirection: "column", gap: 1, padding: "8px 10px", borderRadius: 7, border: "none", background: "transparent", cursor: "pointer", fontFamily: FONT }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = t.sub; }} onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                          <span style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>Download Lengkap (Semua Level)</span>
+                          <span style={{ fontSize: 10.5, color: t.lo }}>1 file, 5 sheet: Partner, Region, Area, District, DSE</span>
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button onClick={() => handleExportSellinXlsx(true)} style={{ width: "100%", textAlign: "left", display: "flex", flexDirection: "column", gap: 1, padding: "8px 10px", borderRadius: 7, border: "none", background: "transparent", cursor: "pointer", fontFamily: FONT }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = t.sub; }} onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                          <span style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>Export Tampilan Saat Ini</span>
+                          <span style={{ fontSize: 10.5, color: t.lo }}>Snapshot tanggal {fmtDayMonthShort(entryDate)} yg lagi dibuka</span>
+                        </button>
+                        <div style={{ height: 1, background: t.line, margin: "2px 0" }} />
+                        {/* BARU (permintaan user - "untuk data daily, ada
+                            opsi untuk tarik data inputan per dse
+                            hariannya, jadi ada tanggal-tanggalnya, perlu
+                            diperhatikan di oktober data daily tidak
+                            tersedia"): rentang tanggal RAW per-DSE-per-
+                            tanggal, lintas SEMUA DSE. */}
+                        <div style={{ padding: "7px 10px" }} onClick={(e) => e.stopPropagation()}>
+                          <div style={{ fontSize: 12.5, fontWeight: 700, color: t.hi, marginBottom: 6 }}>Tarik Data Harian (Rentang Tanggal)</div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                            <input type="date" value={exportDailyFrom} onChange={(e) => setExportDailyFrom(e.target.value)} style={{ flex: 1, minWidth: 0, padding: "5px 6px", borderRadius: 6, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 11, fontFamily: FONT }} />
+                            <span style={{ fontSize: 10.5, color: t.lo }}>s.d.</span>
+                            <input type="date" value={exportDailyTo} onChange={(e) => setExportDailyTo(e.target.value)} style={{ flex: 1, minWidth: 0, padding: "5px 6px", borderRadius: 6, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 11, fontFamily: FONT }} />
+                          </div>
+                          <div style={{ fontSize: 10, color: t.lo, marginBottom: 6 }}>Catatan: data harian utk Oktober 2026 belum tersedia.</div>
+                          <button onClick={handleExportDailyRange} disabled={exportingDailyRange} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "7px 10px", borderRadius: 7, border: "none", background: t.teal, color: "#fff", fontSize: 11.5, fontWeight: 700, cursor: exportingDailyRange ? "default" : "pointer", fontFamily: FONT, opacity: exportingDailyRange ? 0.6 : 1 }}>
+                            {exportingDailyRange ? <Loader2 size={12} className="spin" /> : <FileDown size={12} />} Export Data Harian
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>,
+                  document.body
+                )}''',
+    label="dropdown panel kondisional periodMode",
+)
+
+# ---------------------------------------------------------------------
+# 7) Perbesar estimasi ukuran menu (dulu 240x100, isinya skrng lebih
+# panjang - checkbox/tanggal) biar posisi clamp-nya ga kepotong di layar
+# pendek.
+do(
+    'const menuW = 240, menuH = 100;',
+    'const menuW = 270, menuH = 260;',
+    label="perbesar estimasi ukuran dropdown export",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK part 1")

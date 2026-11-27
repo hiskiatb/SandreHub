@@ -1,0 +1,111 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# UPDATE (permintaan user - "untuk total penjualan itu [maksud: Total
+# Penjualan (SP+VC+Saldo), setelah exclude FWA] hitung sampai dengan
+# tanggal data S100 yang sudah diupload, contohnya ini berarti as of 22
+# Nov 2026" + "kalo total penjualan semua [yg termasuk FWA] memang as of
+# hari ini"): "Total Penjualan" ASLI (termasuk FWA) TETAP MTD sampai hari
+# ini (TIDAK diubah). TAPI "Total Penjualan (SP+VC+Saldo)" (exclude FWA,
+# dipakai banding ke Sell-in upload) sekarang dihitung HANYA sampai
+# tanggal as_of upload-nya (apple-to-apple dgn Sell-in SP/Voucher/Saldo
+# yg jg snapshot sampai tanggal itu) - bukan sampai hari ini lagi. Kalau
+# belum ada upload, tetap pakai total bulan berjalan (sampai hari ini)
+# sbg fallback, krn ga ada tanggal referensi lain.
+#
+# 1) byGroup: tambah 3 field akumulasi baru + simpan array baris prod
+#    mentah (prodRowsForAsOf) biar bisa diagregasi ULANG dgn cutoff
+#    tanggal upload TANPA query lagi ke mf_dse_prod_ar (datanya kan
+#    udah ketarik di query yg sama, cuma beda cutoff tanggalnya).
+do(
+    'if (!byGroup[key]) byGroup[key] = { key, label, totalAlokasi: 0, totalActive: 0, totalVacant: 0, qtySp: 0, nilaiSp: 0, nilaiFwa: 0, qtyVoucher: 0, nilaiVoucher: 0, nilaiSaldo: 0, tunggakan: 0, totalPiutang: 0, totalDibayar: 0, uploadSp: 0, uploadVou: 0, uploadSaldo: 0 };',
+    'if (!byGroup[key]) byGroup[key] = { key, label, totalAlokasi: 0, totalActive: 0, totalVacant: 0, qtySp: 0, nilaiSp: 0, nilaiFwa: 0, qtyVoucher: 0, nilaiVoucher: 0, nilaiSaldo: 0, tunggakan: 0, totalPiutang: 0, totalDibayar: 0, uploadSp: 0, uploadVou: 0, uploadSaldo: 0, asOfSp: 0, asOfVoucher: 0, asOfSaldo: 0 };',
+    label="tambah field asOfSp/Voucher/Saldo di byGroup init",
+)
+
+do(
+    '''        let prodQuery = supabase.from("mf_dse_prod_ar").select("dse_code, tanggal, qty_sp, nilai_sp, nilai_fwa, qty_voucher, nilai_voucher, nilai_saldo, ar_piutang").in("dse_code", codes);
+        prodQuery = isRangeMode ? prodQuery.in("tanggal", sortedSelectedDates).order("tanggal", { ascending: true }) : prodQuery.eq("tanggal", entryDate);
+        const { data: prod, error: e2 } = await prodQuery;
+        if (e2) throw e2;
+        (prod || []).forEach((p) => {
+          const g = byGroup[groupOf[p.dse_code]];
+          if (!g) return;
+          g.qtySp += fRaw(p.qty_sp); g.nilaiSp += fRaw(p.nilai_sp); g.nilaiFwa += fRaw(p.nilai_fwa);
+          g.qtyVoucher += fRaw(p.qty_voucher); g.nilaiVoucher += fRaw(p.nilai_voucher);
+          g.nilaiSaldo += fRaw(p.nilai_saldo);
+          g.tunggakan = isRangeMode ? fRaw(p.ar_piutang) : (g.tunggakan + fRaw(p.ar_piutang)); // range: baris terakhir menang (saldo, bukan kumulatif)
+        });
+      }''',
+    '''        let prodQuery = supabase.from("mf_dse_prod_ar").select("dse_code, tanggal, qty_sp, nilai_sp, nilai_fwa, qty_voucher, nilai_voucher, nilai_saldo, ar_piutang").in("dse_code", codes);
+        prodQuery = isRangeMode ? prodQuery.in("tanggal", sortedSelectedDates).order("tanggal", { ascending: true }) : prodQuery.eq("tanggal", entryDate);
+        const { data: prod, error: e2 } = await prodQuery;
+        if (e2) throw e2;
+        (prod || []).forEach((p) => {
+          const g = byGroup[groupOf[p.dse_code]];
+          if (!g) return;
+          g.qtySp += fRaw(p.qty_sp); g.nilaiSp += fRaw(p.nilai_sp); g.nilaiFwa += fRaw(p.nilai_fwa);
+          g.qtyVoucher += fRaw(p.qty_voucher); g.nilaiVoucher += fRaw(p.nilai_voucher);
+          g.nilaiSaldo += fRaw(p.nilai_saldo);
+          g.tunggakan = isRangeMode ? fRaw(p.ar_piutang) : (g.tunggakan + fRaw(p.ar_piutang)); // range: baris terakhir menang (saldo, bukan kumulatif)
+        });
+        // BARU (permintaan user - "Total Penjualan (SP+VC+Saldo) hitung
+        // sampai dengan tanggal data S100 yang sudah diupload"): simpan
+        // baris mentah (sudah ada `tanggal` per baris) - diagregasi ULANG
+        // dgn cutoff tanggal upload di blok upload di bawah, TANPA query
+        // baru ke mf_dse_prod_ar (datanya sama, cuma beda rentang tanggal).
+        prodRowsForAsOf = prod || [];
+      }''',
+    label="simpan prodRowsForAsOf",
+)
+
+# Deklarasi prodRowsForAsOf di scope luar (sebelum blok `if (codes.length)`
+# prod query) supaya bisa dipakai lagi di blok upload sesudahnya.
+do(
+    '      if (codes.length) {\n        // UPDATE (permintaan user - "bisa daily / full month"): mode Full',
+    '      let prodRowsForAsOf = [];\n      if (codes.length) {\n        // UPDATE (permintaan user - "bisa daily / full month"): mode Full',
+    label="deklarasi prodRowsForAsOf",
+)
+
+# 2) Di blok upload (setelah capturedAsOfUp diketahui): agregasi ULANG
+#    prodRowsForAsOf dgn cutoff tanggal = periode upload + as_of_dt-nya,
+#    simpan ke g.asOfSp/asOfVoucher/asOfSaldo.
+do(
+    '''          g.uploadSp += fRaw(u.sellin_sp); g.uploadVou += fRaw(u.sellin_vou); g.uploadSaldo += fRaw(u.sellin_saldo);
+          });
+        }
+        if (reqId === regionSummaryReqRef.current) { setSellinUploadAvailable(anyUploadRow); setSellinUploadAsOfDt(capturedAsOfUp); }''',
+    '''          g.uploadSp += fRaw(u.sellin_sp); g.uploadVou += fRaw(u.sellin_vou); g.uploadSaldo += fRaw(u.sellin_saldo);
+          });
+        }
+        // BARU (permintaan user - "Total Penjualan (SP+VC+Saldo) hitung
+        // sampai dengan tanggal data S100 yang sudah diupload, contohnya
+        // as of 22 Nov 2026"): skrng sudah tau tanggal as_of upload-nya -
+        // agregasi ULANG baris prod yg sama (prodRowsForAsOf) tapi cutoff
+        // ke tanggal itu (bukan sampai hari ini lagi), apple-to-apple sama
+        // Sell-in SP/Voucher/Saldo (S100) yg jg snapshot sampai tanggal itu.
+        if (capturedAsOfUp != null) {
+          const cutoffAsOf = `${uploadPeriod}-${String(capturedAsOfUp).padStart(2, "0")}`;
+          prodRowsForAsOf.forEach((p) => {
+            if (p.tanggal > cutoffAsOf) return;
+            const g = byGroup[groupOf[p.dse_code]];
+            if (!g) return;
+            g.asOfSp += fRaw(p.nilai_sp); g.asOfVoucher += fRaw(p.nilai_voucher); g.asOfSaldo += fRaw(p.nilai_saldo);
+          });
+        }
+        if (reqId === regionSummaryReqRef.current) { setSellinUploadAvailable(anyUploadRow); setSellinUploadAsOfDt(capturedAsOfUp); }''',
+    label="agregasi ulang asOf cutoff",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - Total Penjualan (SP+VC+Saldo) rollup dibatasi sampai tanggal as of upload")

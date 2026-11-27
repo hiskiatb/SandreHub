@@ -1,0 +1,38 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# FIX BUG (laporan user - "uploadPeriod is not defined" saat export XLSX
+# level DSE): `uploadPeriod` & `UP_CHUNK` dideklarasikan `const` DI DALAM
+# blok `if (codes.length) { ... }` (fetch upload), tapi blok BARU
+# (agregasi as-of-restricted) yg ditambah kemarin ada DI LUAR blok itu
+# (sesudah `const hasUpload = ...`) - keluar scope. Fix: angkat deklarasi
+# uploadPeriod & UP_CHUNK ke scope LUAR (sebelum if), dipakai bersama oleh
+# kedua blok.
+do(
+    '''        const codes = rows.map((x) => x.r.dse_code).filter(Boolean);
+        let uploadByCode = {};
+        if (codes.length) {
+          const uploadPeriod = calViewMonth.slice(0, 7);
+          const UP_CHUNK = 500;
+          for (let i = 0; i < codes.length; i += UP_CHUNK) {''',
+    '''        const codes = rows.map((x) => x.r.dse_code).filter(Boolean);
+        let uploadByCode = {};
+        const uploadPeriod = calViewMonth.slice(0, 7);
+        const UP_CHUNK = 500;
+        if (codes.length) {
+          for (let i = 0; i < codes.length; i += UP_CHUNK) {''',
+    label="angkat uploadPeriod/UP_CHUNK ke scope luar",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK - scope bug uploadPeriod/UP_CHUNK di export DSE diperbaiki")

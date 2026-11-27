@@ -1,0 +1,305 @@
+path = "app/dashboard/components/DSE_ProdAR.jsx"
+with open(path, "r", encoding="utf-8") as f:
+    src = f.read()
+orig = src
+
+def do(old, new, n=1, label=""):
+    global src
+    c = src.count(old)
+    assert c == n, f"[{label}] expected {n} occurrence(s), found {c}"
+    src = src.replace(old, new)
+
+# BARU (permintaan user - "pada export data, itu saat di klik ada opsi
+# untuk export data tampilan saat ini, atau download lengkap... dia
+# download untuk semua level partner region area district dse"): tombol
+# "Export XLSX" yg dulu LANGSUNG export tampilan yg lagi dibuka, sekarang
+# jadi dropdown 2 pilihan:
+#  1) "Export Tampilan Saat Ini" - SAMA PERSIS behavior lama
+#     (handleExportSellinXlsx, 1 sheet sesuai level yg lagi dibuka).
+#  2) "Download Lengkap (Semua Level)" - file BARU (handleExportFullXlsx)
+#     isi 5 SHEET sekaligus (Partner, Region, Area, District, DSE),
+#     masing2 full (TANPA filter drill-down partner/region/branch/mc yg
+#     lagi aktif di layar - supaya "lengkap" beneran lengkap).
+
+# ---------------------------------------------------------------------
+# 1) State dropdown + ref posisi (pola sama persis RankMetricMenu/
+# ExcelFilter - portal ke document.body biar ga ke-clip overflow toolbar).
+do(
+    '  const [exportingSellinXlsx, setExportingSellinXlsx] = useState(false);\n',
+    '''  const [exportingSellinXlsx, setExportingSellinXlsx] = useState(false);
+  // BARU (permintaan user - "ada opsi export tampilan saat ini, atau
+  // download lengkap semua level"): dropdown kecil di tombol Export XLSX.
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [exportMenuPos, setExportMenuPos] = useState({ x: 0, y: 0 });
+  const exportBtnRef = useRef(null);
+  const exportMenuRef = useRef(null);
+  useEffect(() => {
+    if (!exportMenuOpen) return undefined;
+    const onDoc = (ev) => {
+      if (exportBtnRef.current?.contains(ev.target)) return;
+      if (exportMenuRef.current?.contains(ev.target)) return;
+      setExportMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [exportMenuOpen]);
+  const toggleExportMenu = () => {
+    if (!exportMenuOpen && exportBtnRef.current) {
+      const rect = exportBtnRef.current.getBoundingClientRect();
+      const menuW = 240, menuH = 100;
+      let x = rect.right - menuW;
+      let y = rect.bottom + 6;
+      x = Math.max(8, Math.min(x, window.innerWidth - menuW - 8));
+      y = Math.max(8, Math.min(y, window.innerHeight - menuH - 8));
+      setExportMenuPos({ x, y });
+    }
+    setExportMenuOpen((v) => !v);
+  };
+''',
+    label="state dropdown export",
+)
+
+# ---------------------------------------------------------------------
+# 2) Fungsi baru: fetchLevelSummaryForExport (Partner/Region/Area/
+# District, TANPA filter drill-down - full Sumatera/scope), reuse logic
+# sejenis loadRegionSummary tapi RETURN data (bukan setState) & khusus
+# Penjualan (tab AR ga relevan di export ini, tombolnya emang cuma
+# muncul tab==="input").
+do(
+    "  const handleExportSellinXlsx = async () => {",
+    '''  // BARU (permintaan user - "download lengkap... semua level partner
+  // region area district dse"): agregasi 1 level rollup (Partner/Region/
+  // Area/District) TANPA filter drill-down yg lagi aktif di layar (biar
+  // "lengkap" beneran cover semua, bukan cuma scope yg lagi difilter) -
+  // return array baris, BUKAN setState (ga ganggu tampilan regionSummary
+  // yg lagi dibuka user).
+  const fetchLevelSummaryForExport = async (lvl) => {
+    const { data: dses, error: e1 } = await supabase.from("mf_dse_database").select("dse_code, region, branch, mc, mdi, dse_status").eq("is_revoked", false);
+    if (e1) throw e1;
+    const emptyLabelMap = { partner: "Belum Ada Partner", region: "Belum Ada Region", branch: "Belum Ada Area", mc: "Belum Ada District" };
+    const emptyLabel = emptyLabelMap[lvl] || "Belum Ada Region";
+    const groupOf = {};
+    const byGroup = {};
+    (dses || []).forEach((r) => {
+      const key = lvl === "partner" ? (r.mdi || emptyLabel)
+        : lvl === "branch" ? (r.branch || emptyLabel)
+        : lvl === "mc" ? (r.mc || emptyLabel)
+        : (r.region || emptyLabel);
+      groupOf[r.dse_code] = key;
+      if (!byGroup[key]) byGroup[key] = { key, label: key, totalActive: 0, totalVacant: 0, nilaiSp: 0, nilaiFwa: 0, nilaiVoucher: 0, nilaiSaldo: 0, uploadSp: 0, uploadVou: 0, uploadSaldo: 0, asOfSp: 0, asOfVoucher: 0, asOfSaldo: 0 };
+      if (r.dse_status === "Active") byGroup[key].totalActive += 1;
+      else if (r.dse_status === "Vacant") byGroup[key].totalVacant += 1;
+    });
+    const codes = (dses || []).map((r) => r.dse_code);
+    const CHUNK = 500;
+    const isRangeModeExport = periodMode === "bulan";
+    for (let i = 0; i < codes.length; i += CHUNK) {
+      const chunk = codes.slice(i, i + CHUNK);
+      let prodQuery = supabase.from("mf_dse_prod_ar").select("dse_code, tanggal, nilai_sp, nilai_fwa, nilai_voucher, nilai_saldo").in("dse_code", chunk);
+      prodQuery = isRangeModeExport ? prodQuery.in("tanggal", sortedSelectedDates) : prodQuery.eq("tanggal", entryDate);
+      const { data: prod, error: e2 } = await prodQuery;
+      if (e2) throw e2;
+      (prod || []).forEach((p) => {
+        const g = byGroup[groupOf[p.dse_code]];
+        if (!g) return;
+        g.nilaiSp += fRaw(p.nilai_sp); g.nilaiFwa += fRaw(p.nilai_fwa); g.nilaiVoucher += fRaw(p.nilai_voucher); g.nilaiSaldo += fRaw(p.nilai_saldo);
+      });
+    }
+    let anyUploadRow = false;
+    let capturedAsOfUp = null;
+    const uploadPeriod = calViewMonth.slice(0, 7);
+    if (periodMode === "bulan") {
+      for (let i = 0; i < codes.length; i += CHUNK) {
+        const chunk = codes.slice(i, i + CHUNK);
+        const { data: upRows, error: eUp } = await supabase.from("mf_dse_admin_sellin_upload")
+          .select("dse_code, sellin_sp, sellin_vou, sellin_saldo, as_of_dt")
+          .eq("period", uploadPeriod).eq("matched", true).in("dse_code", chunk);
+        if (eUp) throw eUp;
+        (upRows || []).forEach((u) => {
+          const g = byGroup[groupOf[u.dse_code]];
+          if (!g) return;
+          anyUploadRow = true;
+          if (capturedAsOfUp == null) capturedAsOfUp = u.as_of_dt;
+          g.uploadSp += fRaw(u.sellin_sp); g.uploadVou += fRaw(u.sellin_vou); g.uploadSaldo += fRaw(u.sellin_saldo);
+        });
+      }
+      if (capturedAsOfUp != null) {
+        const cutoffAsOf = `${uploadPeriod}-${String(capturedAsOfUp).padStart(2, "0")}`;
+        for (let i = 0; i < codes.length; i += CHUNK) {
+          const chunk = codes.slice(i, i + CHUNK);
+          const { data: prod2, error: e3 } = await supabase.from("mf_dse_prod_ar")
+            .select("dse_code, tanggal, nilai_sp, nilai_voucher, nilai_saldo")
+            .in("dse_code", chunk).gte("tanggal", `${uploadPeriod}-01`).lte("tanggal", cutoffAsOf);
+          if (e3) throw e3;
+          (prod2 || []).forEach((p) => {
+            const g = byGroup[groupOf[p.dse_code]];
+            if (!g) return;
+            g.asOfSp += fRaw(p.nilai_sp); g.asOfVoucher += fRaw(p.nilai_voucher); g.asOfSaldo += fRaw(p.nilai_saldo);
+          });
+        }
+      }
+    }
+    const rows = Object.values(byGroup).sort((a, b) => (b.nilaiSp + b.nilaiFwa + b.nilaiVoucher + b.nilaiSaldo) - (a.nilaiSp + a.nilaiFwa + a.nilaiVoucher + a.nilaiSaldo));
+    return { rows, uploadAvailable: anyUploadRow };
+  };
+
+  // BARU: SAMA POLA di atas, khusus level DSE individual (roster penuh,
+  // TANPA filter search/kolom yg lagi aktif di layar).
+  const fetchDseLevelForExport = async () => {
+    const { data: dses, error: e1 } = await supabase.from("mf_dse_database").select("dse_code, region, branch, mc, mdi, ds_name, dse_status").eq("is_revoked", false);
+    if (e1) throw e1;
+    const byCode = {};
+    (dses || []).forEach((r) => { byCode[r.dse_code] = { nilaiSp: 0, nilaiFwa: 0, nilaiVoucher: 0, nilaiSaldo: 0 }; });
+    const codes = (dses || []).map((r) => r.dse_code);
+    const CHUNK = 500;
+    const isRangeModeExport = periodMode === "bulan";
+    for (let i = 0; i < codes.length; i += CHUNK) {
+      const chunk = codes.slice(i, i + CHUNK);
+      let prodQuery = supabase.from("mf_dse_prod_ar").select("dse_code, tanggal, nilai_sp, nilai_fwa, nilai_voucher, nilai_saldo").in("dse_code", chunk);
+      prodQuery = isRangeModeExport ? prodQuery.in("tanggal", sortedSelectedDates) : prodQuery.eq("tanggal", entryDate);
+      const { data: prod, error: e2 } = await prodQuery;
+      if (e2) throw e2;
+      (prod || []).forEach((p) => {
+        const n = byCode[p.dse_code];
+        if (!n) return;
+        n.nilaiSp += fRaw(p.nilai_sp); n.nilaiFwa += fRaw(p.nilai_fwa); n.nilaiVoucher += fRaw(p.nilai_voucher); n.nilaiSaldo += fRaw(p.nilai_saldo);
+      });
+    }
+    let uploadByCode = {};
+    const uploadPeriod = calViewMonth.slice(0, 7);
+    if (periodMode === "bulan") {
+      for (let i = 0; i < codes.length; i += CHUNK) {
+        const chunk = codes.slice(i, i + CHUNK);
+        const { data: upRows, error: eUp } = await supabase.from("mf_dse_admin_sellin_upload")
+          .select("dse_code, sellin_sp, sellin_vou, sellin_saldo, as_of_dt")
+          .eq("period", uploadPeriod).eq("matched", true).in("dse_code", chunk);
+        if (eUp) throw eUp;
+        (upRows || []).forEach((u) => { uploadByCode[u.dse_code] = u; });
+      }
+    }
+    const hasUpload = Object.keys(uploadByCode).length > 0;
+    let appAsOfByCode = {};
+    const capturedAsOf = hasUpload ? Object.values(uploadByCode)[0]?.as_of_dt : null;
+    if (hasUpload && capturedAsOf != null) {
+      const startISO = `${uploadPeriod}-01`;
+      const endISO = `${uploadPeriod}-${String(capturedAsOf).padStart(2, "0")}`;
+      for (let i = 0; i < codes.length; i += CHUNK) {
+        const chunk = codes.slice(i, i + CHUNK);
+        const { data: arRows, error: e3 } = await supabase.from("mf_dse_prod_ar")
+          .select("dse_code, nilai_sp, nilai_voucher, nilai_saldo")
+          .in("dse_code", chunk).gte("tanggal", startISO).lte("tanggal", endISO);
+        if (e3) throw e3;
+        (arRows || []).forEach((p) => {
+          const a = appAsOfByCode[p.dse_code] || (appAsOfByCode[p.dse_code] = 0);
+          appAsOfByCode[p.dse_code] = a + fRaw(p.nilai_sp) + fRaw(p.nilai_voucher) + fRaw(p.nilai_saldo);
+        });
+      }
+    }
+    const rows = (dses || []).map((r) => {
+      const n = byCode[r.dse_code];
+      const u = uploadByCode[r.dse_code];
+      const uploadTotal = u ? (fRaw(u.sellin_sp) + fRaw(u.sellin_vou) + fRaw(u.sellin_saldo)) : null;
+      const totalPenjualan = n.nilaiSp + n.nilaiFwa + n.nilaiVoucher + n.nilaiSaldo;
+      return {
+        dse_code: r.dse_code, partner: r.mdi || "", region: r.region || "", branch: r.branch || "", mc: r.mc || "", nama: r.ds_name || "", status: r.dse_status || "",
+        nilaiSp: n.nilaiSp, nilaiFwa: n.nilaiFwa, nilaiVoucher: n.nilaiVoucher, nilaiSaldo: n.nilaiSaldo, totalPenjualan,
+        hasUpload, uploadTotal,
+        selisih: hasUpload && u ? ((appAsOfByCode[r.dse_code] ?? (n.nilaiSp + n.nilaiVoucher + n.nilaiSaldo)) - uploadTotal) : null,
+      };
+    }).sort((a, b) => b.totalPenjualan - a.totalPenjualan);
+    return rows;
+  };
+
+  // BARU: "Download Lengkap" - 1 file xlsx isi 5 sheet (Partner, Region,
+  // Area, District, DSE) sekaligus, masing2 full (ga kepengaruh filter/
+  // level yg lagi dibuka di layar).
+  const [exportingFullXlsx, setExportingFullXlsx] = useState(false);
+  const handleExportFullXlsx = async () => {
+    setExportMenuOpen(false);
+    setExportingFullXlsx(true);
+    try {
+      const periodeLabel = `${MONTH_NAMES[Number(calViewMonth.slice(5, 7)) - 1]}_${calViewMonth.slice(0, 4)}`;
+      const wb = XLSX.utils.book_new();
+      const levelDefs = [
+        { lvl: "partner", sheet: "Partner", label: "Partner" },
+        { lvl: "region", sheet: "Region", label: "Region" },
+        { lvl: "branch", sheet: "Area", label: "Area" },
+        { lvl: "mc", sheet: "District", label: "District" },
+      ];
+      for (const { lvl, sheet, label } of levelDefs) {
+        const { rows, uploadAvailable } = await fetchLevelSummaryForExport(lvl);
+        const head = ["#", label, "DSE Active", "DSE Vacant", "Penjualan SP", "Penjualan FWA", "Penjualan Voucher", "Penjualan Saldo", "Total Penjualan", "Sellin Upload (SP+Vou+Saldo)", "Selisih"];
+        const body = rows.map((r, i) => [
+          i + 1, r.label, r.totalActive, r.totalVacant,
+          r.nilaiSp, r.nilaiFwa, r.nilaiVoucher, r.nilaiSaldo, r.nilaiSp + r.nilaiFwa + r.nilaiVoucher + r.nilaiSaldo,
+          uploadAvailable ? (r.uploadSp + r.uploadVou + r.uploadSaldo) : "",
+          uploadAvailable ? ((r.asOfSp + r.asOfVoucher + r.asOfSaldo) - (r.uploadSp + r.uploadVou + r.uploadSaldo)) : "",
+        ]);
+        const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
+        ws["!freeze"] = { xSplit: 0, ySplit: 1 };
+        XLSX.utils.book_append_sheet(wb, ws, sheet);
+      }
+      const dseRows = await fetchDseLevelForExport();
+      const headDse = ["#", "Kode DSE", "Partner", "Region", "Area", "District", "Nama DSE", "Status", "Penjualan SP", "Penjualan FWA", "Penjualan Voucher", "Penjualan Saldo", "Total Penjualan", "Sellin Upload (SP+Vou+Saldo)", "Selisih"];
+      const bodyDse = dseRows.map((x, i) => [
+        i + 1, x.dse_code, x.partner, x.region, x.branch, x.mc, x.nama, x.status,
+        x.nilaiSp, x.nilaiFwa, x.nilaiVoucher, x.nilaiSaldo, x.totalPenjualan,
+        x.hasUpload ? (x.uploadTotal ?? "") : "",
+        x.hasUpload ? (x.selisih ?? "") : "",
+      ]);
+      const wsDse = XLSX.utils.aoa_to_sheet([headDse, ...bodyDse]);
+      wsDse["!freeze"] = { xSplit: 0, ySplit: 1 };
+      XLSX.utils.book_append_sheet(wb, wsDse, "DSE");
+      XLSX.writeFile(wb, `Lengkap_SemuaLevel_${periodeLabel}.xlsx`);
+      showToast(`Export lengkap selesai — 4 level + DSE.`, "ok");
+    } catch (e) {
+      showToast(e.message || "Gagal export lengkap.", "error");
+    } finally {
+      setExportingFullXlsx(false);
+    }
+  };
+
+  const handleExportSellinXlsx = async () => {''',
+    label="fungsi fetchLevelSummaryForExport/fetchDseLevelForExport/handleExportFullXlsx",
+)
+
+# ---------------------------------------------------------------------
+# 3) Tombol: dulu langsung onClick={handleExportSellinXlsx}, sekarang
+# onClick toggleExportMenu (buka dropdown 2 pilihan). Loading spinner
+# nyala kalau salah satu dari 2 proses export lagi jalan.
+do(
+    '''                <button onClick={handleExportSellinXlsx} disabled={exportingSellinXlsx} title="Export tabel yg sedang tampil ke Excel"
+                  style={{ display: "flex", alignItems: "center", gap: 6, height: 32, padding: "0 10px", borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: exportingSellinXlsx ? "default" : "pointer", fontFamily: FONT, whiteSpace: "nowrap", opacity: exportingSellinXlsx ? 0.6 : 1 }}>
+                  {exportingSellinXlsx ? <Loader2 size={13} className="spin" /> : <FileDown size={13} />} {width >= 700 && "Export XLSX"}
+                </button>''',
+    '''                <button ref={exportBtnRef} onClick={toggleExportMenu} disabled={exportingSellinXlsx || exportingFullXlsx} title="Export ke Excel - pilih tampilan saat ini atau lengkap semua level"
+                  style={{ display: "flex", alignItems: "center", gap: 6, height: 32, padding: "0 10px", borderRadius: 8, border: `1px solid ${exportMenuOpen ? t.teal : t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: (exportingSellinXlsx || exportingFullXlsx) ? "default" : "pointer", fontFamily: FONT, whiteSpace: "nowrap", opacity: (exportingSellinXlsx || exportingFullXlsx) ? 0.6 : 1 }}>
+                  {(exportingSellinXlsx || exportingFullXlsx) ? <Loader2 size={13} className="spin" /> : <FileDown size={13} />} {width >= 700 && "Export XLSX"} <ChevronDown size={12} />
+                </button>
+                {/* BARU (permintaan user - "ada opsi export tampilan saat
+                    ini, atau download lengkap... semua level partner
+                    region area district dse"): dropdown via portal ke
+                    document.body (pola sama persis RankMetricMenu) biar
+                    ga ke-clip overflowX:auto toolbar-nya. */}
+                {exportMenuOpen && typeof document !== "undefined" && createPortal(
+                  <div ref={exportMenuRef} style={{ position: "fixed", left: exportMenuPos.x, top: exportMenuPos.y, width: 240, borderRadius: 10, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowMd || "0 8px 24px rgba(0,0,0,0.18)", padding: 4, zIndex: 9999, fontFamily: FONT }}>
+                    <button onClick={handleExportSellinXlsx} style={{ width: "100%", textAlign: "left", display: "flex", flexDirection: "column", gap: 1, padding: "8px 10px", borderRadius: 7, border: "none", background: "transparent", cursor: "pointer", fontFamily: FONT }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = t.sub; }} onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>Export Tampilan Saat Ini</span>
+                      <span style={{ fontSize: 10.5, color: t.lo }}>Cuma level {summaryGroupLabel} yg lagi dibuka</span>
+                    </button>
+                    <button onClick={handleExportFullXlsx} style={{ width: "100%", textAlign: "left", display: "flex", flexDirection: "column", gap: 1, padding: "8px 10px", borderRadius: 7, border: "none", background: "transparent", cursor: "pointer", fontFamily: FONT }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = t.sub; }} onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>Download Lengkap (Semua Level)</span>
+                      <span style={{ fontSize: 10.5, color: t.lo }}>1 file, 5 sheet: Partner, Region, Area, District, DSE</span>
+                    </button>
+                  </div>,
+                  document.body
+                )}''',
+    label="tombol export jadi dropdown",
+)
+
+assert src != orig, "no changes applied"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(src)
+print("OK part 1")
