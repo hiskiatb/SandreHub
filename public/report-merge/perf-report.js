@@ -760,6 +760,11 @@
     '.pf-hoa input{ width:100%; font:inherit; font-size:12.5px; padding:6px 8px; border-radius:7px; border:1px solid var(--line); background:var(--surf); color:var(--ink); }',
     '.pf-warn{ margin:14px 20px 0; padding:10px 14px; border-radius:10px; font-size:13px; line-height:1.5; color:var(--bad-ink); background:var(--bad-bg); border:1px solid var(--bad-bd); }',
     '.recipient-item.perf-unmatched .rname{ color:var(--bad-ink); }',
+    '.pf-edit{ border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:12px; background:var(--surf2); display:flex; flex-direction:column; gap:8px; }',
+    '.pf-edit-row{ display:grid; grid-template-columns:120px 1fr; gap:10px; align-items:center; }',
+    '.pf-edit-row .token-hint{ grid-column:2; }',
+    '.pf-edit-row label{ font-size:12px; font-weight:700; color:var(--ink2); }',
+    '.pf-edit-row input{ width:100%; font:inherit; font-size:13px; padding:7px 10px; border-radius:8px; border:1px solid var(--line); background:var(--surf); color:var(--ink); }',
     '@media (max-width:900px){ .pf-cards{ grid-template-columns:1fr 1fr; } .pf-grid2, .pf-reg, .pf-jenis{ grid-template-columns:1fr; } }',
   ].join('\n');
   document.head.appendChild(css);
@@ -1067,16 +1072,35 @@
   };
   window.autoSaveTemplateFromCurrentNarrative = async function () { /* Performance Report tidak menyimpan preset Blast */ };
 
+  var origArchivePayload = window.buildRecipientArchivePayload;
+  window.buildRecipientArchivePayload = function (group, status, err) {
+    var o = origArchivePayload(group, status, err);
+    var uji = splitEmails(P.sampleTo || '');
+    if (uji.length) { o.emails = uji.join('; '); o.ccs = ''; o.subject = '[UJI] ' + o.subject; }
+    return o;
+  };
   var origSendGroup = window.sendGroupViaResend;
   window.sendGroupViaResend = async function (group) {
+    var uji = splitEmails(P.sampleTo || '');
+    if (uji.length) {
+      // Mode sampling: kirim ke alamat uji saja, tanpa Cc, subjek diberi tanda [UJI].
+      var salin = Object.assign({}, group, { emails: uji, ccs: [], perf: Object.assign({}, group.perf, { subject: '[UJI] ' + group.perf.subject }) });
+      return origSendGroup(salin);
+    }
     if (group.unmatched) throw new Error(group.unmatchedWhy || 'Penerima belum ada.');
     return origSendGroup(group);
   };
 
   window.confirmSendAll = function () {
-    var siap = state.groups.filter(function (g) { return !g.unmatched; });
+    var siap = splitEmails(P.sampleTo || '').length ? state.groups.slice() : state.groups.filter(function (g) { return !g.unmatched; });
     var lewat = state.groups.length - siap.length;
     if (!siap.length) { toast('Belum ada penerima yang punya alamat To.'); return; }
+    if (splitEmails(P.sampleTo || '').length) {
+      document.getElementById('confirmText').textContent = 'MODE SAMPLING: ' + siap.length + ' email ' + state.narrative.judul + ' akan dikirim HANYA ke ' + P.sampleTo + ' (tanpa Cc, subjek [UJI]). Penerima asli tidak menerima apa pun. Lanjutkan?';
+      document.getElementById('confirmModal').style.display = 'flex';
+      document.getElementById('confirmModalOk').onclick = function () { closeConfirmModal(); startSendRun(siap, false); };
+      return;
+    }
     document.getElementById('confirmText').textContent = 'Kamu akan MENGIRIM LANGSUNG ' + siap.length + ' email ' + state.narrative.judul + ', masing-masing ke penerimanya sendiri.'
       + (lewat ? ' ' + lewat + ' penerima tanpa alamat (belum ada di Master_Mapping) DILEWATI.' : '')
       + ' Kalau di tengah jalan berubah pikiran, ada tombol "Jeda". Lanjutkan?';
@@ -1104,10 +1128,41 @@
   window.renderMailCard = function () {
     origRenderCard();
     var g = state.groups[state.activeIndex];
-    if (g && g.unmatched) document.getElementById('mailCard').insertAdjacentHTML('afterbegin', '<div class="pf-warn">' + esc(g.unmatchedWhy) + ' Email ini tidak akan dikirim.</div>');
+    if (g && g.unmatched && !splitEmails(P.sampleTo || '').length) document.getElementById('mailCard').insertAdjacentHTML('afterbegin', '<div class="pf-warn">' + esc(g.unmatchedWhy) + ' Isi alamat To di bawah, atau email ini tidak akan dikirim.</div>');
+    if (g) renderRecipientEditor(g);
     var xs = document.querySelector('#mailCard .xlsx-sub');
     if (xs && g && g.perf) xs.textContent = 'Excel · ' + g.perf.sheets.map(function (s) { return s[0] + ' (' + s[1].length + ')'; }).join(' · ');
   };
+
+  // Edit To/Cc per email sebelum kirim + mode sampling (kirim semua ke alamat uji).
+  function renderRecipientEditor(g) {
+    var host = document.getElementById('pfRcptEdit');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'pfRcptEdit';
+      host.className = 'pf-edit';
+      var card = document.getElementById('mailCard');
+      card.parentNode.insertBefore(host, card);
+    }
+    var uji = P.sampleTo || '';
+    host.innerHTML = '<div class="pf-edit-row"><label>🧪 Mode sampling</label><input id="pfSample" type="text" value="' + esc(uji) + '" placeholder="isi email uji, mis. emailmu sendiri">'
+      + '<span class="token-hint" style="margin:0;">' + (splitEmails(uji).length ? '<b style="color:var(--bad-ink);">AKTIF:</b> semua email (satu atau semua penerima) dikirim HANYA ke alamat ini, tanpa Cc, subjek diawali [UJI].' : 'Kosongkan untuk kirim ke penerima asli.') + '</span></div>'
+      + '<div class="pf-edit-row"><label>To</label><input id="pfEditTo" type="text" value="' + esc(g.emails.join('; ')) + '"></div>'
+      + '<div class="pf-edit-row"><label>Cc</label><input id="pfEditCc" type="text" value="' + esc(g.ccs.join('; ')) + '"></div>'
+      + '<div class="token-hint" style="margin:2px 0 0 0;">To/Cc di atas bisa diedit untuk email yang sedang ditampilkan (hanya untuk kiriman ini, Master_Mapping tidak berubah). Pisahkan beberapa alamat dengan <code>;</code>.</div>';
+    var apply = function () {
+      g.emails = splitEmails(document.getElementById('pfEditTo').value);
+      g.ccs = splitEmails(document.getElementById('pfEditCc').value);
+      g.unmatched = !g.emails.length;
+      if (!g.unmatched) g.unmatchedWhy = '';
+      else if (!g.unmatchedWhy) g.unmatchedWhy = 'Alamat To kosong.';
+      renderRecipientList();
+      renderMailCard();
+    };
+    document.getElementById('pfEditTo').onchange = apply;
+    document.getElementById('pfEditCc').onchange = apply;
+    document.getElementById('pfSample').onchange = function (e) { P.sampleTo = e.target.value.trim(); renderMailCard(); };
+  }
 
   /* ======================= Mulai ======================= */
   function init() {
