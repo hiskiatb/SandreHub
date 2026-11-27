@@ -487,7 +487,9 @@
   var tanggalTxt = function () { return P.data.tanggal ? P.data.tanggal.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : '-'; };
   function introFor(group, defaultTxt) {
     var ta = document.getElementById('perfIntro');
-    return (ta && ta.value.trim() ? ta.value : defaultTxt).replace(/\{nama\}/g, group.name).replace(/\{periode\}/g, P.periode).replace(/\{tanggal\}/g, tanggalTxt());
+    var txt = ta && ta.value.trim() ? ta.value : defaultTxt;
+    if (!P.data.tanggal) txt = txt.replace(/\s*\(data per \{tanggal\}\)/g, '');
+    return txt.replace(/\{nama\}/g, group.name).replace(/\{periode\}/g, P.periode).replace(/\{tanggal\}/g, tanggalTxt());
   }
   function closingTxt() { var ta = document.getElementById('perfClosing'); return ta ? ta.value : ''; }
   var INTRO_DEF = 'Yth. Bapak/Ibu {nama},\n\nBerikut kami sampaikan Performance Report periode {periode} (data per {tanggal}).';
@@ -495,7 +497,7 @@
   function buildGroups() {
     var d = P.data, groups = [];
     P.periode = (document.getElementById('perfPeriode').value || '').trim() || tanggalTxt();
-    var subHead = function (x) { return x + ' · Periode ' + P.periode + ' · Data per ' + tanggalTxt(); };
+    var subHead = function (x) { return x + ' · Periode ' + P.periode + (d.tanggal ? ' · Data per ' + tanggalTxt() : ''); };
     if (P.jenis === 'hoa') {
       d.regionNames.forEach(function (region) {
         var p = regionPack(region);
@@ -696,7 +698,7 @@
     if (!host || !d) return;
     var c = d.circle;
     var html = '';
-    html += '<div class="pf-toolbar"><div class="hint" style="margin:0;">Data per <b>' + esc(tanggalTxt()) + '</b> · ' + d.areas.length + ' area · ' + d.mdi.length + ' MDI · ' + d.sdpRows.length + ' SDP</div>'
+    html += '<div class="pf-toolbar"><div class="hint" style="margin:0;">' + (d.tanggal ? 'Data per <b>' + esc(tanggalTxt()) + '</b> · ' : '') + (d.people ? d.people.length + ' sales · ' : '') + d.areas.length + ' area · ' + d.mdi.length + ' MDI · ' + d.sdpRows.length + ' SDP</div>'
       + '<div class="pf-legend"><span class="g">' + esc(LBL.g) + '</span><span class="y">' + esc(LBL.y) + '</span><span class="r">' + esc(LBL.r) + '</span></div></div>';
 
     // Kartu KPI Sumatera
@@ -886,8 +888,8 @@
         sendStatus.clear();
         refreshRetryButton();
         var d = P.data;
-        document.getElementById('fileInfo').innerHTML = '<div class="filebar-group"><div class="filebar"><div><b>' + esc(file.name) + '</b> · data per <b>' + esc(tanggalTxt()) + '</b></div>'
-          + '<div class="stat">' + d.regions.length + ' region · ' + d.areas.length + ' area · ' + d.clusters.length + ' cluster · ' + d.mdi.length + ' MDI · ' + d.sdpRows.length + ' SDP · ' + d.map.length + ' baris Master_Mapping</div></div></div>';
+        document.getElementById('fileInfo').innerHTML = '<div class="filebar-group"><div class="filebar"><div><b>' + esc(file.name) + '</b>' + (d.tanggal ? ' · data per <b>' + esc(tanggalTxt()) + '</b>' : '') + '</div>'
+          + '<div class="stat">' + (d.people ? d.people.length + ' sales · ' : '') + d.regions.length + ' region · ' + d.areas.length + ' area · ' + d.clusters.length + ' cluster · ' + d.mdi.length + ' MDI · ' + d.sdpRows.length + ' SDP · ' + d.map.length + ' baris Master_Mapping</div></div></div>';
         var dz = document.getElementById('dropzone');
         dz.classList.add('has-file');
         var cta = dz.querySelector('.cta');
