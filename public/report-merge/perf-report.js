@@ -349,6 +349,7 @@
   }
   var achCols = function () { return KPIS.map(function (k) { return { label: k.short + ' Ach', kind: 'pct', get: function (r) { return r[k.id] && r[k.id].ach; } }; }).concat([{ label: 'Score', kind: 'pct', get: function (r) { return r.score; } }]); };
   function mLegend() { return '<p style="' + F + 'font-size:11.5px;color:#6B6B78;margin:4px 0 14px 0;">Warna: <span style="color:#1D8078;font-weight:bold;">hijau ≥100%</span> · <span style="color:#8A6A00;font-weight:bold;">kuning 80–99%</span> · <span style="color:#B3121A;font-weight:bold;">merah &lt;80%</span></p>'; }
+  function mSec(txt) { return '<div style="' + F + 'margin:26px 0 4px 0;padding:8px 12px;background:#32BCAD;color:#fff;font-size:15px;font-weight:bold;border-radius:8px;">' + esc(txt) + '</div>'; }
   function wrap(inner) { return '<div style="' + F + 'max-width:900px;">' + inner + '</div>'; }
 
   /* ======================= Bentuk penerima ======================= */
@@ -373,9 +374,8 @@
         var ins = insightRegion(p);
         var html = wrap(
           mText(introFor({ name: h && h.nama ? h.nama : 'Head of Area' }, 'Yth. Bapak/Ibu {nama},\n\nBerikut kami sampaikan Performance Report ' + title(region) + ' periode {periode} (data per {tanggal}).'))
-          + mH('Ringkasan ' + esc(title(region))) + (p.reg ? mTiles(p.reg, d.circle) : '') + mLegend()
-          + mH('Insight') + mBullets(ins)
-          + (p.areas.length ? mH('Performa per Area') + mTable([
+          + mH('Ringkasan & Insight ' + esc(title(region))) + (p.reg ? mTiles(p.reg, d.circle) : '') + mLegend() + mBullets(ins)
+          + mSec('1. Internal Sales') + (p.areas.length ? mH('Performa per Area') + mTable([
             { label: 'Area', get: function (r) { return title(r.nama); } },
             { label: 'Trad Target', kind: 'num', get: function (r) { return r.trad.t; } },
             { label: 'Trad Actual', kind: 'num', get: function (r) { return r.trad.a; } },
@@ -386,11 +386,11 @@
             { label: 'FWA Target', kind: 'num', get: function (r) { return r.fwa.t; } },
             { label: 'FWA Actual', kind: 'num', get: function (r) { return r.fwa.a; } },
           ]).concat(achCols().slice(2)), p.areas) : '')
-          + (p.mdi.length ? mH('Partner MDI') + mTable([
+          + mSec('2. MDI') + (p.mdi.length ? mH('Partner MDI (' + p.mdi.length + ')') + mTable([
             { label: 'Area', get: function (r) { return title(r.area); } },
             { label: 'Partner', get: function (r) { return r.partner; } },
           ].concat(achCols()), p.mdi) : '')
-          + (p.sdpByArea.length ? mH('Rekap SDP per Area') + mTable([
+          + mSec('3. SDP') + (p.sdpByArea.length ? mH('Rekap SDP per Area') + mTable([
             { label: 'Area', get: function (r) { return title(r.area); } },
             { label: 'Jumlah SDP', kind: 'num', get: function (r) { return r.n; } },
             { label: 'Rata-rata Score', kind: 'pct', get: function (r) { return r.avg; } },
@@ -403,7 +403,7 @@
             { label: 'Nama', get: function (r) { return r.namaMim3; } },
             { label: 'Area', get: function (r) { return title(r.area); } },
           ].concat(achCols()), p.sdpRows.slice().sort(byScoreDesc).reverse().slice(0, 10)) : '')
-          + '<div style="height:10px;"></div>' + mP('Rincian lengkap Area, Cluster, MDI, dan SDP ' + esc(title(region)) + ' ada di lampiran Excel.')
+          + '<div style="height:10px;"></div>' + mP('Rincian lengkap Internal Sales (area & cluster), MDI, dan seluruh SDP ' + esc(title(region)) + ' ada di lampiran Excel (3 sheet).')
           + mText(closingTxt())
         );
         groups.push({
@@ -415,8 +415,7 @@
             html: html, insight: ins.join('\n'),
             attName: 'Performance Report ' + title(region) + ' ' + P.periode,
             sheets: [
-              ['Area', p.areas.map(flatIsRow)],
-              ['Cluster', p.clusters.map(flatIsRow)],
+              ['Internal Sales', p.areas.map(function (r) { return Object.assign({ Level: 'Area' }, flatIsRow(r)); }).concat(p.clusters.map(function (r) { return Object.assign({ Level: 'Cluster' }, flatIsRow(r)); }))],
               ['MDI', p.mdi.map(flatRow)],
               ['SDP', p.sdpRows.map(flatSdpRow)],
             ],
@@ -698,7 +697,7 @@
     box.innerHTML = '<p class="hint">Ringkasan pencapaian dari file yang diupload. Di bawahnya pilih jenis email yang mau dikirim.</p>'
       + '<div id="pfDash"></div>'
       + '<div class="pf-sec"><div class="field-group-label">Jenis kiriman</div><div class="pf-jenis" id="pfJenis">'
-      + '<label data-j="hoa"><input type="radio" name="pfJenis" value="hoa"><b>Head of Area</b><small>1 email bulk per region: ringkasan, insight, tabel area/MDI/SDP + lampiran Excel.</small></label>'
+      + '<label data-j="hoa"><input type="radio" name="pfJenis" value="hoa"><b>Head of Area</b><small>1 email per region: ringkasan &amp; insight, lalu bagian Internal Sales, MDI, SDP + lampiran Excel 3 sheet.</small></label>'
       + '<label data-j="mdi"><input type="radio" name="pfJenis" value="mdi"><b>Per MDI</b><small>1 email per partner + area. To/Cc dari Master_Mapping (TYPE MDI).</small></label>'
       + '<label data-j="sdp"><input type="radio" name="pfJenis" value="sdp"><b>Per SDP</b><small>1 email per ID (MIM3 & 3KIOSK terpisah). To/Cc dari Master_Mapping.</small></label>'
       + '</div><div id="pfMatch" class="pf-match"></div></div>'
