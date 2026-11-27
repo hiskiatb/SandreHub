@@ -1371,17 +1371,21 @@
     if (g && g.unmatched && !splitEmails(P.sampleTo || '').length) document.getElementById('mailCard').insertAdjacentHTML('afterbegin', '<div class="pf-warn">' + esc(g.unmatchedWhy) + ' Isi alamat To di bawah, atau email ini tidak akan dikirim.</div>');
     if (g) renderRecipientEditor(g);
     // Email berlebar tetap 820px: perkecil tampilan preview supaya muat tanpa geser ke samping.
-    var mb = document.querySelector('#mailCard .mail-body');
-    if (mb && mb.firstElementChild) {
-      var inner = mb.firstElementChild;
-      inner.style.zoom = '';
-      var z = Math.min(1, (mb.clientWidth - 8) / Math.max(1, inner.scrollWidth));
-      if (z < 1) inner.style.zoom = z.toFixed(3);
-    }
+    fitPreview();
+    setTimeout(fitPreview, 60);
     var xs = document.querySelector('#mailCard .xlsx-sub');
     if (xs && g && g.perf) xs.textContent = 'Excel · ' + g.perf.sheets.map(function (s) { return s[0] + ' (' + s[1].length + ')'; }).join(' · ');
   };
 
+  function fitPreview() {
+    var mb = document.querySelector('#mailCard .mail-body');
+    if (!mb || !mb.firstElementChild || !mb.clientWidth) return;
+    var inner = mb.firstElementChild;
+    inner.style.zoom = '';
+    var z = (mb.clientWidth - 8) / Math.max(1, inner.scrollWidth);
+    if (z > 0 && z < 1) inner.style.zoom = z.toFixed(3);
+  }
+  window.addEventListener('resize', fitPreview);
   // Edit To/Cc per email sebelum kirim + mode sampling (kirim semua ke alamat uji).
   function renderRecipientEditor(g) {
     var host = document.getElementById('pfRcptEdit');
