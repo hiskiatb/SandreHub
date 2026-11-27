@@ -93,7 +93,7 @@
       if (!h.some(function (c) { return /TRAD/.test(norm(c)); })) continue;
       if (!s.some(function (c) { return norm(c) === 'ACH'; })) continue;
       var h0 = norm(h[0]) || norm(h[1]);
-      var level = /CLUSTER|^MC\b/.test(h0) ? 'CLUSTER' : /AREA|BRANCH/.test(h0) ? 'AREA' : /REGION/.test(h0) ? 'REGION' : /CIRCLE/.test(h0) ? 'CIRCLE' : h0;
+      var level = /^NAME$|^NAMA$|SALES/.test(h0) ? 'NAME' : /CLUSTER|^MC\b/.test(h0) ? 'CLUSTER' : /AREA|BRANCH/.test(h0) ? 'AREA' : /REGION/.test(h0) ? 'REGION' : /CIRCLE/.test(h0) ? 'CIRCLE' : h0;
       var dims = [], cols = { score: null };
       KPIS.forEach(function (k) { cols[k.id] = {}; });
       var cur = null;
@@ -140,6 +140,39 @@
     return blocks;
   }
 
+  // Rumus sama dengan file Performance Report: Ach RGUGA Trad = actual/target,
+  // Ach DSE = #skor/#DSE, Ach FWA = actual/target maksimal 130%,
+  // Score = 50% Trad + 35% DSE + 15% FWA.
+  var SCORE_W = { trad: 0.5, dse: 0.35, fwa: 0.15 }, FWA_CAP = 1.3;
+  function aggregateBy(rows, key, keepDims) {
+    var map = new Map();
+    rows.forEach(function (r) {
+      var k = String(r[key] || '').trim();
+      if (!k) return;
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(r);
+    });
+    return Array.from(map.entries()).map(function (e) {
+      var list = e[1], o = { nama: e[0], level: key, jumlah: list.length };
+      keepDims.forEach(function (dk) { o[dk] = list[0][dk] || ''; });
+      KPIS.forEach(function (k) {
+        var t = 0, a = 0, ada = false;
+        list.forEach(function (r) { if (r[k.id].t != null) { t += r[k.id].t; ada = true; } if (r[k.id].a != null) a += r[k.id].a; });
+        var ach = null;
+        if (ada) {
+          if (k.id === 'dse') ach = a ? t / a : null;
+          else ach = t ? a / t : null;
+          if (k.id === 'fwa' && ach != null) ach = Math.min(ach, FWA_CAP);
+        }
+        o[k.id] = { t: ada ? t : null, a: ada ? a : null, ach: ach };
+      });
+      o.score = (o.trad.ach != null && o.dse.ach != null && o.fwa.ach != null)
+        ? SCORE_W.trad * o.trad.ach + SCORE_W.dse * o.dse.ach + SCORE_W.fwa * o.fwa.ach
+        : avg(list.map(function (r) { return r.score; }));
+      return o;
+    });
+  }
+
   function headerIdx(rows, re) { for (var i = 0; i < Math.min(rows.length, 15); i++) if (rows[i].some(function (c) { return re.test(norm(c)); })) return i; return -1; }
   function colIdx(h, re) { for (var c = 0; c < h.length; c++) if (re.test(norm(h[c]))) return c; return -1; }
 
@@ -175,6 +208,16 @@
 
     var d = { tanggal: dateOf(is.rows) || dateOf(mdi.rows) || dateOf(sdp.rows) };
     d.is = parseIS(is.rows);
+    // Format baru: Internal Sales = 1 tabel per orang (NAME, CLUSTER, AREA, REGION, CIRCLE).
+    // Angka Cluster / Area / Region / Sumatera dihitung dari baris per orang.
+    var people = d.is.NAME || [];
+    if (people.length && !(d.is.AREA && d.is.AREA.length)) {
+      d.people = people;
+      d.is.CLUSTER = aggregateBy(people, 'CLUSTER', ['AREA', 'REGION', 'CIRCLE']);
+      d.is.AREA = aggregateBy(people, 'AREA', ['REGION', 'CIRCLE']);
+      d.is.REGION = aggregateBy(people, 'REGION', ['CIRCLE']);
+      d.is.CIRCLE = aggregateBy(people, 'CIRCLE', []);
+    }
     d.circle = (d.is.CIRCLE || [])[0] || null;
     d.regions = d.is.REGION || [];
     d.areas = d.is.AREA || [];
