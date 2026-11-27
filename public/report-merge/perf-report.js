@@ -393,7 +393,7 @@
       + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:10px 0 4px 0;"><tr><td height="2" bgcolor="' + C.line + '" style="height:2px;line-height:2px;font-size:1px;background:' + C.line + ';">&nbsp;</td></tr></table>';
   }
   // Pill di dalam kalimat (span). Outlook Windows mengabaikan padding pada span, jadi diberi border warna sama sebagai "padding".
-  function pill(v) { var p = PILL[band(v)]; return '<span style="' + F + 'display:inline-block;background:' + p[0] + ';border:2px solid ' + p[0] + ';color:' + p[1] + ';font-weight:bold;font-size:12px;padding:1px 7px;border-radius:999px;white-space:nowrap;mso-highlight:' + p[0] + ';">' + pct(v) + '</span>'; }
+  function pill(v) { var p = PILL[band(v)]; return '<span style="' + F + 'display:inline-block;background-color:' + p[0] + ';border:2px solid ' + p[0] + ';color:' + p[1] + ';font-weight:bold;font-size:12px;padding:1px 7px;border-radius:999px;white-space:nowrap;mso-highlight:' + p[0] + ';">' + pct(v) + '</span>'; }
   // Pill sebagai tabel kecil: tampil rapi juga di Outlook Windows (mesin Word).
   function pillBox(v, size, align) {
     var p = PILL[band(v)];
@@ -466,7 +466,7 @@
   }
   var achCols = function () { return KPIS.map(function (k) { return { label: k.short, kind: 'pct', get: function (r) { return r[k.id] && r[k.id].ach; } }; }).concat([{ label: 'Score', kind: 'pct', get: function (r) { return r.score; } }]); };
   function mLegend() {
-    var chip = function (k, t) { return '<span style="display:inline-block;background:' + PILL[k][0] + ';color:' + PILL[k][1] + ';font-weight:bold;font-size:11px;padding:3px 10px;border-radius:999px;margin-left:6px;">' + esc(t) + '</span>'; };
+    var chip = function (k, t) { return '<span style="display:inline-block;background-color:' + PILL[k][0] + ';border:2px solid ' + PILL[k][0] + ';color:' + PILL[k][1] + ';font-weight:bold;font-size:11px;padding:1px 8px;border-radius:999px;margin-left:6px;">' + esc(t) + '</span>'; };
     return '<p style="' + F + 'font-size:11.5px;color:' + C.muted + ';margin:10px 0 0 0;">Status:' + chip('g', 'Tercapai ' + LBL.g) + chip('y', 'Perlu Perhatian ' + LBL.y) + chip('r', 'Di Bawah Target ' + LBL.r) + '</p>';
   }
   // Kerangka email: header gelap ala SandraHub + kartu putih + footer.
